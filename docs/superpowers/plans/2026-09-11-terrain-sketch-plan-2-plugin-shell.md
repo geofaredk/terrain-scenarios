@@ -1112,7 +1112,7 @@ git commit -m "feat(qgis_io): headless QGIS test harness, GDAL check, geometry c
 
 **Interfaces:**
 - Consumes: `core.grid.DemGrid/Window`.
-- Produces: `DemError(Exception)` (user-facing message); `DemInfo(path, crs_wkt, nodata, band_count, warnings)` (frozen dataclass; `nodata` is the value written to all output files, `-9999.0` when the DEM has none); `read_dem(layer) -> (DemGrid, DemInfo)` (refuses non-raster/invalid, non-GDAL providers and geographic CRSs; band 1; warnings for extra bands and > 50 M cells); `WorkingFiles(folder, original, info)` with `.working_path`, `.change_path` and `.write(window, working)`; `export_dem(path, working, info)` (float32 LZW GeoTIFF with `PREDICTOR=3`; valid cells equal to the nodata value are nudged by one float step).
+- Produces: `DemError(Exception)` (user-facing message); `DemInfo(path, crs_wkt, nodata, band_count, warnings)` (frozen dataclass; `nodata` is the value written to all output files, `-9999.0` when the DEM has none); `read_dem(layer) -> (DemGrid, DemInfo)` (refuses non-raster/invalid, non-GDAL providers and geographic CRSs; band 1; warnings for extra bands and > 50 M cells); `WorkingFiles(folder, original, info)` with `.working_path`, `.change_path` and `.write(window, working)`; `export_dem(path, working, info)` (float32 LZW GeoTIFF with `PREDICTOR=3`); in the working, change and exported files, valid cells equal to the nodata value are nudged by one float step.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1170,6 +1170,19 @@ def test_export_keeps_nodata_and_nudges_clashing_values(tmp_path):
     assert exported.dtype == np.float32 and nodata == -9999.0
     assert exported[0, 0] == -9999.0
     assert exported[1, 1] != -9999.0 and exported[1, 1] == pytest.approx(-9999.0)
+
+
+def test_change_raster_keeps_valid_cells_when_nodata_is_zero(tmp_path):
+    array = np.full((10, 10), 10.0, np.float32)
+    array[0, 0] = 0.0
+    grid, info = read_dem(dem_layer(tmp_path, array, nodata=0.0))
+    files = WorkingFiles(str(tmp_path / "session"), grid, info)
+    change, nodata = read_tif(files.change_path)
+    assert nodata == 0.0 and change[0, 0] == 0.0  # the real nodata cell stays nodata
+    assert (change[1:, 1:] != 0.0).all() and change[5, 5] == pytest.approx(0.0)  # unchanged cells are no holes
+    files.write(Window(5, 5, 1, 1), grid.copy())
+    change, _ = read_tif(files.change_path)
+    assert change[5, 5] != 0.0
 ```
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -1250,17 +1263,17 @@ class WorkingFiles:
         self._original = original
         self._info = info
         _write_tif(self.working_path, _for_output(original.data, original.valid, info.nodata), original, info)
-        change = np.where(original.valid, 0.0, info.nodata).astype(np.float32)
-        _write_tif(self.change_path, change, original, info)
+        _write_tif(self.change_path, _for_output(np.zeros(original.data.shape), original.valid, info.nodata),
+                   original, info)
 
     def write(self, window: Window, working: DemGrid) -> None:
         """Write one window of the working DEM and its change into both files."""
         rows, cols = window.slices
         valid = self._original.valid[rows, cols]
         values = working.data[rows, cols]
-        change = np.where(valid, values.astype(np.float64) - self._original.data[rows, cols], self._info.nodata)
+        change = values.astype(np.float64) - self._original.data[rows, cols]
         for path, block in ((self.working_path, _for_output(values, valid, self._info.nodata)),
-                            (self.change_path, change.astype(np.float32))):
+                            (self.change_path, _for_output(change, valid, self._info.nodata))):
             ds = gdal.Open(path, gdal.GA_Update)
             ds.GetRasterBand(1).WriteArray(block, window.col0, window.row0)
             ds.FlushCache()
@@ -1297,8 +1310,8 @@ def _write_tif(path: str, array: np.ndarray, grid: DemGrid, info: DemInfo, extra
 ```
 - [ ] **Step 4: Run the tests**
 
-Run: `scripts/test.sh tests/qgis/test_raster_io.py` → Expected: `5 passed`
-Run: `scripts/test.sh` → Expected: `86 passed`
+Run: `scripts/test.sh tests/qgis/test_raster_io.py` → Expected: `6 passed`
+Run: `scripts/test.sh` → Expected: `87 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -1472,7 +1485,7 @@ def _style_outlines(layer: QgsVectorLayer) -> None:
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_layers.py` → Expected: `3 passed`
-Run: `scripts/test.sh` → Expected: `89 passed`
+Run: `scripts/test.sh` → Expected: `90 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -1832,7 +1845,7 @@ class SketchController(QObject):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_controller.py` → Expected: `7 passed`
-Run: `scripts/test.sh` → Expected: `96 passed`
+Run: `scripts/test.sh` → Expected: `97 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -2044,7 +2057,7 @@ class DrawPolygonTool(DrawTool):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_map_tools.py` → Expected: `3 passed`
-Run: `scripts/test.sh` → Expected: `99 passed`
+Run: `scripts/test.sh` → Expected: `100 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -2255,7 +2268,7 @@ class FeatureListView(QListView):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_feature_list.py` → Expected: `3 passed`
-Run: `scripts/test.sh` → Expected: `102 passed`
+Run: `scripts/test.sh` → Expected: `103 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -2518,7 +2531,7 @@ class PropertiesPage(QWidget):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_panels.py` → Expected: `2 passed`
-Run: `scripts/test.sh` → Expected: `104 passed`
+Run: `scripts/test.sh` → Expected: `105 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -2944,7 +2957,7 @@ Run: `chmod +x scripts/dev_install.sh`
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_dock_plugin.py` → Expected: `3 passed`
-Run: `scripts/test.sh` → Expected: `107 passed`
+Run: `scripts/test.sh` → Expected: `108 passed`
 
 - [ ] **Step 5: Commit**
 

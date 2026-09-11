@@ -146,7 +146,7 @@ tests/
 
 Parameters: **slope 1:n** (horizontal run per 1 m of height; `n = 0` means no slope) and **max reach** (horizontal cap in metres; default 20 m).
 
-- **Paths:** the slopes are part of the cross profile (§5.4). Beyond the last profile point, the slope continues at the last segment's ratio until it reaches max reach. Because of the combine rule, the slope blends into the terrain wherever it meets the ground.
+- **Paths:** the slopes are part of the cross profile (§5.4). Beyond the last profile point, the slope continues at the last segment's ratio until it reaches max reach. Because of the combine rule, the slope blends into the terrain wherever it meets the ground. The distance for the slope is measured to the flat-capped corridor itself (a distance transform of the corridor), so a dike's ends slope down as well and there's no gap at the end caps.
 - **Areas, slopes outside the outline** (default for Raise flat): the distance `d` outside the footprint comes from `scipy.ndimage.distance_transform_edt`. For raise tools `design = z_flat − d/n`, and for lower tools `design = z_flat + d/n`, up to max reach.
 - **Areas, slopes inside the outline** (default for Lower flat, e.g. a pond whose outline is the top edge): `d` is the distance inside the footprint, and `T_edge` is the reference terrain at the nearest outline cell (from the EDT `return_indices`). For lower tools `design = max(z_flat, T_edge − d/n)`, and for raise tools `design = min(z_flat, T_edge + d/n)`. With inside slopes, the flat floor or top is automatically smaller than the outline.
 
@@ -174,7 +174,7 @@ Parameters: **slope 1:n** (horizontal run per 1 m of height; `n = 0` means no sl
 - The cell area is `|pixel_width × pixel_height|`.
 - **Per feature:** `fill = Σ max(0, after − before) × area` and `cut = Σ max(0, before − after) × area`, where *before* and *after* are the states just before and just after that feature during replay.
 - **Scenario total:** computed from `working − original`.
-- **Pond storage** (for tools 3, 5 and 7, and for Interpolate in area mode whenever it lowers terrain): the spill level is the minimum of the new terrain over the ring of cells bordering the changed region, and `storage = Σ max(0, spill − new) × area` over the changed region. It's shown as "≈ storage below the lowest rim point (static, no inflow routing)".
+- **Pond storage** (for tools 3, 5 and 7, and for Interpolate in area mode whenever it lowers terrain): the spill level is the minimum of the new terrain over the ring of cells (8-connected) bordering the **lowered** region, and `storage = Σ max(0, spill − new) × area` over the lowered region. It's shown as "≈ storage below the lowest rim point (static, no inflow routing)".
 
 ## 6. Selecting the area
 

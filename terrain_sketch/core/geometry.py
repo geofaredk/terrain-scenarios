@@ -1,5 +1,4 @@
-"""Geometry helpers on top of OGR. Geometries travel as WKB bytes; parts are single
-LineStrings or Polygons in the DEM CRS."""
+"""OGR geometry helpers: WKB in/out, single-part LineStrings/Polygons in the DEM CRS."""
 from __future__ import annotations
 
 import math

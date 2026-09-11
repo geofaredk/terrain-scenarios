@@ -1152,6 +1152,15 @@ def test_cut_fill_and_storage_on_small_arrays():
     assert pond_storage(after, np.zeros_like(valid), valid, 1.0) is None
 
 
+def test_pond_storage_ignores_nodata_cells_inside_the_pond():
+    after = np.full((5, 5), 10.0)
+    after[1:4, 1:4] = 8.0
+    after[2, 2] = -9999.0  # nodata sentinel inside the lowered region
+    valid = np.ones((5, 5), bool)
+    valid[2, 2] = False
+    assert pond_storage(after, after < 10.0, valid, 1.0) == pytest.approx(16.0)  # 8 valid cells x 2 m
+
+
 def test_total_cut_fill_compares_working_with_original():
     original = make_grid(flat(10))
     working = original.copy()
@@ -1188,7 +1197,9 @@ def cut_fill(before: np.ndarray, after: np.ndarray, valid: np.ndarray, cell_area
 def pond_storage(after: np.ndarray, lowered: np.ndarray, valid: np.ndarray, cell_area: float):
     """Static storage below the lowest rim cell around the lowered region, or None.
 
-    The rim is the ring of valid cells bordering the lowered region (8-connected)."""
+    The rim is the ring of valid cells bordering the lowered region (8-connected);
+    nodata cells never count as pond or rim."""
+    lowered = lowered & valid
     if not lowered.any():
         return None
     rim = ndimage.binary_dilation(lowered, structure=np.ones((3, 3), bool)) & ~lowered & valid
@@ -1207,7 +1218,7 @@ def total_cut_fill(original: DemGrid, working: DemGrid):
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `scripts/test.sh tests/core/test_volumes.py -v`
-Expected: `2 passed`
+Expected: `3 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -1440,6 +1451,15 @@ def test_cut_fill_and_storage_on_small_arrays():
     assert cut == pytest.approx(36.0) and fill == pytest.approx(2.0)
     assert pond_storage(after, after < before, valid, 1.0) == pytest.approx(18.0)  # spill at 10
     assert pond_storage(after, np.zeros_like(valid), valid, 1.0) is None
+
+
+def test_pond_storage_ignores_nodata_cells_inside_the_pond():
+    after = np.full((5, 5), 10.0)
+    after[1:4, 1:4] = 8.0
+    after[2, 2] = -9999.0  # nodata sentinel inside the lowered region
+    valid = np.ones((5, 5), bool)
+    valid[2, 2] = False
+    assert pond_storage(after, after < 10.0, valid, 1.0) == pytest.approx(16.0)  # 8 valid cells x 2 m
 
 
 def test_total_cut_fill_compares_working_with_original():
@@ -1746,12 +1766,12 @@ def _vertex_surface(part, view: DemGrid) -> np.ndarray:
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `scripts/test.sh tests/core/test_operations.py tests/core/test_volumes.py -v`
-Expected: `18 passed` (15 operations + 3 volumes)
+Expected: `19 passed` (15 operations + 4 volumes)
 
 - [ ] **Step 5: Run the whole core suite**
 
 Run: `scripts/test.sh tests/core`
-Expected: `40 passed`
+Expected: `41 passed`
 
 - [ ] **Step 6: Commit**
 
@@ -2073,7 +2093,7 @@ Expected: `14 passed` (7 engine tests + 6 property-test seeds + 1 performance te
 - [ ] **Step 5: Run the whole core suite**
 
 Run: `scripts/test.sh tests/core`
-Expected: `54 passed`
+Expected: `55 passed`
 
 - [ ] **Step 6: Commit**
 

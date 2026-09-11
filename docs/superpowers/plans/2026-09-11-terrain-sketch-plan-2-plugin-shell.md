@@ -1524,8 +1524,8 @@ git commit -m "feat(qgis_io): Terrain Sketch layer group with change and hillsha
 
 **Interfaces:**
 - Consumes: `FeatureStack`, `FeatureStats`, `new_feature`, `to_dem_wkb/from_wkb`, `read_dem/WorkingFiles/export_dem`, `SketchLayers`.
-- Produces (`help_texts.py`): `TOOL_LABELS`, `TOOL_SUMMARIES` (dict by `Tool`), `PIXEL_MODE_LABELS`, `PIXEL_MODE_TIPS` (dict by `PixelMode`), `FLAG_TEXTS` (dict by `FLAG_*`), `DRAW_HINT`, `amount_label(tool) -> "Height" | "Depth" | None`.
-- Produces (`controller.py`): `SketchController(project, parent=None)` (a `QObject`) with signals `featuresChanged()`, `sessionChanged()`, `message(level, text)`; attributes `project`, `stack`, `info`, `files`, `layers`, `dem_layer_id`, `dem_crs`; properties `has_dem`, `features` (tuple); methods `feature(fid)`, `stats(fid)`, `feature_geometry(fid)`, `set_dem(layer)` (raises `DemError` before changing anything), `close()`, `shutdown()`, `add_drawn(tool, mode, geometry, crs) -> TerrainFeature | None` (names "Raise path 1", "Raise path 2", …), `update_feature(fid, **changes)`, `set_enabled(fid, enabled)`, `delete_feature(fid)`, `reorder(ids)` (`ValueError` unless every id exactly once), `export_dem(path)`, `set_hillshade_visible(bool)`. Every change runs `FeatureStack.update`, writes the changed window, refreshes the layers and outlines, then emits `featuresChanged`.
+- Produces (`help_texts.py`): `TOOL_LABELS`, `TOOL_SUMMARIES` (dict by `Tool`), `PIXEL_MODE_LABELS`, `PIXEL_MODE_TIPS` (dict by `PixelMode`), `FLAG_TEXTS` (dict by `FLAG_*`), `DRAW_HINT`, `NO_SESSION`, `amount_label(tool) -> "Height" | "Depth" | None`.
+- Produces (`controller.py`): `SketchController(project, parent=None)` (a `QObject`) with signals `featuresChanged()`, `sessionChanged()`, `message(level, text)`; attributes `project`, `stack`, `info`, `files`, `layers`, `dem_layer_id`, `dem_crs`; properties `has_dem`, `features` (tuple); methods `feature(fid)`, `stats(fid)`, `feature_geometry(fid)`, `set_dem(layer)` (raises `DemError` before changing anything), `close()`, `shutdown()`, `add_drawn(tool, mode, geometry, crs) -> TerrainFeature | None` (None, with a message, when the drawing cannot be used or no session is active; names "Raise path 1", "Raise path 2", …), `update_feature(fid, **changes)`, `set_enabled(fid, enabled)`, `delete_feature(fid)`, `reorder(ids)` (`ValueError` unless every id exactly once), `export_dem(path)` (raises `RuntimeError(NO_SESSION)` without a session), `set_hillshade_visible(bool)`. Every change runs `FeatureStack.update`, writes the changed window, refreshes the layers and outlines, then emits `featuresChanged`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1605,6 +1605,17 @@ def test_a_geographic_dem_is_refused_without_side_effects(tmp_path):
         c.set_dem(dem_layer(tmp_path, crs="EPSG:4326", gt=(9.0, 0.001, 0.0, 55.7, 0.0, -0.001)))
     assert not c.has_dem
     assert QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME) is None
+
+
+def test_drawing_or_exporting_without_a_session_is_reported_not_raised(tmp_path):
+    c = start_session(tmp_path)
+    c.close()  # e.g. the DEM layer was removed while the user was still drawing
+    messages = []
+    c.message.connect(lambda level, text: messages.append(text))
+    assert c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM) is None
+    assert messages and not c.dem_crs.isValid()
+    with pytest.raises(RuntimeError, match="Start"):
+        c.export_dem(str(tmp_path / "out.tif"))
 ```
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -1675,6 +1686,8 @@ FLAG_TEXTS = {
 DRAW_HINT = ("Click to add points. Right-click or press Enter to finish, Backspace removes the last "
              "point, Esc cancels.")
 
+NO_SESSION = "Pick a DEM and press Start first."
+
 
 def amount_label(tool: Tool) -> str | None:
     """Label of the amount field, or None when the tool has no amount."""
@@ -1703,7 +1716,7 @@ from ..model.feature import TerrainFeature, new_feature
 from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import WorkingFiles, export_dem, read_dem
-from .help_texts import TOOL_LABELS
+from .help_texts import NO_SESSION, TOOL_LABELS
 
 LOG_TAG = "Terrain Sketch"
 
@@ -1779,7 +1792,11 @@ class SketchController(QObject):
         self.project.cleared.disconnect(self._drop_session)
 
     def add_drawn(self, tool: Tool, mode: Mode, geometry: QgsGeometry, crs) -> TerrainFeature | None:
-        """Turn a drawn geometry (in `crs`) into a new feature with default values."""
+        """Turn a drawn geometry (in `crs`) into a new feature with default values. Returns None,
+        with a message, when the drawing cannot be used or no session is active."""
+        if not self.has_dem:
+            self.message.emit(Qgis.MessageLevel.Warning, NO_SESSION)
+            return None
         try:
             wkb = to_dem_wkb(geometry, crs, self.dem_crs, mode)
         except ValueError as error:
@@ -1805,6 +1822,9 @@ class SketchController(QObject):
         self._set([by_id[i] for i in ids])
 
     def export_dem(self, path: str) -> None:
+        """Write the modified DEM to `path`; raises RuntimeError without a session."""
+        if not self.has_dem:
+            raise RuntimeError(NO_SESSION)
         export_dem(path, self.stack.working, self.info)
 
     def set_hillshade_visible(self, visible: bool) -> None:
@@ -1848,6 +1868,7 @@ class SketchController(QObject):
         had_session = self.stack is not None
         self.stack = self.info = self.files = self.layers = None
         self.dem_layer_id = None
+        self.dem_crs = QgsCoordinateReferenceSystem()
         self._features = []
         if had_session:
             self.sessionChanged.emit()
@@ -1864,8 +1885,8 @@ class SketchController(QObject):
 ```
 - [ ] **Step 4: Run the tests**
 
-Run: `scripts/test.sh tests/qgis/test_controller.py` → Expected: `7 passed`
-Run: `scripts/test.sh` → Expected: `98 passed`
+Run: `scripts/test.sh tests/qgis/test_controller.py` → Expected: `8 passed`
+Run: `scripts/test.sh` → Expected: `99 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -2077,7 +2098,7 @@ class DrawPolygonTool(DrawTool):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_map_tools.py` → Expected: `3 passed`
-Run: `scripts/test.sh` → Expected: `101 passed`
+Run: `scripts/test.sh` → Expected: `102 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -2288,7 +2309,7 @@ class FeatureListView(QListView):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_feature_list.py` → Expected: `3 passed`
-Run: `scripts/test.sh` → Expected: `104 passed`
+Run: `scripts/test.sh` → Expected: `105 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -2551,7 +2572,7 @@ class PropertiesPage(QWidget):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_panels.py` → Expected: `2 passed`
-Run: `scripts/test.sh` → Expected: `106 passed`
+Run: `scripts/test.sh` → Expected: `107 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -2977,7 +2998,7 @@ Run: `chmod +x scripts/dev_install.sh`
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_dock_plugin.py` → Expected: `3 passed`
-Run: `scripts/test.sh` → Expected: `109 passed`
+Run: `scripts/test.sh` → Expected: `110 passed`
 
 - [ ] **Step 5: Commit**
 

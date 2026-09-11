@@ -33,30 +33,36 @@ class SketchLayers:
             self.group.addLayer(layer)
         self.group.findLayer(self.hillshade.id()).setItemVisibilityChecked(False)
         self.layer_ids = [layer.id() for layer in (self.outlines, self.change, self.hillshade, self.working)]
+        self.outlines_id, self.change_id, self.hillshade_id, self.working_id = self.layer_ids
 
     def refresh(self) -> None:
-        """Re-read the working and change files after they were written."""
-        for layer in (self.working, self.change, self.hillshade):
-            if self.project.mapLayer(layer.id()) is not None:
+        """Re-read the working and change files after they were written (skips removed layers)."""
+        for layer_id in (self.change_id, self.hillshade_id, self.working_id):
+            layer = self.project.mapLayer(layer_id)
+            if layer is not None:
                 layer.dataProvider().reloadData()
                 layer.triggerRepaint()
 
     def set_outlines(self, items) -> None:
-        """Replace the outlines with `items`: (name, tool label, QgsGeometry in the DEM CRS)."""
-        provider = self.outlines.dataProvider()
+        """Replace the outlines with `items`: (name, tool label, QgsGeometry in the DEM CRS).
+        Does nothing once the user removed the outline layer."""
+        layer = self.project.mapLayer(self.outlines_id)
+        if layer is None:
+            return
+        provider = layer.dataProvider()
         provider.truncate()
         features = []
         for name, tool, geometry in items:
-            feature = QgsFeature(self.outlines.fields())
+            feature = QgsFeature(layer.fields())
             feature.setAttributes([name, tool])
             feature.setGeometry(geometry)
             features.append(feature)
         provider.addFeatures(features)
-        self.outlines.updateExtents()
-        self.outlines.triggerRepaint()
+        layer.updateExtents()
+        layer.triggerRepaint()
 
     def set_hillshade_visible(self, visible: bool) -> None:
-        node = self.group.findLayer(self.hillshade.id()) if not sip.isdeleted(self.group) else None
+        node = None if sip.isdeleted(self.group) else self.group.findLayer(self.hillshade_id)
         if node is not None:
             node.setItemVisibilityChecked(visible)
 

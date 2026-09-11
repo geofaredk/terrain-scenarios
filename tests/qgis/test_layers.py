@@ -41,3 +41,17 @@ def test_remove_takes_the_group_and_its_layers_away(tmp_path):
     layers.remove()
     assert QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME) is None
     assert all(QgsProject.instance().mapLayer(i) is None for i in layers.layer_ids)
+
+
+def test_hillshade_toggle_and_cleanup_tolerate_layers_the_user_removed(tmp_path):
+    _, _, layers = _layers(tmp_path)
+    group = QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME)
+    layers.set_hillshade_visible(True)
+    assert group.findLayer(layers.hillshade_id).itemVisibilityChecked()
+    QgsProject.instance().removeMapLayers([layers.hillshade_id, layers.outlines_id])  # the user deletes two layers
+    layers.set_hillshade_visible(False)
+    layers.refresh()
+    layers.set_outlines([])
+    layers.remove()
+    assert QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME) is None
+    assert all(QgsProject.instance().mapLayer(i) is None for i in layers.layer_ids)

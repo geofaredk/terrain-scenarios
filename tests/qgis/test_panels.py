@@ -23,6 +23,7 @@ def test_properties_show_the_tool_fields_and_apply_changes(tmp_path):
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     page = PropertiesPage(c)
     page.show_feature(dike.id)
+    assert all(w.toolTip() for w in (page.amount, page.width, page.slope, page.reach, page.slope_position))
     assert page.amount_label.text() == "Height"
     assert page.form.isRowVisible(page.width) and page.form.isRowVisible(page.slope)
     assert not page.form.isRowVisible(page.slope_position)

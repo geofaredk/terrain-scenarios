@@ -34,6 +34,9 @@ class PropertiesPage(QWidget):
         self.summary.setWordWrap(True)
         self.amount_label = QLabel()
         self.amount = _spin(0.0, 100.0, 0.1, " m", 2)
+        self.amount.setToolTip(self.tr("How far the feature rises (height) or cuts (depth): above or below the "
+                                       "straight grade between the path's ends, the highest or lowest point of "
+                                       "the path or outline, or the terrain itself for Add and Subtract."))
         self.width = _spin(0.1, 500.0, 0.5, " m", 2)
         self.width.setToolTip(self.tr("Width of the crest (raise tools) or the bottom (lower tools) of the path."))
         self.slope = _spin(0.0, 50.0, 0.5, "", 1)

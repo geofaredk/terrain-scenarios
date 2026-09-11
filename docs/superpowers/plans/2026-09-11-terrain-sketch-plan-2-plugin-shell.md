@@ -2359,6 +2359,7 @@ def test_properties_show_the_tool_fields_and_apply_changes(tmp_path):
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     page = PropertiesPage(c)
     page.show_feature(dike.id)
+    assert all(w.toolTip() for w in (page.amount, page.width, page.slope, page.reach, page.slope_position))
     assert page.amount_label.text() == "Height"
     assert page.form.isRowVisible(page.width) and page.form.isRowVisible(page.slope)
     assert not page.form.isRowVisible(page.slope_position)
@@ -2487,6 +2488,9 @@ class PropertiesPage(QWidget):
         self.summary.setWordWrap(True)
         self.amount_label = QLabel()
         self.amount = _spin(0.0, 100.0, 0.1, " m", 2)
+        self.amount.setToolTip(self.tr("How far the feature rises (height) or cuts (depth): above or below the "
+                                       "straight grade between the path's ends, the highest or lowest point of "
+                                       "the path or outline, or the terrain itself for Add and Subtract."))
         self.width = _spin(0.1, 500.0, 0.5, " m", 2)
         self.width.setToolTip(self.tr("Width of the crest (raise tools) or the bottom (lower tools) of the path."))
         self.slope = _spin(0.0, 50.0, 0.5, "", 1)

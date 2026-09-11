@@ -113,6 +113,8 @@ class MainDock(QgsDockWidget):
 
     def _session_changed(self) -> None:
         has_dem = self.controller.has_dem
+        if not has_dem:
+            self.end_drawing()  # a drawing cannot outlive its session
         for widget in (self.export_button, self.hillshade_box, self.new_button, self.delete_button, self.feature_view):
             widget.setEnabled(has_dem)
         if self.controller.layers is not None:

@@ -1330,7 +1330,7 @@ git commit -m "feat(qgis_io): read the DEM, write working/change GeoTIFFs, expor
 
 **Interfaces:**
 - Consumes: `WorkingFiles` paths (Task 3).
-- Produces: `GROUP_NAME = "Terrain Sketch"`, `CHANGE_LIMIT = 2.0`; `SketchLayers(project, dem_layer, working_path, change_path)` inserts a group at the top with, top to bottom, "Sketch outlines" (read-only memory polygon layer, fields `name`, `tool`, dashed outline, labels), "Change (new − original)" (pseudocolour: blue cut … transparent 0 … orange-red fill, ±`CHANGE_LIMIT` m), "Hillshade" (hidden, 50 % opacity) and "Modified DEM" (renderer cloned from the DEM); attributes `outlines`, `change`, `hillshade`, `working`, `group`, `layer_ids`; methods `refresh()`, `set_outlines(items)` with `items = [(name, tool_label, QgsGeometry), …]`, `set_hillshade_visible(bool)`, `remove()` (tolerates layers already removed).
+- Produces: `GROUP_NAME = "Terrain Sketch"`, `CHANGE_LIMIT = 2.0`; `SketchLayers(project, dem_layer, working_path, change_path)` inserts a group at the top with, top to bottom, "Sketch outlines" (read-only memory polygon layer, fields `name`, `tool`, dashed outline, labels), "Change (new − original)" (pseudocolour: blue cut … transparent 0 … orange-red fill, ±`CHANGE_LIMIT` m), "Hillshade" (hidden, 50 % opacity) and "Modified DEM" (renderer cloned from the DEM); attributes `outlines`, `change`, `hillshade`, `working`, `group`, `layer_ids` and `outlines_id`, `change_id`, `hillshade_id`, `working_id`; methods `refresh()`, `set_outlines(items)` with `items = [(name, tool_label, QgsGeometry), …]`, `set_hillshade_visible(bool)`, `remove()` — all look layers up by id and skip layers the user already removed.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1379,6 +1379,20 @@ def test_remove_takes_the_group_and_its_layers_away(tmp_path):
     layers.remove()
     assert QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME) is None
     assert all(QgsProject.instance().mapLayer(i) is None for i in layers.layer_ids)
+
+
+def test_hillshade_toggle_and_cleanup_tolerate_layers_the_user_removed(tmp_path):
+    _, _, layers = _layers(tmp_path)
+    group = QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME)
+    layers.set_hillshade_visible(True)
+    assert group.findLayer(layers.hillshade_id).itemVisibilityChecked()
+    QgsProject.instance().removeMapLayers([layers.hillshade_id, layers.outlines_id])  # the user deletes two layers
+    layers.set_hillshade_visible(False)
+    layers.refresh()
+    layers.set_outlines([])
+    layers.remove()
+    assert QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME) is None
+    assert all(QgsProject.instance().mapLayer(i) is None for i in layers.layer_ids)
 ```
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -1424,30 +1438,36 @@ class SketchLayers:
             self.group.addLayer(layer)
         self.group.findLayer(self.hillshade.id()).setItemVisibilityChecked(False)
         self.layer_ids = [layer.id() for layer in (self.outlines, self.change, self.hillshade, self.working)]
+        self.outlines_id, self.change_id, self.hillshade_id, self.working_id = self.layer_ids
 
     def refresh(self) -> None:
-        """Re-read the working and change files after they were written."""
-        for layer in (self.working, self.change, self.hillshade):
-            if self.project.mapLayer(layer.id()) is not None:
+        """Re-read the working and change files after they were written (skips removed layers)."""
+        for layer_id in (self.change_id, self.hillshade_id, self.working_id):
+            layer = self.project.mapLayer(layer_id)
+            if layer is not None:
                 layer.dataProvider().reloadData()
                 layer.triggerRepaint()
 
     def set_outlines(self, items) -> None:
-        """Replace the outlines with `items`: (name, tool label, QgsGeometry in the DEM CRS)."""
-        provider = self.outlines.dataProvider()
+        """Replace the outlines with `items`: (name, tool label, QgsGeometry in the DEM CRS).
+        Does nothing once the user removed the outline layer."""
+        layer = self.project.mapLayer(self.outlines_id)
+        if layer is None:
+            return
+        provider = layer.dataProvider()
         provider.truncate()
         features = []
         for name, tool, geometry in items:
-            feature = QgsFeature(self.outlines.fields())
+            feature = QgsFeature(layer.fields())
             feature.setAttributes([name, tool])
             feature.setGeometry(geometry)
             features.append(feature)
         provider.addFeatures(features)
-        self.outlines.updateExtents()
-        self.outlines.triggerRepaint()
+        layer.updateExtents()
+        layer.triggerRepaint()
 
     def set_hillshade_visible(self, visible: bool) -> None:
-        node = self.group.findLayer(self.hillshade.id()) if not sip.isdeleted(self.group) else None
+        node = None if sip.isdeleted(self.group) else self.group.findLayer(self.hillshade_id)
         if node is not None:
             node.setItemVisibilityChecked(visible)
 
@@ -1484,8 +1504,8 @@ def _style_outlines(layer: QgsVectorLayer) -> None:
 ```
 - [ ] **Step 4: Run the tests**
 
-Run: `scripts/test.sh tests/qgis/test_layers.py` → Expected: `3 passed`
-Run: `scripts/test.sh` → Expected: `90 passed`
+Run: `scripts/test.sh tests/qgis/test_layers.py` → Expected: `4 passed`
+Run: `scripts/test.sh` → Expected: `91 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -1845,7 +1865,7 @@ class SketchController(QObject):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_controller.py` → Expected: `7 passed`
-Run: `scripts/test.sh` → Expected: `97 passed`
+Run: `scripts/test.sh` → Expected: `98 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -2057,7 +2077,7 @@ class DrawPolygonTool(DrawTool):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_map_tools.py` → Expected: `3 passed`
-Run: `scripts/test.sh` → Expected: `100 passed`
+Run: `scripts/test.sh` → Expected: `101 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -2268,7 +2288,7 @@ class FeatureListView(QListView):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_feature_list.py` → Expected: `3 passed`
-Run: `scripts/test.sh` → Expected: `103 passed`
+Run: `scripts/test.sh` → Expected: `104 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -2531,7 +2551,7 @@ class PropertiesPage(QWidget):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_panels.py` → Expected: `2 passed`
-Run: `scripts/test.sh` → Expected: `105 passed`
+Run: `scripts/test.sh` → Expected: `106 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -2957,7 +2977,7 @@ Run: `chmod +x scripts/dev_install.sh`
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_dock_plugin.py` → Expected: `3 passed`
-Run: `scripts/test.sh` → Expected: `108 passed`
+Run: `scripts/test.sh` → Expected: `109 passed`
 
 - [ ] **Step 5: Commit**
 

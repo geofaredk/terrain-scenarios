@@ -15,7 +15,7 @@ from .grid import DemGrid, Window
 from .mask import polygon_mask
 from .profiles import side_dz, side_limit
 from .stations import stations_offsets, vertex_stations
-from .tools import TOOL_INFO, Combine, Mode, PixelMode, Tool
+from .tools import TOOL_INFO, Combine, Mode, Tool
 from .volumes import cut_fill, pond_storage
 
 MARGIN_CELLS = 4  # >= nearest-valid search radius (3) + 1 for bilinear sampling
@@ -182,13 +182,12 @@ def _path_values(feature, info, drawn, view: DemGrid, long_profile):
     if feature.tool is Tool.INTERPOLATE:
         station, _ = _stations(coords, view, core)
         return np.interp(station, [p[0] for p in profile], [p[1] for p in profile]), core
-    band = core if feature.pixel_mode is PixelMode.CENTRE else polygon_mask(band_geom, view, PixelMode.CENTRE)
-    if not band.any():
+    if not core.any():
         return old, core
-    # distance beyond the flat-capped corridor edge (the outline lies half a cell from band centres)
-    dist = ndimage.distance_transform_edt(~band, sampling=(view.cell_height, view.cell_width))
+    # distance beyond the crest (the outline lies half a cell from core centres)
+    dist = ndimage.distance_transform_edt(~core, sampling=(view.cell_height, view.cell_width))
     beyond = np.maximum(dist - 0.5 * view.cell_size, 0.0)
-    # stations only where a cell can change: the corridor and the cells within slope reach
+    # stations only where a cell can change: the crest and the cells within slope reach
     station, offset = _stations(coords, view, core | (beyond <= _path_side_limit(feature)))
     zline = np.interp(station, [p[0] for p in profile], [p[1] for p in profile])
     dz_l, ext_l = side_dz(beyond, feature.cross_left, feature.slope_n, feature.reach, info.direction)
@@ -196,7 +195,7 @@ def _path_values(feature, info, drawn, view: DemGrid, long_profile):
     left = offset < 0.0
     in_extent = np.where(left, ext_l, ext_r)
     dz = np.where(core, 0.0, np.where(left, dz_l, dz_r))
-    slope_cells = ~band & ~core & in_extent
+    slope_cells = ~core & in_extent
     return _combine(info.combine, old, zline + dz), core | slope_cells
 
 

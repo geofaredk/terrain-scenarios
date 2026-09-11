@@ -147,6 +147,21 @@ def test_dragged_long_profile_still_never_cuts():
     assert after2[ROW, 20] == pytest.approx(12.0 + 2.0 * (20.5 - 5.25) / 29.5, abs=1e-3)
 
 
+@pytest.mark.parametrize("mode", list(PixelMode))
+@pytest.mark.parametrize("tool, sign", [(Tool.RAISE_PATH, 1.0), (Tool.LOWER_PATH, -1.0)])
+def test_path_cross_section_has_no_gap_in_any_pixel_mode(tool, sign, mode):
+    """Slope distance must be measured from the pixel-mode's own crest (`core`), not always
+    from the centre-mode band: otherwise the ring between the crest and the band is neither
+    crest nor slope and stays untouched, leaving a gap in the cross-section (I1)."""
+    _, after, _ = run(make_grid(flat(10)),
+                      feature(tool, Mode.PATH, EAST_WEST, amount=2.0, width=4.0, slope_n=2.0, pixel_mode=mode))
+    col = sign * (after[:, 20] - 10.0)
+    top = int(np.argmax(col))
+    assert col[top] == pytest.approx(2.0)
+    assert (np.diff(col[top::-1]) <= 1e-6).all()
+    assert (np.diff(col[top:]) <= 1e-6).all()
+
+
 def test_problem_flags():
     grid = make_grid(flat(10))
     far = feature(Tool.ADD, Mode.PATH, line_wkb([(500, 500), (600, 600)]))

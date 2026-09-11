@@ -1,5 +1,5 @@
 import pytest
-from qgis.core import QgsProject
+from qgis.core import Qgis, QgsProject
 
 import terrain_sketch.gui.controller as controller_module
 from qgis_helpers import UTM, dem_layer, line_through, read_tif, sample, start_session
@@ -91,6 +91,26 @@ def test_failing_working_files_keep_the_previous_session(tmp_path, monkeypatch):
     assert c.has_dem
     assert c.features == (dike,)
     assert c.files is not None and c.layers is not None
+
+
+def test_removing_a_result_layer_keeps_the_session(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    messages = []
+    c.message.connect(lambda level, text: messages.append((level, text)))
+    QgsProject.instance().removeMapLayer(c.layers.hillshade_id)
+    assert c.has_dem and c.features == (dike,)
+    assert messages and messages[-1][0] == Qgis.MessageLevel.Info
+    c.update_feature(dike.id, amount=2.0)
+    assert sample(c.layers.working, 20, 20) == pytest.approx(12.0)
+
+
+def test_a_new_project_drops_the_session_without_a_message(tmp_path):
+    c = start_session(tmp_path)
+    messages = []
+    c.message.connect(lambda level, text: messages.append(text))
+    QgsProject.instance().clear()
+    assert not c.has_dem and not messages
 
 
 def test_a_geographic_dem_is_refused_without_side_effects(tmp_path):

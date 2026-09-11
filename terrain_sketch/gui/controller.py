@@ -16,7 +16,7 @@ from ..model.feature import TerrainFeature, new_feature
 from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import DemError, WorkingFiles, export_dem, read_dem
-from .help_texts import EXPORT_OVER_SOURCE, NO_SESSION, TOOL_LABELS
+from .help_texts import EXPORT_OVER_SOURCE, NO_SESSION, RESULT_LAYER_REMOVED, SESSION_ENDED_DEM_REMOVED, TOOL_LABELS
 
 LOG_TAG = "Terrain Sketch"
 
@@ -41,6 +41,7 @@ class SketchController(QObject):
         self._closing = False
         project.layersRemoved.connect(self._on_layers_removed)
         project.cleared.connect(self._drop_session)
+        project.aboutToBeCleared.connect(self._drop_session)
 
     @property
     def has_dem(self) -> bool:
@@ -99,6 +100,7 @@ class SketchController(QObject):
         self.close()
         self.project.layersRemoved.disconnect(self._on_layers_removed)
         self.project.cleared.disconnect(self._drop_session)
+        self.project.aboutToBeCleared.disconnect(self._drop_session)
 
     def add_drawn(self, tool: Tool, mode: Mode, geometry: QgsGeometry, crs) -> TerrainFeature | None:
         """Turn a drawn geometry (in `crs`) into a new feature with default values. Returns None,
@@ -193,7 +195,8 @@ class SketchController(QObject):
         if self._closing or self.stack is None:
             return
         ids = {item if isinstance(item, str) else item.id() for item in items}
-        if ids & ({self.dem_layer_id} | set(self.layers.layer_ids)):
+        if self.dem_layer_id in ids:
             self.close()  # the removal has finished, so the remaining session layers can go too
-            self.message.emit(Qgis.MessageLevel.Warning, "The Terrain Sketch session ended because its DEM "
-                                                         "or result layers were removed.")
+            self.message.emit(Qgis.MessageLevel.Warning, SESSION_ENDED_DEM_REMOVED)
+        elif ids & set(self.layers.layer_ids):
+            self.message.emit(Qgis.MessageLevel.Info, RESULT_LAYER_REMOVED)

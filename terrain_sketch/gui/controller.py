@@ -149,14 +149,22 @@ class SketchController(QObject):
             self.layers.set_hillshade_visible(visible)
 
     def _set(self, features) -> None:
-        self._features = list(features)
+        features = list(features)
         try:
-            window = self.stack.update(self._features)
+            window = self.stack.update(features)
+        except Exception:  # noqa: BLE001 — never let an engine error take QGIS down or desync the feature list
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+            self.message.emit(Qgis.MessageLevel.Critical, "Terrain Sketch could not update the terrain; "
+                                                          "see the 'Terrain Sketch' log tab for details.")
+            self.featuresChanged.emit()
+            return
+        self._features = features
+        try:
             if window is not None:
                 self.files.write(window, self.stack.working)
                 self.layers.refresh()
             self.layers.set_outlines(self._outline_items())
-        except Exception:  # noqa: BLE001 — never let an engine error take QGIS down
+        except Exception:  # noqa: BLE001 — never let a file/layer error take QGIS down
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
             self.message.emit(Qgis.MessageLevel.Critical, "Terrain Sketch could not update the terrain; "
                                                           "see the 'Terrain Sketch' log tab for details.")

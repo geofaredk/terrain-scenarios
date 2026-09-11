@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from helpers import feature, flat, make_grid, tilted
+import terrain_sketch.core.engine as engine_module
 from terrain_sketch.core.engine import FeatureStack
 from terrain_sketch.core.geometry import line_wkb, polygon_wkb
 from terrain_sketch.core.grid import DemGrid
@@ -77,6 +78,23 @@ def test_reference_elevations_follow_earlier_features():
     stack.update([replace(pad, amount=3.0), dike])
     assert stack.working.data[19, 20] == pytest.approx(12.0, abs=1e-3)
     np.testing.assert_allclose(stack.working.data, oracle(stack.original, stack.features))
+
+
+def test_a_failing_update_leaves_the_stack_unchanged(monkeypatch):
+    stack = FeatureStack(make_grid(flat(10)))
+    f = feature(Tool.ADD, Mode.AREA, square(10.3, 10.3, 15.3, 15.3), amount=1.0)
+    stack.update([f])
+    features_before = stack.features
+    working_before = stack.working.data.copy()
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(engine_module, "apply_feature", boom)
+    with pytest.raises(RuntimeError):
+        stack.update([replace(f, amount=2.0)])
+    assert stack.features == features_before
+    np.testing.assert_array_equal(stack.working.data, working_before)
 
 
 def test_preview_does_not_change_the_stack():

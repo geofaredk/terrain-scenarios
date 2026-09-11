@@ -84,15 +84,20 @@ class FeatureStack:
         return Preview(window, grid, stats)
 
     def update(self, features) -> Window | None:
-        """Make `features` the current list and recompute; returns the changed window."""
+        """Make `features` the current list and recompute; returns the changed window.
+
+        Computes before touching any state, so a failure (e.g. a bad geometry raising inside
+        `compute`) leaves `features`, `working` and `stats` exactly as they were."""
         features = tuple(features)
         dirty = self.dirty_window(features)
-        self.features = features
-        self._refresh_bookkeeping()
         if dirty is None:
+            self.features = features
+            self._refresh_bookkeeping()
             return None
         window, replay = self.closure(dirty, features)
         grid, stats = self.compute(replay, window)
+        self.features = features
+        self._refresh_bookkeeping()
         self.working.data[window.slices] = grid.data
         self.stats.update(stats)
         return window

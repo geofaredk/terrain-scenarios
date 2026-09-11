@@ -113,6 +113,23 @@ def test_a_new_project_drops_the_session_without_a_message(tmp_path):
     assert not c.has_dem and not messages
 
 
+def test_an_engine_error_keeps_the_previous_feature_list(tmp_path, monkeypatch):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    assert dike.amount == pytest.approx(1.0)
+    messages = []
+    c.message.connect(lambda level, text: messages.append(text))
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(c.stack, "update", boom)
+    c.update_feature(dike.id, amount=5.0)
+    assert messages
+    assert c.feature(dike.id).amount == pytest.approx(1.0)
+    assert sample(c.layers.working, 20, 20) == pytest.approx(11.0)
+
+
 def test_a_geographic_dem_is_refused_without_side_effects(tmp_path):
     c = SketchController(QgsProject.instance())
     with pytest.raises(DemError):

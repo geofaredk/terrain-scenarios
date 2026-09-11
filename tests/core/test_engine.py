@@ -6,6 +6,7 @@ import pytest
 from helpers import feature, flat, make_grid, tilted
 from terrain_sketch.core.engine import FeatureStack
 from terrain_sketch.core.geometry import line_wkb, polygon_wkb
+from terrain_sketch.core.grid import DemGrid
 from terrain_sketch.core.operations import FLAG_OUTSIDE, apply_feature
 from terrain_sketch.core.tools import TOOL_INFO, Mode, PixelMode, Tool
 
@@ -133,6 +134,77 @@ def test_windowed_updates_match_full_replay(seed):
             features.pop(int(rng.integers(len(features))))
         else:
             features.append(random_feature(rng, 100 + step, size))
+        stack.update(features)
+        np.testing.assert_allclose(stack.working.data, oracle(stack.original, features), atol=1e-4,
+                                   err_msg=f"seed {seed} step {step}")
+
+
+_X0, _Y0, _CELL, _N = 612345.6, 6178901.2, 0.4, 60
+
+
+def _realistic_grid():
+    """North-up grid with a non-integer, sub-metre origin and 0.4 m cells."""
+    gt = (_X0, _CELL, 0.0, _Y0 + _N * _CELL, 0.0, -_CELL)
+    xs = np.arange(_N) + 0.5
+    ys = _N - (np.arange(_N) + 0.5)
+    X, Y = np.meshgrid(xs, ys)
+    data = (10 + 0.05 * X + 2 * np.sin(X / 7) * np.cos(Y / 5)).astype(np.float32)
+    return DemGrid.from_array(data, gt)
+
+
+def _to_world(u, v):
+    return _X0 + u * _CELL, _Y0 + v * _CELL
+
+
+def _snapped_random_feature(rng, i):
+    """Like `random_feature`, but on the realistic grid: coordinates snapped to half cells
+    (so they land exactly on cell edges/centres) and widths/reach scaled by the cell size."""
+    tool = list(Tool)[rng.integers(len(Tool))]
+    modes = TOOL_INFO[tool].modes
+    mode = modes[rng.integers(len(modes))]
+    snap = lambda a: np.round(a * 2) / 2  # noqa: E731
+    if mode is Mode.PATH:
+        pts = snap(rng.uniform(3, _N - 3, (int(rng.integers(2, 5)), 2)))
+        wkb = line_wkb([_to_world(*p) for p in pts])
+    else:
+        cx, cy = rng.uniform(8, _N - 8, 2)
+        radius = rng.uniform(2, 6)
+        angles = np.sort(rng.uniform(0, 2 * np.pi, 6))
+        pts = snap(np.c_[cx + radius * np.cos(angles), cy + radius * np.sin(angles)])
+        wkb = polygon_wkb([_to_world(*p) for p in pts])
+    return feature(tool, mode, wkb, id=f"f{i}", amount=float(rng.uniform(0.2, 3)),
+                   width=float(rng.uniform(1, 4)) * _CELL, slope_n=float(rng.choice([0.0, 1.5, 3.0])),
+                   reach=float(rng.uniform(2, 8)) * _CELL,
+                   slopes_inside=bool(rng.integers(2)) if mode is Mode.AREA else False,
+                   pixel_mode=list(PixelMode)[rng.integers(len(PixelMode))])
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_windowed_updates_match_full_replay_on_a_realistic_grid(seed):
+    """Same property as test_windowed_updates_match_full_replay, but on a non-integer,
+    sub-metre-cell geotransform where a ULP-level offset between a window taken through a
+    subgrid and one taken directly can flip GDAL rasterization on boundaries snapped to
+    cell edges/centres (C1)."""
+    rng = np.random.default_rng(seed)
+    stack = FeatureStack(_realistic_grid())
+    features = [_snapped_random_feature(rng, i) for i in range(int(rng.integers(1, 9)))]
+    stack.update(features)
+    np.testing.assert_allclose(stack.working.data, oracle(stack.original, features), atol=1e-4)
+    for step in range(8):
+        action = int(rng.integers(5))
+        if action == 0 and features:
+            k = int(rng.integers(len(features)))
+            features[k] = replace(features[k], amount=float(rng.uniform(0.2, 3)))
+        elif action == 1 and features:
+            k = int(rng.integers(len(features)))
+            features[k] = replace(features[k], enabled=not features[k].enabled)
+        elif action == 2 and len(features) > 1:
+            i, j = rng.choice(len(features), 2, replace=False)
+            features[i], features[j] = features[j], features[i]
+        elif action == 3 and features:
+            features.pop(int(rng.integers(len(features))))
+        else:
+            features.append(_snapped_random_feature(rng, 100 + step))
         stack.update(features)
         np.testing.assert_allclose(stack.working.data, oracle(stack.original, features), atol=1e-4,
                                    err_msg=f"seed {seed} step {step}")

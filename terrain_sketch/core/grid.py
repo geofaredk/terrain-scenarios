@@ -47,7 +47,7 @@ class Window:
 class DemGrid:
     """A north-up raster block. `data` is float32; cells where `valid` is False are nodata."""
 
-    def __init__(self, data: np.ndarray, valid: np.ndarray, geotransform):
+    def __init__(self, data: np.ndarray, valid: np.ndarray, geotransform, offset=(0, 0)):
         gt = tuple(float(v) for v in geotransform)
         if gt[2] != 0.0 or gt[4] != 0.0:
             raise ValueError("Rotated rasters are not supported")
@@ -55,7 +55,14 @@ class DemGrid:
             raise ValueError("Raster must be north-up (negative pixel height)")
         self.data = data
         self.valid = valid
-        self.geotransform = gt
+        self.root = gt
+        self.offset = (int(offset[0]), int(offset[1]))
+
+    @property
+    def geotransform(self) -> tuple:
+        rx0, px, _, ry0, _, py = self.root
+        row_off, col_off = self.offset
+        return (rx0 + col_off * px, px, 0.0, ry0 + row_off * py, 0.0, py)
 
     @classmethod
     def from_array(cls, array, geotransform, nodata=None) -> DemGrid:
@@ -94,31 +101,40 @@ class DemGrid:
         return Window(0, 0, self.rows, self.cols)
 
     def copy(self) -> DemGrid:
-        return DemGrid(self.data.copy(), self.valid.copy(), self.geotransform)
+        return DemGrid(self.data.copy(), self.valid.copy(), self.root, self.offset)
 
     def window_geotransform(self, window: Window) -> tuple:
-        x0, px, _, y0, _, py = self.geotransform
-        return (x0 + window.col0 * px, px, 0.0, y0 + window.row0 * py, 0.0, py)
+        """Root-based geotransform of `window` (in this grid's local coordinates): every path
+        to the same absolute cells produces a bit-identical tuple."""
+        rx0, px, _, ry0, _, py = self.root
+        row_off, col_off = self.offset
+        return (rx0 + (col_off + window.col0) * px, px, 0.0, ry0 + (row_off + window.row0) * py, 0.0, py)
 
     def subgrid(self, window: Window) -> DemGrid:
         """Independent copy of a window."""
         rs, cs = window.slices
-        return DemGrid(self.data[rs, cs].copy(), self.valid[rs, cs].copy(), self.window_geotransform(window))
+        row_off, col_off = self.offset
+        offset = (row_off + window.row0, col_off + window.col0)
+        return DemGrid(self.data[rs, cs].copy(), self.valid[rs, cs].copy(), self.root, offset)
 
     def view(self, window: Window) -> DemGrid:
         """Window sharing memory with this grid: writes to the view change this grid."""
         rs, cs = window.slices
-        return DemGrid(self.data[rs, cs], self.valid[rs, cs], self.window_geotransform(window))
+        row_off, col_off = self.offset
+        offset = (row_off + window.row0, col_off + window.col0)
+        return DemGrid(self.data[rs, cs], self.valid[rs, cs], self.root, offset)
 
     def world_to_pixel(self, x: float, y: float) -> tuple[float, float]:
         """Continuous (col, row); cell (r, c) covers [c, c+1) x [r, r+1)."""
-        x0, px, _, y0, _, py = self.geotransform
-        return (x - x0) / px, (y - y0) / py
+        rx0, px, _, ry0, _, py = self.root
+        row_off, col_off = self.offset
+        return (x - rx0) / px - col_off, (y - ry0) / py - row_off
 
     def cell_centers(self) -> tuple[np.ndarray, np.ndarray]:
-        x0, px, _, y0, _, py = self.geotransform
-        xs = x0 + (np.arange(self.cols) + 0.5) * px
-        ys = y0 + (np.arange(self.rows) + 0.5) * py
+        rx0, px, _, ry0, _, py = self.root
+        row_off, col_off = self.offset
+        xs = rx0 + (col_off + np.arange(self.cols) + 0.5) * px
+        ys = ry0 + (row_off + np.arange(self.rows) + 0.5) * py
         return np.meshgrid(xs, ys)
 
     def window_for_bbox(self, xmin, ymin, xmax, ymax, margin_cells: int = 0) -> Window | None:

@@ -49,3 +49,17 @@ def test_sample_uses_nearest_valid_cell_next_to_nodata():
     g = make_grid(lambda X, Y: X, rows=10, cols=10, nodata_cells=[(5, 5)])
     assert g.sample(5.5, 4.5) in (4.5, 5.5, 6.5)
     assert math.isnan(g.sample(50.0, 50.0))
+
+
+def test_nested_windows_share_bit_identical_geotransforms():
+    """On a realistic (non-integer, sub-metre) geotransform, a window taken through a
+    subgrid must land on exactly the same geotransform as a direct window on the root grid —
+    otherwise rasterization of boundaries on cell edges can flip by a ULP-level offset."""
+    g = DemGrid.from_array(np.zeros((60, 60), np.float32), (612345.6, 0.4, 0.0, 6178925.2, 0.0, -0.4))
+    a, b, c, d = 0, 1, 0, 2
+    nested = g.subgrid(Window(a, b, 30, 30)).view(Window(c, d, 10, 10))
+    direct = g.view(Window(a + c, b + d, 10, 10))
+    assert nested.geotransform == direct.geotransform
+    X1, Y1 = nested.cell_centers()
+    X2, Y2 = direct.cell_centers()
+    assert (X1 == X2).all() and (Y1 == Y2).all()

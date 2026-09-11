@@ -54,6 +54,8 @@ FLAG_TEXTS = {
 DRAW_HINT = ("Click to add points. Right-click or press Enter to finish, Backspace removes the last "
              "point, Esc cancels.")
 
+NO_SESSION = "Pick a DEM and press Start first."
+
 
 def amount_label(tool: Tool) -> str | None:
     """Label of the amount field, or None when the tool has no amount."""

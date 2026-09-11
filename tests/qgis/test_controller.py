@@ -72,3 +72,14 @@ def test_a_geographic_dem_is_refused_without_side_effects(tmp_path):
         c.set_dem(dem_layer(tmp_path, crs="EPSG:4326", gt=(9.0, 0.001, 0.0, 55.7, 0.0, -0.001)))
     assert not c.has_dem
     assert QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME) is None
+
+
+def test_drawing_or_exporting_without_a_session_is_reported_not_raised(tmp_path):
+    c = start_session(tmp_path)
+    c.close()  # e.g. the DEM layer was removed while the user was still drawing
+    messages = []
+    c.message.connect(lambda level, text: messages.append(text))
+    assert c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM) is None
+    assert messages and not c.dem_crs.isValid()
+    with pytest.raises(RuntimeError, match="Start"):
+        c.export_dem(str(tmp_path / "out.tif"))

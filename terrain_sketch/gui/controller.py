@@ -15,7 +15,7 @@ from ..model.feature import TerrainFeature, new_feature
 from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import WorkingFiles, export_dem, read_dem
-from .help_texts import TOOL_LABELS
+from .help_texts import NO_SESSION, TOOL_LABELS
 
 LOG_TAG = "Terrain Sketch"
 
@@ -91,7 +91,11 @@ class SketchController(QObject):
         self.project.cleared.disconnect(self._drop_session)
 
     def add_drawn(self, tool: Tool, mode: Mode, geometry: QgsGeometry, crs) -> TerrainFeature | None:
-        """Turn a drawn geometry (in `crs`) into a new feature with default values."""
+        """Turn a drawn geometry (in `crs`) into a new feature with default values. Returns None,
+        with a message, when the drawing cannot be used or no session is active."""
+        if not self.has_dem:
+            self.message.emit(Qgis.MessageLevel.Warning, NO_SESSION)
+            return None
         try:
             wkb = to_dem_wkb(geometry, crs, self.dem_crs, mode)
         except ValueError as error:
@@ -117,6 +121,9 @@ class SketchController(QObject):
         self._set([by_id[i] for i in ids])
 
     def export_dem(self, path: str) -> None:
+        """Write the modified DEM to `path`; raises RuntimeError without a session."""
+        if not self.has_dem:
+            raise RuntimeError(NO_SESSION)
         export_dem(path, self.stack.working, self.info)
 
     def set_hillshade_visible(self, visible: bool) -> None:
@@ -160,6 +167,7 @@ class SketchController(QObject):
         had_session = self.stack is not None
         self.stack = self.info = self.files = self.layers = None
         self.dem_layer_id = None
+        self.dem_crs = QgsCoordinateReferenceSystem()
         self._features = []
         if had_session:
             self.sessionChanged.emit()

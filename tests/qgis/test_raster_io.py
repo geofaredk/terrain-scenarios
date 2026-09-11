@@ -50,3 +50,16 @@ def test_export_keeps_nodata_and_nudges_clashing_values(tmp_path):
     assert exported.dtype == np.float32 and nodata == -9999.0
     assert exported[0, 0] == -9999.0
     assert exported[1, 1] != -9999.0 and exported[1, 1] == pytest.approx(-9999.0)
+
+
+def test_change_raster_keeps_valid_cells_when_nodata_is_zero(tmp_path):
+    array = np.full((10, 10), 10.0, np.float32)
+    array[0, 0] = 0.0
+    grid, info = read_dem(dem_layer(tmp_path, array, nodata=0.0))
+    files = WorkingFiles(str(tmp_path / "session"), grid, info)
+    change, nodata = read_tif(files.change_path)
+    assert nodata == 0.0 and change[0, 0] == 0.0  # the real nodata cell stays nodata
+    assert (change[1:, 1:] != 0.0).all() and change[5, 5] == pytest.approx(0.0)  # unchanged cells are no holes
+    files.write(Window(5, 5, 1, 1), grid.copy())
+    change, _ = read_tif(files.change_path)
+    assert change[5, 5] != 0.0

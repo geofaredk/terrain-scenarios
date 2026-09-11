@@ -68,17 +68,17 @@ class WorkingFiles:
         self._original = original
         self._info = info
         _write_tif(self.working_path, _for_output(original.data, original.valid, info.nodata), original, info)
-        change = np.where(original.valid, 0.0, info.nodata).astype(np.float32)
-        _write_tif(self.change_path, change, original, info)
+        _write_tif(self.change_path, _for_output(np.zeros(original.data.shape), original.valid, info.nodata),
+                   original, info)
 
     def write(self, window: Window, working: DemGrid) -> None:
         """Write one window of the working DEM and its change into both files."""
         rows, cols = window.slices
         valid = self._original.valid[rows, cols]
         values = working.data[rows, cols]
-        change = np.where(valid, values.astype(np.float64) - self._original.data[rows, cols], self._info.nodata)
+        change = values.astype(np.float64) - self._original.data[rows, cols]
         for path, block in ((self.working_path, _for_output(values, valid, self._info.nodata)),
-                            (self.change_path, change.astype(np.float32))):
+                            (self.change_path, _for_output(change, valid, self._info.nodata))):
             ds = gdal.Open(path, gdal.GA_Update)
             ds.GetRasterBand(1).WriteArray(block, window.col0, window.row0)
             ds.FlushCache()

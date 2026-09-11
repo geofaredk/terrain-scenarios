@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 
-from helpers import flat, make_grid
+from helpers import feature, flat, make_grid
+from terrain_sketch.core.geometry import line_wkb
+from terrain_sketch.core.operations import apply_feature
+from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.core.volumes import cut_fill, pond_storage, total_cut_fill
 
 
@@ -33,3 +36,14 @@ def test_total_cut_fill_compares_working_with_original():
     working.data[1, 1] = 9
     cut, fill = total_cut_fill(original, working)
     assert cut == pytest.approx(1.0) and fill == pytest.approx(2.0)
+
+
+def test_dike_volume_matches_prism_plus_end_slopes():
+    grid = make_grid(flat(0.0), rows=160, cols=160, cell=0.25)
+    dike = feature(Tool.RAISE_PATH, Mode.PATH, line_wkb([(10.0, 20.0), (30.0, 20.0)]),
+                   amount=1.0, width=2.0, slope_n=2.0)
+    stats = apply_feature(dike, grid)
+    W, H, n, L = 2.0, 1.0, 2.0, 20.0
+    prism = L * (W * H + n * H * H)
+    ends = W * n * H * H + np.pi * n * n * H ** 3 / 3.0  # two wedges + four quarter cones
+    assert stats.fill == pytest.approx(prism + ends, rel=0.03)

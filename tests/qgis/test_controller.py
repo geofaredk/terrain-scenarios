@@ -66,6 +66,17 @@ def test_removing_the_dem_layer_ends_the_session(tmp_path):
     assert QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME) is None
 
 
+def test_export_refuses_to_overwrite_the_source_dem(tmp_path):
+    c = start_session(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    with pytest.raises(RuntimeError):
+        c.export_dem(c.info.path)
+    with pytest.raises(RuntimeError):
+        c.export_dem(c.files.working_path)
+    source, _ = read_tif(c.info.path)
+    assert source[20, 20] == pytest.approx(10.0)
+
+
 def test_a_geographic_dem_is_refused_without_side_effects(tmp_path):
     c = SketchController(QgsProject.instance())
     with pytest.raises(DemError):

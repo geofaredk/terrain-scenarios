@@ -1,6 +1,7 @@
 """SketchController: the one place where the GUI talks to the engine, the files and the layers."""
 from __future__ import annotations
 
+import os
 import tempfile
 import traceback
 from dataclasses import replace
@@ -15,7 +16,7 @@ from ..model.feature import TerrainFeature, new_feature
 from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import WorkingFiles, export_dem, read_dem
-from .help_texts import NO_SESSION, TOOL_LABELS
+from .help_texts import EXPORT_OVER_SOURCE, NO_SESSION, TOOL_LABELS
 
 LOG_TAG = "Terrain Sketch"
 
@@ -121,9 +122,15 @@ class SketchController(QObject):
         self._set([by_id[i] for i in ids])
 
     def export_dem(self, path: str) -> None:
-        """Write the modified DEM to `path`; raises RuntimeError without a session."""
+        """Write the modified DEM to `path`; raises RuntimeError without a session, or if `path`
+        would overwrite the source DEM or one of this session's working files."""
         if not self.has_dem:
             raise RuntimeError(NO_SESSION)
+        target = os.path.realpath(path)
+        protected = {os.path.realpath(self.info.path), os.path.realpath(self.files.working_path),
+                    os.path.realpath(self.files.change_path)}
+        if target in protected:
+            raise RuntimeError(EXPORT_OVER_SOURCE)
         export_dem(path, self.stack.working, self.info)
 
     def set_hillshade_visible(self, visible: bool) -> None:

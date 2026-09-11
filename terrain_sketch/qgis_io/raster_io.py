@@ -39,11 +39,15 @@ def read_dem(layer) -> tuple[DemGrid, DemInfo]:
     if layer.crs().isGeographic():
         raise DemError("The DEM uses latitude/longitude. Slopes and widths need metres: reproject it to a "
                        "projected CRS first (Raster ▸ Projections ▸ Warp).")
-    ds = gdal.Open(layer.source())
-    band = ds.GetRasterBand(1)
-    nodata = band.GetNoDataValue()
     try:
-        grid = DemGrid.from_array(band.ReadAsArray(), ds.GetGeoTransform(), nodata)
+        ds = gdal.Open(layer.source())
+        band = ds.GetRasterBand(1)
+        nodata = band.GetNoDataValue()
+        array = band.ReadAsArray()
+    except (RuntimeError, MemoryError) as error:
+        raise DemError(f"The DEM could not be read: {error}") from error
+    try:
+        grid = DemGrid.from_array(array, ds.GetGeoTransform(), nodata)
     except ValueError as error:
         raise DemError(f"This raster cannot be used as the DEM: {error}.") from error
     warnings = []

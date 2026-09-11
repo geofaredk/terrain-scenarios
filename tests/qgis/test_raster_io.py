@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pytest
 
@@ -13,6 +15,13 @@ def test_read_dem_returns_grid_and_info(tmp_path):
     assert grid.data.shape == (30, 40) and not grid.valid[0, 0] and grid.valid[0, 1]
     assert grid.geotransform == (X0, CELL, 0.0, Y0, 0.0, -CELL)
     assert info.nodata == -9999.0 and info.warnings == () and info.band_count == 1
+
+
+def test_a_dem_whose_file_disappeared_raises_dem_error(tmp_path):
+    layer = dem_layer(tmp_path)
+    os.remove(layer.source())
+    with pytest.raises(DemError):
+        read_dem(layer)
 
 
 def test_geographic_dem_is_refused(tmp_path):

@@ -1,6 +1,7 @@
 import pytest
 from qgis.core import QgsProject
 
+import terrain_sketch.gui.controller as controller_module
 from qgis_helpers import UTM, dem_layer, line_through, read_tif, sample, start_session
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.controller import SketchController
@@ -75,6 +76,21 @@ def test_export_refuses_to_overwrite_the_source_dem(tmp_path):
         c.export_dem(c.files.working_path)
     source, _ = read_tif(c.info.path)
     assert source[20, 20] == pytest.approx(10.0)
+
+
+def test_failing_working_files_keep_the_previous_session(tmp_path, monkeypatch):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+
+    def boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(controller_module, "WorkingFiles", boom)
+    with pytest.raises(DemError):
+        c.set_dem(dem_layer(tmp_path, name="other"))
+    assert c.has_dem
+    assert c.features == (dike,)
+    assert c.files is not None and c.layers is not None
 
 
 def test_a_geographic_dem_is_refused_without_side_effects(tmp_path):

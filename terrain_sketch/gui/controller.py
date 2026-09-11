@@ -15,7 +15,7 @@ from ..core.tools import Mode, Tool
 from ..model.feature import TerrainFeature, new_feature
 from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
-from ..qgis_io.raster_io import WorkingFiles, export_dem, read_dem
+from ..qgis_io.raster_io import DemError, WorkingFiles, export_dem, read_dem
 from .help_texts import EXPORT_OVER_SOURCE, NO_SESSION, TOOL_LABELS
 
 LOG_TAG = "Terrain Sketch"
@@ -61,13 +61,22 @@ class SketchController(QObject):
         return from_wkb(self.feature(fid).geometry_wkb)
 
     def set_dem(self, layer) -> None:
-        """Start a new session on `layer`. Raises DemError (user-facing message) before changing anything."""
+        """Start a new session on `layer`. Raises DemError (user-facing message) before changing anything;
+        if it fails after the previous session was already closed, the session is dropped cleanly."""
         grid, info = read_dem(layer)
+        try:
+            files = WorkingFiles(tempfile.mkdtemp(prefix="terrain_sketch_"), grid, info)
+        except (OSError, RuntimeError, MemoryError) as error:
+            raise DemError(f"Terrain Sketch could not create its working files: {error}") from error
         self.close()
         self.stack = FeatureStack(grid)
         self.info = info
-        self.files = WorkingFiles(tempfile.mkdtemp(prefix="terrain_sketch_"), grid, info)
-        self.layers = SketchLayers(self.project, layer, self.files.working_path, self.files.change_path)
+        self.files = files
+        try:
+            self.layers = SketchLayers(self.project, layer, self.files.working_path, self.files.change_path)
+        except Exception as error:  # noqa: BLE001 — never leave a half-built session behind
+            self._drop_session()
+            raise DemError(f"Terrain Sketch could not create its layers: {error}") from error
         self.dem_layer_id = layer.id()
         self.dem_crs = QgsCoordinateReferenceSystem(layer.crs())
         for warning in info.warnings:

@@ -121,7 +121,7 @@ tests/
 ### 5.1 Shared concepts
 
 - **Reference terrain.** Elevations a tool reads (start and end point, vertices, boundary) come from the terrain as it stands **at that feature's position in the list**, meaning the original plus all enabled features earlier in the list. Point elevations use bilinear sampling. A reference point on nodata uses the nearest valid cell within 3 cells; otherwise the feature is flagged (§9).
-- **Path corridor.** A path feature has a **width** W: the crest for raise tools, the bottom for lower tools, the band for the other tools. The corridor is the line buffered by W/2 with flat end caps and mitre joins (OGR `BufferEx`). The minimum W is 1 cell size. The default W is `max(3 × cell size, 1 m)`, rounded to a sensible value.
+- **Path corridor.** A path feature has a **width** W: the crest for raise tools, the bottom for lower tools, the band for the other tools. The corridor is the line buffered by W/2 with flat end caps and mitre joins (OGR `Geometry.Buffer(W/2, ["ENDCAP_STYLE=FLAT", "JOIN_STYLE=MITRE"])`, verified with the GDAL 3.13 bindings in QGIS 4.2.2). The minimum W is 1 cell size. The default W is `max(3 × cell size, 1 m)`, rounded to a sensible value.
 - **Stations.** For each cell in the working window, `stations.py` computes the station *s* (distance along the path of the nearest point) and the signed offset *o* (left negative, right positive). Before this step, freehand lines are simplified with a tolerance of half a cell.
 - **Design surface for paths:** `design(cell) = z(s) + cross(o)`, where `z(s)` is the long-profile design line and `cross` is the cross profile.
 - **Combine rules** enforce the guarantees in `tools.md`: raise tools use `new = max(old, design)` (never removes material), lower tools use `new = min(old, design)` (never adds material), Interpolate uses `new = design`, and Add and Subtract use `new = old ± H`.
@@ -330,7 +330,8 @@ These apply to the polygon, or to the corridor polygon for paths. Side slopes ar
 
 ## 10. Testing
 
-- **`tests/core` (pytest, run with QGIS's bundled Python, no QGIS app needed):**
+- **Test runner:** QGIS 4.2.2 bundles Python 3.12.11, numpy 2.5, scipy 1.18, GDAL 3.13 and shapely 2.1, but **not pytest**. A dev-only virtual environment built on QGIS's interpreter (`--system-site-packages`, plus `pip install pytest`) runs both test suites. A `scripts/test.sh` wrapper sets `PYTHONHOME`, `PYTHONPATH` and `PROJ_DATA` for the app bundle. pytest is never a runtime dependency of the plugin.
+- **`tests/core` (pytest, no QGIS app needed):**
   - Each tool on synthetic DEMs (plane, tilted plane, bump, pit): Add is exactly +H; Interpolate on a path is linear; the flat tools produce a level result.
   - The invariants: raise never lowers any cell, lower never raises any cell, and nodata cells are unchanged.
   - Slopes: the measured gradient equals 1/n, the reach cap is respected, and inside and outside slope placement both behave as specified.

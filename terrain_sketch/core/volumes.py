@@ -16,7 +16,9 @@ def cut_fill(before: np.ndarray, after: np.ndarray, valid: np.ndarray, cell_area
 def pond_storage(after: np.ndarray, lowered: np.ndarray, valid: np.ndarray, cell_area: float):
     """Static storage below the lowest rim cell around the lowered region, or None.
 
-    The rim is the ring of valid cells bordering the lowered region (8-connected)."""
+    The rim is the ring of valid cells bordering the lowered region (8-connected);
+    nodata cells never count as pond or rim."""
+    lowered = lowered & valid
     if not lowered.any():
         return None
     rim = ndimage.binary_dilation(lowered, structure=np.ones((3, 3), bool)) & ~lowered & valid

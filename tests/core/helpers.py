@@ -1,7 +1,8 @@
-"""Shared helpers for core tests: synthetic DEMs."""
+"""Shared helpers for core tests: synthetic DEMs and features."""
 import numpy as np
 
 from terrain_sketch.core.grid import DemGrid
+from terrain_sketch.model.feature import TerrainFeature
 
 NODATA = -9999.0
 
@@ -25,3 +26,9 @@ def flat(z):
 def tilted(X, Y):
     """Rises 0.1 m per metre towards the east."""
     return 10.0 + 0.1 * X
+
+
+def feature(tool, mode, wkb, **kw):
+    kw.setdefault("id", "f1")
+    kw.setdefault("name", "test")
+    return TerrainFeature(tool=tool, mode=mode, geometry_wkb=wkb, **kw)

@@ -20,7 +20,7 @@
 - Distances and elevations are in metres. Grids are north-up (negative pixel height); rotated rasters are rejected.
 - Pixel modes: `all_touched`, `centre` (default) and `fully_inside`.
 - Performance target: recompute of a 500×500-cell window in under 50 ms. The prototype measured 54 ms for 567×517 cells.
-- Every module starts with a one-line docstring, uses `from __future__ import annotations` where it has type hints, and uses 4-space indentation.
+- Every package module (under `terrain_sketch/`) starts with a one-line docstring and uses `from __future__ import annotations` where it has type hints. Test modules (`tests/`) need neither. All code uses 4-space indentation.
 - Run tests only through `scripts/test.sh`, which sets `PYTHONHOME`, `PYTHONPATH` and `PROJ_DATA` for the QGIS app bundle.
 
 ## File Structure
@@ -519,8 +519,7 @@ The flat-cap buffer uses `Geometry.Buffer(distance, options)`. That's the option
 
 **File:** `terrain_sketch/core/geometry.py`
 ```python
-"""Geometry helpers on top of OGR. Geometries travel as WKB bytes; parts are single
-LineStrings or Polygons in the DEM CRS."""
+"""OGR geometry helpers: WKB in/out, single-part LineStrings/Polygons in the DEM CRS."""
 from __future__ import annotations
 
 import math

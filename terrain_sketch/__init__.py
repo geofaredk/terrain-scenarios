@@ -1,0 +1,1 @@
+"""Terrain Sketch QGIS plugin."""

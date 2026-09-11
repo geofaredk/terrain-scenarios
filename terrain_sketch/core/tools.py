@@ -1,4 +1,6 @@
 """Tool, mode and pixel-mode definitions shared by the engine, the model and the GUI."""
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
 

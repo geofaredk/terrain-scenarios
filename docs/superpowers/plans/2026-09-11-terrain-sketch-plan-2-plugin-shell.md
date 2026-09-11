@@ -3046,3 +3046,24 @@ git commit -m "feat: Terrain Sketch panel and plugin entry point"
 | 4 | Profile dock (cross + long), live preview while dragging, `FeatureStack.terrain_before` | `FeatureStack.preview` → `Preview`, `PropertiesPage.show_feature`, `SketchController` signals |
 | 5 | Illustrated gallery, help texts, tooltips, "Reproject…" button | `help_texts.py`, `ToolGallery`, `PropertiesPage` |
 | 6 | Scenario GeoPackage, volumes panel, undo/redo, 3D view, duplicate, ZIP packaging | `SketchController`, `TerrainFeature.to_dict/from_dict`, `FeatureStats` |
+
+## Addendum: final-review fixes (2026-09-11)
+
+The final whole-branch review found four Important issues after Task 9; they were fixed in one fix wave (commits 9ffcd5d..f67b051, 120 tests). Where the code on the branch differs from the task blocks above, the code and its tests are authoritative.
+
+- **Export** refuses to overwrite the source DEM or the session's working/change files (`help_texts.EXPORT_OVER_SOURCE`).
+- **Session start is atomic:** `set_dem` creates the working files before the old session closes; `read_dem` maps GDAL and memory errors to `DemError`; the panel only ever sees `DemError`.
+- **Decision reversed — layer removal:** only removing the source DEM ends the session (spec §9). Removing Terrain Sketch result layers keeps the session and its features (info message). New/Open Project drops the session silently via `QgsProject.aboutToBeCleared`.
+- **Engine errors** no longer desynchronise the list and the modified DEM: `FeatureStack.update` computes before committing, and `SketchController._set` keeps the previous list when the engine fails.
+- **Drawing and panel consistency:** hiding the panel ends a drawing in progress; `DrawTool.dispose()` removes the rubber band from the canvas; a new session re-applies the Hillshade checkbox; the DEM picker's exclusions reset without a session; a coordinate-transform failure while adding a drawing becomes a message.
+
+Deferred to later plans (from the final review's triage):
+
+| Plan | Items |
+|---|---|
+| 3 | Tests for `canvasMoveEvent`; map-tool switch while drawing (`deactivated` signal, `sip.isdeleted` before restoring); snap-indicator marker cleanup in `dispose()`; selecting a list row selects the feature on the map; `ToolGallery.drawRequested` gains a selection-method argument; `add_drawn(..., name=)`, `set_geometry(fid, geometry, crs)` |
+| 4 | `Preview.stats` typing; `WorkingFiles.write` reopen cost; write-back tests for width/slope/reach; `SketchController.preview(fid, **changes)` |
+| 5 | Translation-ready strings (`tr()` on runtime strings, `QAction` text); `QgsSettings` persistence of panel state; "Reproject…" button; tool-specific drawing hints |
+| 6 | Cleanup of a partially built layer group when session start fails after closing the old session; temp-folder cleanup and a wait cursor for large DEMs; export "add to project" option and integer-DEM note; working-file fallback folder; Duplicate/Rename in the context menu; zoom `QgsCsException`; overwrite prompt after appending `.tif`; `geometry_wkb` normalisation test; two providers on one file (Windows locking); `FeatureListModel` O(n²) `data()`; properties title after rename |
+
+Spec §8.1 names signals `featureComputed`/`rasterUpdated`/`warning` and a `preview(id, **changes)` method; Plan 2 uses `featuresChanged`/`sessionChanged`/`message`, and `preview` arrives with Plan 4.

@@ -6,6 +6,7 @@ from terrain_sketch import classFactory
 from terrain_sketch.core.tools import Tool
 from terrain_sketch.gui.controller import SketchController
 from terrain_sketch.gui.main_dock import PAGE_GALLERY, PAGE_PROPERTIES, PAGE_START, MainDock
+from terrain_sketch.qgis_io.layers import GROUP_NAME
 
 
 def test_drawing_a_dike_from_the_panel(tmp_path):
@@ -53,6 +54,35 @@ def test_ending_the_session_stops_a_drawing_in_progress(tmp_path):
     QgsProject.instance().removeMapLayer(dem.id())  # the user removes the DEM while still drawing
     assert not controller.has_dem and dock.draw_tool is None and dock.hint.isHidden()
     assert iface.mapCanvas().mapTool() is None
+
+
+def test_hiding_the_panel_stops_a_drawing_and_leaves_no_rubber_band(tmp_path):
+    iface = fake_iface()
+    plugin = classFactory(iface)
+    plugin.initGui()
+    plugin.action.setChecked(True)
+    plugin.dock.dem_combo.setLayer(dem_layer(tmp_path))
+    plugin.dock.start_button.click()
+    n0 = len(iface.mapCanvas().scene().items())
+    plugin.dock.gallery.select_tool(Tool.RAISE_PATH)
+    plugin.dock.gallery.line_button.click()
+    plugin.action.setChecked(False)
+    assert plugin.dock.draw_tool is None
+    assert len(iface.mapCanvas().scene().items()) == n0
+
+
+def test_a_new_session_applies_the_hillshade_checkbox(tmp_path):
+    iface = fake_iface()
+    dem = dem_layer(tmp_path)
+    controller = SketchController(QgsProject.instance())
+    dock = MainDock(iface, controller)
+    dock.dem_combo.setLayer(dem)
+    dock.start_button.click()
+    dock.hillshade_box.setChecked(True)
+    dock.confirm = lambda text: True
+    dock.start_button.click()
+    node = QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME).findLayer(controller.layers.hillshade_id)
+    assert node.itemVisibilityChecked()
 
 
 def test_plugin_adds_and_removes_its_button_menu_and_panel():

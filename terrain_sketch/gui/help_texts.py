@@ -62,6 +62,8 @@ SESSION_ENDED_DEM_REMOVED = "The Terrain Sketch session ended because its DEM wa
 
 RESULT_LAYER_REMOVED = "A Terrain Sketch layer was removed from the project. Your features are kept and export still works."
 
+DRAWING_NOT_TRANSFORMED = "The drawing could not be converted to the DEM's coordinate system."
+
 
 def amount_label(tool: Tool) -> str | None:
     """Label of the amount field, or None when the tool has no amount."""

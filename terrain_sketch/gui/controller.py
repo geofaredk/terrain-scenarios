@@ -6,7 +6,7 @@ import tempfile
 import traceback
 from dataclasses import replace
 
-from qgis.core import Qgis, QgsCoordinateReferenceSystem, QgsGeometry, QgsMessageLog, QgsProject
+from qgis.core import Qgis, QgsCoordinateReferenceSystem, QgsCsException, QgsGeometry, QgsMessageLog, QgsProject
 from qgis.PyQt.QtCore import QObject, pyqtSignal
 
 from ..core.engine import FeatureStack
@@ -16,7 +16,8 @@ from ..model.feature import TerrainFeature, new_feature
 from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import DemError, WorkingFiles, export_dem, read_dem
-from .help_texts import EXPORT_OVER_SOURCE, NO_SESSION, RESULT_LAYER_REMOVED, SESSION_ENDED_DEM_REMOVED, TOOL_LABELS
+from .help_texts import (DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, NO_SESSION, RESULT_LAYER_REMOVED,
+                         SESSION_ENDED_DEM_REMOVED, TOOL_LABELS)
 
 LOG_TAG = "Terrain Sketch"
 
@@ -112,6 +113,9 @@ class SketchController(QObject):
             wkb = to_dem_wkb(geometry, crs, self.dem_crs, mode)
         except ValueError as error:
             self.message.emit(Qgis.MessageLevel.Warning, str(error))
+            return None
+        except QgsCsException:
+            self.message.emit(Qgis.MessageLevel.Warning, DRAWING_NOT_TRANSFORMED)
             return None
         feature = new_feature(tool, mode, wkb, self.stack.original.cell_size, name=self._unique_name(tool))
         self._set([*self._features, feature])

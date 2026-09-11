@@ -50,6 +50,8 @@ class TerrainSketchPlugin:
             self.action.setChecked(False)
             return
         if self.dock is not None:
+            if not checked:
+                self.dock.end_drawing()
             self.dock.setUserVisible(checked)
 
     def _create_dock(self) -> bool:

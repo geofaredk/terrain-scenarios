@@ -68,6 +68,11 @@ class DrawTool(QgsMapTool):
         self.band.reset(self.geometry_type)
         self.snap_indicator.setMatch(QgsPointLocator.Match())
 
+    def dispose(self) -> None:
+        """Release this tool's canvas scene items; call before `deleteLater()`."""
+        self.reset()
+        self.canvas().scene().removeItem(self.band)
+
     def deactivate(self):
         self.reset()
         super().deactivate()

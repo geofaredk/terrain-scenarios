@@ -103,6 +103,7 @@ class MainDock(QgsDockWidget):
                     canvas.setMapTool(self._previous_tool)
                 else:
                     canvas.unsetMapTool(self.draw_tool)
+            self.draw_tool.dispose()
             self.draw_tool.deleteLater()
             self.draw_tool = None
         self.hint.hide()
@@ -120,6 +121,9 @@ class MainDock(QgsDockWidget):
         if self.controller.layers is not None:
             project = self.controller.project
             self.dem_combo.setExceptedLayerList([project.mapLayer(i) for i in self.controller.layers.layer_ids])
+            self.controller.set_hillshade_visible(self.hillshade_box.isChecked())
+        else:
+            self.dem_combo.setExceptedLayerList([])
         self.pages.setCurrentIndex(PAGE_GALLERY if has_dem else PAGE_START)
 
     def _start(self) -> None:

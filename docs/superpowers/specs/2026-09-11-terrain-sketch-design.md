@@ -78,13 +78,13 @@ terrain_sketch/
   metadata.txt           qgisMinimumVersion=4.0, qgisMaximumVersion=4.99
   plugin.py              entry point; toolbar action + Raster ▸ Terrain Sketch menu; creates the docks
   core/                  pure Python: numpy, scipy, osgeo (gdal/ogr). NO qgis imports.
-    grid.py              DemGrid: array, nodata mask, geotransform, pixel↔world, Window
-    geometry.py          lightweight geometry: WKB in/out via ogr, parts, vertices, simplify
-    mask.py              geometry → boolean mask for a window, for the 3 pixel modes; corridor for paths
+    tools.py             Tool / Mode / PixelMode enums and the TOOL_INFO table
+    grid.py              DemGrid (root geotransform + integer block offsets), Window, bilinear sampling
+    geometry.py          OGR helpers: WKB in/out, parts, vertices, simplify, flat-cap corridor
+    mask.py              geometry → boolean cell mask for the 3 pixel modes
     stations.py          per-cell station s and signed offset o relative to a polyline
-    profiles.py          CrossProfile, LongProfile (+ default templates generated from parameters)
-    slopes.py            distance transforms (outside/inside), nearest-edge terrain lookup
-    operations.py        the 7 tools: apply(feature, terrain_window) → new window values
+    profiles.py          side-profile evaluation beyond an edge: break points + terminal 1:n slope
+    operations.py        the 7 tools: apply_feature(feature, grid) → FeatureStats; footprints; rule profiles
     volumes.py           cut/fill, pond storage
     engine.py            FeatureStack: ordered features, dependency closure, windowed replay
   model/
@@ -152,11 +152,16 @@ Parameters: **slope 1:n** (horizontal run per 1 m of height; `n = 0` means no sl
 
 ### 5.4 Profiles
 
-**CrossProfile** (paths): two point lists, one for the left side and one for the right, each a list of `(offset ≥ 0, dz)` starting at `(0, 0)`, where dz is relative to the design line.
+**Cross profile** (paths; amended 2026-09-11 to match the built engine): the corridor of width W (the crest for raise tools, the bottom for lower tools) is flat and symmetric around the path. Beyond each corridor edge, each side has an optional list of break points `(distance beyond the edge, dz)`, e.g. a berm, followed by the terminal side slope 1:n up to the max reach. The left and right break lists can differ (`cross_left`, `cross_right`).
 
-- The default is generated from the parameters. For raise: a flat crest to W/2, then a slope of 1:n downward. For lower: a flat bottom to W/2, then 1:n upward.
-- In the editor you can drag points, double-click to add a break point (e.g. a berm), and right-click a point to delete it. Left and right sides can differ, and a **Symmetric** checkbox (on by default) mirrors your edits.
-- Once the profile has custom points, the Width and Slope fields become read-only and show "custom shape", and a **Reset shape** button appears.
+- The default has no break points: a flat crest or bottom of width W, then the 1:n slope.
+- In the editor:
+  - Dragging a crest-edge handle changes W (symmetrically).
+  - You can drag break points beyond the edge or double-click to add one; right-click deletes one.
+  - A **Symmetric** checkbox (on by default) mirrors break-point edits to the other side.
+  - A handle at the end of the terminal slope changes n.
+- Width and slope stay editable as numbers at all times. Break points are stored relative to the crest edge, so a wider W carries them outward. **Reset shape** removes all break points.
+- An asymmetric or crowned crest is not supported in v1.
 - For area features, the cross profile editor shows the edge slope (distance from the outline against dz) and edits n and max reach. Break points are not supported for areas in v1.
 
 **LongProfile** (paths): a list of `(station, absolute z)` points.

@@ -116,6 +116,8 @@ These are plain data with no behaviour to test on their own; the operations test
 **File:** `terrain_sketch/core/tools.py`
 ```python
 """Tool, mode and pixel-mode definitions shared by the engine, the model and the GUI."""
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
 

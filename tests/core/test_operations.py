@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import terrain_sketch.core.operations as operations_module
 from helpers import feature, flat, make_grid, tilted
 from terrain_sketch.core.geometry import line_wkb, multi_wkb, polygon_wkb
 from terrain_sketch.core.operations import (FLAG_BAD_GEOMETRY, FLAG_NO_PIXELS,
@@ -160,6 +161,21 @@ def test_path_cross_section_has_no_gap_in_any_pixel_mode(tool, sign, mode):
     assert col[top] == pytest.approx(2.0)
     assert (np.diff(col[top::-1]) <= 1e-6).all()
     assert (np.diff(col[top:]) <= 1e-6).all()
+
+
+def test_wide_path_with_a_sharp_bend_is_not_cut_off(monkeypatch):
+    """A sharp mitred bend's corridor can extend up to the full width beyond the vertex; the
+    footprint window must cover the whole mitre spike, not just the line's own bbox padded by
+    width/2 + slope limit (I2). A too-small window truncates the slope, so a much larger
+    MARGIN_CELLS must produce the identical result once the footprint is correct."""
+    wkb = line_wkb([(30.0, 20.0), (40.0, 60.0), (50.0, 20.0)])
+    f = feature(Tool.RAISE_PATH, Mode.PATH, wkb, amount=3.0, width=12.0, slope_n=2.0, reach=5.0)
+    default = make_grid(flat(0), rows=100, cols=80)
+    apply_feature(f, default)
+    monkeypatch.setattr(operations_module, "MARGIN_CELLS", 30)
+    wide_margin = make_grid(flat(0), rows=100, cols=80)
+    apply_feature(f, wide_margin)
+    np.testing.assert_array_equal(default.data, wide_margin.data)
 
 
 def test_problem_flags():

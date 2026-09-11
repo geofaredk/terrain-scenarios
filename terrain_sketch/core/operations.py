@@ -64,21 +64,20 @@ def rule_profile(feature, part, grid: DemGrid) -> tuple:
     return ((0.0, z0 + offset), (length, z1 + offset))
 
 
-def _reach(feature, part, cell_size: float) -> float:
+def part_window(feature, part, grid: DemGrid) -> Window | None:
     info = TOOL_INFO[feature.tool]
     if is_line(part):
-        extra = max(feature.width, cell_size) / 2.0
-        if info.has_slopes:
-            extra += _path_side_limit(feature)
-        return extra
-    if info.has_slopes and feature.slope_n > 0.0 and not feature.slopes_inside:
-        return feature.reach
-    return 0.0
-
-
-def part_window(feature, part, grid: DemGrid) -> Window | None:
+        width = max(feature.width, grid.cell_size)
+        band = corridor(simplify_line(part, 0.5 * grid.cell_size), width)
+        r = _path_side_limit(feature) if info.has_slopes else 0.0
+        if band is None or band.IsEmpty():
+            xmin, ymin, xmax, ymax = envelope(part)
+            r = width / 2.0
+        else:
+            xmin, ymin, xmax, ymax = envelope(band)
+        return grid.window_for_bbox(xmin - r, ymin - r, xmax + r, ymax + r, MARGIN_CELLS)
     xmin, ymin, xmax, ymax = envelope(part)
-    r = _reach(feature, part, grid.cell_size)
+    r = feature.reach if (info.has_slopes and feature.slope_n > 0.0 and not feature.slopes_inside) else 0.0
     return grid.window_for_bbox(xmin - r, ymin - r, xmax + r, ymax + r, MARGIN_CELLS)
 
 

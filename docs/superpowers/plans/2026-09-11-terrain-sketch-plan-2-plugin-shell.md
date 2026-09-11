@@ -2644,6 +2644,21 @@ def test_a_geographic_dem_is_reported_in_the_message_bar(tmp_path):
     iface.messageBar().pushMessage.assert_called()
 
 
+def test_ending_the_session_stops_a_drawing_in_progress(tmp_path):
+    iface = fake_iface()
+    dem = dem_layer(tmp_path)
+    controller = SketchController(QgsProject.instance())
+    dock = MainDock(iface, controller)
+    dock.dem_combo.setLayer(dem)
+    dock.start_button.click()
+    dock.gallery.select_tool(Tool.RAISE_PATH)
+    dock.gallery.line_button.click()
+    assert dock.draw_tool is not None
+    QgsProject.instance().removeMapLayer(dem.id())  # the user removes the DEM while still drawing
+    assert not controller.has_dem and dock.draw_tool is None and dock.hint.isHidden()
+    assert iface.mapCanvas().mapTool() is None
+
+
 def test_plugin_adds_and_removes_its_button_menu_and_panel():
     iface = fake_iface()
     plugin = classFactory(iface)
@@ -2782,6 +2797,8 @@ class MainDock(QgsDockWidget):
 
     def _session_changed(self) -> None:
         has_dem = self.controller.has_dem
+        if not has_dem:
+            self.end_drawing()  # a drawing cannot outlive its session
         for widget in (self.export_button, self.hillshade_box, self.new_button, self.delete_button, self.feature_view):
             widget.setEnabled(has_dem)
         if self.controller.layers is not None:
@@ -3001,8 +3018,8 @@ Run: `chmod +x scripts/dev_install.sh`
 
 - [ ] **Step 4: Run the tests**
 
-Run: `scripts/test.sh tests/qgis/test_dock_plugin.py` → Expected: `3 passed`
-Run: `scripts/test.sh` → Expected: `110 passed`
+Run: `scripts/test.sh tests/qgis/test_dock_plugin.py` → Expected: `4 passed`
+Run: `scripts/test.sh` → Expected: `111 passed`
 
 - [ ] **Step 5: Commit**
 

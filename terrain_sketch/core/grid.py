@@ -67,6 +67,8 @@ class DemGrid:
     @classmethod
     def from_array(cls, array, geotransform, nodata=None) -> DemGrid:
         data = np.array(array, dtype=np.float32)
+        if data.ndim != 2:
+            raise ValueError("DEM data must be a 2-D array")
         valid = np.isfinite(data)
         if nodata is not None:
             valid &= data != np.float32(nodata)

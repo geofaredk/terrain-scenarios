@@ -81,8 +81,9 @@ def test_reference_elevations_follow_earlier_features():
 
 def test_preview_does_not_change_the_stack():
     stack = FeatureStack(make_grid(flat(10)))
-    _, grid = stack.preview([feature(Tool.ADD, Mode.AREA, square(10.3, 10.3, 15.3, 15.3))])
-    assert (grid.data > 10).any()
+    preview = stack.preview([feature(Tool.ADD, Mode.AREA, square(10.3, 10.3, 15.3, 15.3))])
+    assert (preview.grid.data > 10).any()
+    assert preview.stats["f1"].fill == pytest.approx(25.0)
     assert (stack.working.data == 10).all() and stack.features == ()
 
 

@@ -10,8 +10,14 @@ PY="$B/MacOS/python3.12"
 export PYTHONHOME="$B/Resources"
 export PYTHONPATH="$ROOT:$B/Resources/python3.12:$B/Resources/python3.12/site-packages:$B/Resources/python3.12/lib-dynload:$ROOT/.devdeps"
 export PROJ_DATA="$B/Resources/qgis/proj"
+export QGIS_PREFIX_PATH="$QGIS_APP"
+export QT_PLUGIN_PATH="$B/PlugIns"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
 if [ ! -d "$ROOT/.devdeps/pytest" ]; then
-  "$PY" -m pip install -q --disable-pip-version-check --target "$ROOT/.devdeps" pytest >/dev/null 2>&1
+  if ! "$PY" -m pip install -q --disable-pip-version-check --target "$ROOT/.devdeps" pytest; then
+    echo "scripts/test.sh: could not install pytest into .devdeps/ (the first run needs a network connection)" >&2
+    exit 1
+  fi
 fi
 cd "$ROOT"
 exec "$PY" -m pytest "$@"

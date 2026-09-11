@@ -28,6 +28,12 @@ class TerrainFeature:
     def __post_init__(self):
         if self.mode not in TOOL_INFO[self.tool].modes:
             raise ValueError(f"{self.tool.value} does not support {self.mode.value} mode")
+        # the GUI may pass lists; store hashable tuples of float pairs (the engine caches by value)
+        object.__setattr__(self, "geometry_wkb", bytes(self.geometry_wkb))
+        object.__setattr__(self, "cross_left", _points(self.cross_left))
+        object.__setattr__(self, "cross_right", _points(self.cross_right))
+        if self.long_profile is not None:
+            object.__setattr__(self, "long_profile", _points(self.long_profile))
 
     def to_dict(self) -> dict:
         return {

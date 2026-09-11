@@ -35,3 +35,10 @@ def test_features_compare_and_hash_by_value():
     f = new_feature(Tool.ADD, Mode.AREA, TRIANGLE, 1.0)
     assert f == replace(f) and hash(f) == hash(replace(f))
     assert f != replace(f, amount=2.0)
+
+
+def test_list_fields_are_normalised_to_hashable_tuples():
+    f = new_feature(Tool.RAISE_PATH, Mode.PATH, line_wkb([(0, 0), (1, 0)]), 1.0)
+    g = replace(f, cross_left=[[2, -0.5]], long_profile=[[0, 10], [1, 11]])
+    assert g.cross_left == ((2.0, -0.5),) and g.long_profile == ((0.0, 10.0), (1.0, 11.0))
+    assert isinstance(hash(g), int)

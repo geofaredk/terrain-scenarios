@@ -63,3 +63,8 @@ def test_nested_windows_share_bit_identical_geotransforms():
     X1, Y1 = nested.cell_centers()
     X2, Y2 = direct.cell_centers()
     assert (X1 == X2).all() and (Y1 == Y2).all()
+
+
+def test_from_array_rejects_non_2d_input():
+    with pytest.raises(ValueError):
+        DemGrid.from_array(np.zeros(5), (0, 1, 0, 1, 0, -1))

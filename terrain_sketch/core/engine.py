@@ -1,8 +1,18 @@
 """FeatureStack: the ordered list of features and the windowed recompute of the working DEM."""
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from .grid import DemGrid, Window
 from .operations import FeatureStats, apply_feature, feature_window, footprint_flags
+
+
+class Preview(NamedTuple):
+    """What `FeatureStack.preview` returns: the changed window, its values and per-feature stats."""
+
+    window: Window
+    grid: DemGrid
+    stats: dict
 
 
 class FeatureStack:
@@ -63,15 +73,15 @@ class FeatureStack:
         stats = {f.id: apply_feature(f, grid) for f in features}
         return grid, stats
 
-    def preview(self, features) -> tuple[Window, DemGrid] | None:
+    def preview(self, features) -> Preview | None:
         """Result of `features` for the changed window, without changing the stack."""
         features = tuple(features)
         dirty = self.dirty_window(features)
         if dirty is None:
             return None
         window, replay = self.closure(dirty, features)
-        grid, _ = self.compute(replay, window)
-        return window, grid
+        grid, stats = self.compute(replay, window)
+        return Preview(window, grid, stats)
 
     def update(self, features) -> Window | None:
         """Make `features` the current list and recompute; returns the changed window."""

@@ -46,8 +46,8 @@ class VertexEditTool(SketchTool):
 
     def canvasDoubleClickEvent(self, event):  # noqa: N802 — Qt override
         point = event.mapPoint()
-        _distance, _closest, after, _left = self.geometry.closestSegmentWithContext(point)
-        if after < 0:
+        distance_squared, _closest, after, _left = self.geometry.closestSegmentWithContext(point)
+        if after < 0 or distance_squared > self.tolerance() ** 2:
             return
         self.geometry.insertVertex(point.x(), point.y(), after)
         self._redraw()

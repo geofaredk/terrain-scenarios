@@ -137,3 +137,29 @@ def test_vertex_editing_moves_adds_and_removes_points():
     tool.canvasMoveEvent(event(canvas, mid_x, mid_y, QEvent.Type.MouseMove))
     press(tool, Qt.Key.Key_Delete)
     assert tool.vertex_count() == 3 and len(changes) == 3
+
+
+def test_polygon_vertex_editing_respects_minimum_ring_size():
+    canvas = fake_iface().mapCanvas()
+    # Create a simple triangle polygon (4 vertices: 3 corners + 1 to close the ring)
+    a, b, c = QgsPointXY(*world(5, 5)), QgsPointXY(*world(15, 5)), QgsPointXY(*world(10, 15))
+    tool = VertexEditTool(canvas, QgsGeometry.fromPolygonXY([[a, b, c, a]]))
+    changes = []
+    tool.geometryChanged.connect(changes.append)
+    assert tool.vertex_count() == 4  # triangle with closing point
+    # Move a vertex
+    x, y = pixel(canvas, a)
+    drag(tool, canvas, [(x, y), (x - 10, y + 10), (x - 10, y + 10)])
+    assert len(changes) == 1 and changes[-1].vertexAt(0).x() < a.x()
+    # Try to delete a vertex: should fail (would drop below 4 vertices for a ring)
+    tool.canvasMoveEvent(event(canvas, x, y, QEvent.Type.MouseMove))
+    press(tool, Qt.Key.Key_Delete)
+    assert tool.vertex_count() == 4  # still 4 vertices, no deletion
+    # Add a vertex to make it a quad (5 vertices)
+    mid_x, mid_y = pixel(canvas, QgsPointXY((b.x() + c.x()) / 2, (b.y() + c.y()) / 2))
+    tool.canvasDoubleClickEvent(event(canvas, mid_x, mid_y, QEvent.Type.MouseButtonDblClick))
+    assert tool.vertex_count() == 5 and len(changes) == 2
+    # Now delete should work
+    tool.canvasMoveEvent(event(canvas, mid_x, mid_y, QEvent.Type.MouseMove))
+    press(tool, Qt.Key.Key_Delete)
+    assert tool.vertex_count() == 4 and len(changes) == 3

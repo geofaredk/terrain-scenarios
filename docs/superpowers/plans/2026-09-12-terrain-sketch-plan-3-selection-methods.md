@@ -2080,8 +2080,8 @@ from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
 from .map_tools.freehand import FreehandTool
 from .map_tools.vertex_edit import VertexEditTool
-from .selection import EDIT_HINT, METHOD_HINTS, Method
 from .properties_page import PropertiesPage
+from .selection import EDIT_HINT, METHOD_HINTS, Method
 from .tool_gallery import ToolGallery
 
 PAGE_START, PAGE_GALLERY, PAGE_PROPERTIES = range(3)

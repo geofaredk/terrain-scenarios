@@ -10,6 +10,7 @@ from terrain_sketch.gui.map_tools.draw_line import DrawLineTool
 from terrain_sketch.gui.map_tools.draw_polygon import DrawPolygonTool
 from terrain_sketch.gui.map_tools.brush import BrushTool
 from terrain_sketch.gui.map_tools.freehand import FreehandTool
+from terrain_sketch.gui.map_tools.vertex_edit import VertexEditTool
 
 
 def click(tool, canvas, x, y, button=Qt.MouseButton.LeftButton):
@@ -119,3 +120,20 @@ def test_brush_starts_from_an_existing_area_when_extending():
     assert tool.geometry.area() == pytest.approx(start.area())
     tool.apply_stroke([QgsPointXY(*world(12, 7))])
     assert tool.geometry.area() > start.area()
+
+
+def test_vertex_editing_moves_adds_and_removes_points():
+    canvas = fake_iface().mapCanvas()
+    a, b, c = QgsPointXY(*world(5, 20)), QgsPointXY(*world(20, 20)), QgsPointXY(*world(30, 20))
+    tool = VertexEditTool(canvas, QgsGeometry.fromPolylineXY([a, b, c]))
+    changes = []
+    tool.geometryChanged.connect(changes.append)
+    x, y = pixel(canvas, a)
+    drag(tool, canvas, [(x, y), (x, y - 20), (x, y - 20)])
+    assert changes and changes[-1].vertexAt(0).y() > a.y()  # the first vertex moved north
+    mid_x, mid_y = pixel(canvas, QgsPointXY((b.x() + c.x()) / 2, b.y()))
+    tool.canvasDoubleClickEvent(event(canvas, mid_x, mid_y, QEvent.Type.MouseButtonDblClick))
+    assert tool.vertex_count() == 4 and len(changes) == 2
+    tool.canvasMoveEvent(event(canvas, mid_x, mid_y, QEvent.Type.MouseMove))
+    press(tool, Qt.Key.Key_Delete)
+    assert tool.vertex_count() == 3 and len(changes) == 3

@@ -16,8 +16,8 @@ from ..model.feature import TerrainFeature, new_feature
 from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import DemError, WorkingFiles, export_dem, read_dem
-from .help_texts import (DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, NO_SESSION, RESULT_LAYER_REMOVED,
-                         SESSION_ENDED_DEM_REMOVED, TOOL_LABELS)
+from .help_texts import (DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, NO_FEATURES_IN_LAYER, NO_SESSION,
+                         RESULT_LAYER_REMOVED, SESSION_ENDED_DEM_REMOVED, TOOL_LABELS)
 
 LOG_TAG = "Terrain Sketch"
 
@@ -103,7 +103,7 @@ class SketchController(QObject):
         self.project.cleared.disconnect(self._drop_session)
         self.project.aboutToBeCleared.disconnect(self._drop_session)
 
-    def add_drawn(self, tool: Tool, mode: Mode, geometry: QgsGeometry, crs) -> TerrainFeature | None:
+    def add_drawn(self, tool: Tool, mode: Mode, geometry: QgsGeometry, crs, name: str | None = None) -> TerrainFeature | None:
         """Turn a drawn geometry (in `crs`) into a new feature with default values. Returns None,
         with a message, when the drawing cannot be used or no session is active."""
         if not self.has_dem:
@@ -117,9 +117,37 @@ class SketchController(QObject):
         except QgsCsException:
             self.message.emit(Qgis.MessageLevel.Warning, DRAWING_NOT_TRANSFORMED)
             return None
-        feature = new_feature(tool, mode, wkb, self.stack.original.cell_size, name=self._unique_name(tool))
+        feature = new_feature(tool, mode, wkb, self.stack.original.cell_size,
+                              name=self._unique(name) if name else self._unique_name(tool))
         self._set([*self._features, feature])
         return feature
+
+    def add_from_layer(self, tool: Tool, mode: Mode, layer, selected_only: bool = False) -> TerrainFeature | None:
+        """One multi-part feature from a vector layer's features; each part keeps its own reference levels."""
+        if not self.has_dem:
+            self.message.emit(Qgis.MessageLevel.Warning, NO_SESSION)
+            return None
+        source = layer.getSelectedFeatures() if selected_only else layer.getFeatures()
+        geometries = [QgsGeometry(f.geometry()) for f in source if not f.geometry().isEmpty()]
+        if not geometries:
+            self.message.emit(Qgis.MessageLevel.Warning, NO_FEATURES_IN_LAYER)
+            return None
+        combined = geometries[0] if len(geometries) == 1 else QgsGeometry.collectGeometry(geometries)
+        return self.add_drawn(tool, mode, combined, layer.crs(), name=layer.name())
+
+    def set_geometry(self, fid: str, geometry: QgsGeometry, crs) -> bool:
+        """Replace a feature's shape (brush and vertex editing); False, with a message, if unusable."""
+        feature = self.feature(fid)
+        try:
+            wkb = to_dem_wkb(geometry, crs, self.dem_crs, feature.mode)
+        except ValueError as error:
+            self.message.emit(Qgis.MessageLevel.Warning, str(error))
+            return False
+        except QgsCsException:
+            self.message.emit(Qgis.MessageLevel.Warning, DRAWING_NOT_TRANSFORMED)
+            return False
+        self.update_feature(fid, geometry_wkb=wkb)
+        return True
 
     def update_feature(self, fid: str, **changes) -> None:
         self._set([replace(f, **changes) if f.id == fid else f for f in self._features])
@@ -192,6 +220,15 @@ class SketchController(QObject):
         while f"{TOOL_LABELS[tool]} {n}" in names:
             n += 1
         return f"{TOOL_LABELS[tool]} {n}"
+
+    def _unique(self, name: str) -> str:
+        names = {f.name for f in self._features}
+        if name not in names:
+            return name
+        n = 2
+        while f"{name} {n}" in names:
+            n += 1
+        return f"{name} {n}"
 
     def _drop_session(self) -> None:
         had_session = self.stack is not None

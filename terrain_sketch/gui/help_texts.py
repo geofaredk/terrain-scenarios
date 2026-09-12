@@ -64,6 +64,8 @@ RESULT_LAYER_REMOVED = "A Terrain Sketch layer was removed from the project. You
 
 DRAWING_NOT_TRANSFORMED = "The drawing could not be converted to the DEM's coordinate system."
 
+NO_FEATURES_IN_LAYER = "That layer has no features of the right kind to use here."
+
 
 def amount_label(tool: Tool) -> str | None:
     """Label of the amount field, or None when the tool has no amount."""

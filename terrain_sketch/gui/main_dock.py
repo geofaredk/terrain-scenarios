@@ -1,8 +1,9 @@
 """The Terrain Sketch panel: DEM, feature list, tool gallery and feature properties."""
 from __future__ import annotations
 
-from qgis.core import Qgis, QgsApplication, QgsCoordinateTransform, QgsProject
-from qgis.gui import QgsDockWidget, QgsMapLayerComboBox
+from qgis.core import Qgis, QgsApplication, QgsCoordinateTransform, QgsGeometry, QgsProject
+from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsRubberBand
+from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
                                  QStackedWidget, QToolButton, QVBoxLayout, QWidget)
@@ -10,10 +11,13 @@ from qgis.PyQt.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QM
 from ..core.tools import Mode
 from ..qgis_io.raster_io import DemError
 from .feature_list import FeatureListModel, FeatureListView
-from .help_texts import DRAW_HINT
+from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
+from .map_tools.freehand import FreehandTool
+from .map_tools.vertex_edit import VertexEditTool
 from .properties_page import PropertiesPage
+from .selection import EDIT_HINT, METHOD_HINTS, Method
 from .tool_gallery import ToolGallery
 
 PAGE_START, PAGE_GALLERY, PAGE_PROPERTIES = range(3)
@@ -30,6 +34,12 @@ class MainDock(QgsDockWidget):
         self._previous_tool = None
         self.confirm = self._confirm_dialog  # replaceable in tests
         self.ask_export_path = self._export_dialog  # replaceable in tests
+        self.edit_tool = None
+        self._brush_fid = None
+        self.highlight = QgsRubberBand(iface.mapCanvas(), Qgis.GeometryType.Line)
+        self.highlight.setStrokeColor(QgsMapToolEdit.digitizingStrokeColor())
+        self.highlight.setFillColor(Qt.GlobalColor.transparent)
+        self.highlight.setWidth(QgsMapToolEdit.digitizingStrokeWidth() + 2)
 
         body = QWidget()
         layout = QVBoxLayout(body)
@@ -61,12 +71,16 @@ class MainDock(QgsDockWidget):
         list_row = QHBoxLayout()
         self.new_button = QPushButton(QgsApplication.getThemeIcon("/mActionAdd.svg"), self.tr("New feature"))
         self.delete_button = QPushButton(QgsApplication.getThemeIcon("/mActionDeleteSelected.svg"), self.tr("Delete"))
+        self.edit_button = QPushButton(QgsApplication.getThemeIcon("/mActionNodeTool.svg"), self.tr("Edit shape"))
+        self.edit_button.setCheckable(True)
+        self.edit_button.setToolTip(self.tr("Move, add or remove the points of the selected feature."))
         list_row.addWidget(self.new_button)
         list_row.addWidget(self.delete_button)
+        list_row.addWidget(self.edit_button)
         list_row.addStretch(1)
         layout.addLayout(list_row)
 
-        self.hint = QLabel(self.tr(DRAW_HINT))
+        self.hint = QLabel()
         self.hint.setWordWrap(True)
         self.hint.hide()
         layout.addWidget(self.hint)
@@ -90,22 +104,47 @@ class MainDock(QgsDockWidget):
         self.feature_view.selectionModel().selectionChanged.connect(self._selection_changed)
         self.feature_view.customContextMenuRequested.connect(self._context_menu)
         self.gallery.drawRequested.connect(self._begin_drawing)
+        self.gallery.layerRequested.connect(self._use_layer)
+        self.edit_button.toggled.connect(self._toggle_edit)
+        self.iface.mapCanvas().mapToolSet.connect(self._map_tool_set)
+        controller.featuresChanged.connect(self._refresh_highlight)
         controller.sessionChanged.connect(self._session_changed)
         controller.message.connect(self._show_message)
         self._session_changed()
 
     def end_drawing(self) -> None:
         """Stop a drawing in progress and give the canvas its previous map tool back."""
-        canvas = self.iface.mapCanvas()
-        if self.draw_tool is not None:
-            if canvas.mapTool() is self.draw_tool:
-                if self._previous_tool is not None:
+        tool, self.draw_tool, self._brush_fid = self.draw_tool, None, None
+        self._release_tool(tool)
+
+    def stop_editing(self) -> None:
+        """Leave vertex editing and give the canvas its previous map tool back."""
+        tool, self.edit_tool = self.edit_tool, None
+        self._release_tool(tool)
+        if self.edit_button.isChecked():
+            self.edit_button.setChecked(False)
+
+    def stop_tools(self) -> None:
+        """Stop drawing and editing — the panel is hidden, the session ended or the tool changed."""
+        self.end_drawing()
+        self.stop_editing()
+
+    def shutdown(self) -> None:
+        """Stop the tools and release the highlight; called when the plugin unloads."""
+        self.stop_tools()
+        self.highlight.reset(Qgis.GeometryType.Line)
+        self.iface.mapCanvas().scene().removeItem(self.highlight)
+
+    def _release_tool(self, tool) -> None:
+        if tool is not None:
+            canvas = self.iface.mapCanvas()
+            if canvas.mapTool() is tool:
+                if self._previous_tool is not None and not sip.isdeleted(self._previous_tool):
                     canvas.setMapTool(self._previous_tool)
                 else:
-                    canvas.unsetMapTool(self.draw_tool)
-            self.draw_tool.dispose()
-            self.draw_tool.deleteLater()
-            self.draw_tool = None
+                    canvas.unsetMapTool(tool)
+            tool.dispose()
+            tool.deleteLater()
         self.hint.hide()
 
     def closeEvent(self, event):  # noqa: N802 — Qt override
@@ -115,8 +154,10 @@ class MainDock(QgsDockWidget):
     def _session_changed(self) -> None:
         has_dem = self.controller.has_dem
         if not has_dem:
-            self.end_drawing()  # a drawing cannot outlive its session
-        for widget in (self.export_button, self.hillshade_box, self.new_button, self.delete_button, self.feature_view):
+            self.stop_tools()  # a drawing or edit cannot outlive its session
+            self._update_highlight(None)
+        for widget in (self.export_button, self.hillshade_box, self.new_button, self.delete_button,
+                       self.edit_button, self.feature_view):
             widget.setEnabled(has_dem)
         if self.controller.layers is not None:
             project = self.controller.project
@@ -149,28 +190,107 @@ class MainDock(QgsDockWidget):
 
     def _selection_changed(self, *_args) -> None:
         fid = self.feature_view.selected_id()
+        self.stop_editing()
+        self.edit_button.setEnabled(fid is not None)
+        self._update_highlight(fid)
         if fid is not None:
             self.properties.show_feature(fid)
             self.pages.setCurrentIndex(PAGE_PROPERTIES)
         elif self.controller.has_dem:
             self.pages.setCurrentIndex(PAGE_GALLERY)
 
-    def _begin_drawing(self, tool, mode) -> None:
-        self.end_drawing()
+    def _begin_drawing(self, tool, mode, method) -> None:
+        self.stop_tools()
         canvas = self.iface.mapCanvas()
-        self.draw_tool = (DrawLineTool if mode is Mode.PATH else DrawPolygonTool)(canvas)
+        if method is Method.BRUSH:
+            self._brush_fid = self._brush_target(tool, mode)
+            initial = self._to_canvas(self.controller.feature_geometry(self._brush_fid)) if self._brush_fid else None
+            self.draw_tool = BrushTool(canvas, self.gallery.brush_radius(), initial)
+            self.draw_tool.radiusChanged.connect(self.gallery.set_brush_radius)
+        elif method is Method.FREEHAND:
+            shape = Qgis.GeometryType.Line if mode is Mode.PATH else Qgis.GeometryType.Polygon
+            self.draw_tool = FreehandTool(canvas, shape)
+        else:
+            self.draw_tool = (DrawLineTool if mode is Mode.PATH else DrawPolygonTool)(canvas)
         self.draw_tool.finished.connect(lambda geometry, t=tool, m=mode: self._drawn(t, m, geometry))
         self.draw_tool.cancelled.connect(self.end_drawing)
         self._previous_tool = canvas.mapTool()
         canvas.setMapTool(self.draw_tool)
+        self.hint.setText(self.tr(METHOD_HINTS[method]))
         self.hint.show()
+
+    def _brush_target(self, tool, mode) -> str | None:
+        """The selected feature the brush should extend, if it fits the chosen tool and shape."""
+        fid = self.feature_view.selected_id()
+        if fid is None or mode is not Mode.AREA:
+            return None
+        feature = self.controller.feature(fid)
+        return fid if feature.tool is tool and feature.mode is Mode.AREA else None
 
     def _drawn(self, tool, mode, geometry) -> None:
         crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+        fid = self._brush_fid
         self.end_drawing()
+        if fid is not None:
+            self.controller.set_geometry(fid, geometry, crs)
+            self.feature_view.select_id(fid)
+            return
         feature = self.controller.add_drawn(tool, mode, geometry, crs)
         if feature is not None:
             self.feature_view.select_id(feature.id)
+
+    def _use_layer(self, tool, mode, layer, selected_only) -> None:
+        feature = self.controller.add_from_layer(tool, mode, layer, selected_only)
+        if feature is not None:
+            self.feature_view.select_id(feature.id)
+
+    def _toggle_edit(self, checked: bool) -> None:
+        if not checked:
+            self.stop_editing()
+            return
+        fid = self.feature_view.selected_id()
+        if fid is None:
+            self.edit_button.setChecked(False)
+            return
+        self.end_drawing()
+        canvas = self.iface.mapCanvas()
+        self.edit_tool = VertexEditTool(canvas, self._to_canvas(self.controller.feature_geometry(fid)))
+        self.edit_tool.geometryChanged.connect(lambda geometry, f=fid: self._edited(f, geometry))
+        self.edit_tool.cancelled.connect(self.stop_editing)
+        self._previous_tool = canvas.mapTool()
+        canvas.setMapTool(self.edit_tool)
+        self.hint.setText(self.tr(EDIT_HINT))
+        self.hint.show()
+
+    def _edited(self, fid, geometry) -> None:
+        self.controller.set_geometry(fid, geometry, self.iface.mapCanvas().mapSettings().destinationCrs())
+
+    def _map_tool_set(self, new_tool, _old_tool=None) -> None:
+        """The user picked another map tool: stop our drawing or editing."""
+        if self.draw_tool is not None and new_tool is not self.draw_tool:
+            self.end_drawing()
+        if self.edit_tool is not None and new_tool is not self.edit_tool:
+            self.stop_editing()
+
+    def _to_canvas(self, geometry: QgsGeometry) -> QgsGeometry:
+        """A geometry in the DEM CRS, expressed in the canvas CRS."""
+        canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+        result = QgsGeometry(geometry)
+        if canvas_crs != self.controller.dem_crs:
+            result.transform(QgsCoordinateTransform(self.controller.dem_crs, canvas_crs, QgsProject.instance()))
+        return result
+
+    def _refresh_highlight(self) -> None:
+        self._update_highlight(self.feature_view.selected_id())
+
+    def _update_highlight(self, fid) -> None:
+        """Outline the selected feature on the map."""
+        if fid is None or not self.controller.has_dem or fid not in {f.id for f in self.controller.features}:
+            self.highlight.reset(Qgis.GeometryType.Line)
+            return
+        geometry = self._to_canvas(self.controller.feature_geometry(fid))
+        self.highlight.reset(geometry.type())
+        self.highlight.setToGeometry(geometry, None)
 
     def _export(self) -> None:
         path = self.ask_export_path()

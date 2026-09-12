@@ -8,6 +8,7 @@ from qgis.core import Qgis, QgsGeometry, QgsPointXY
 from qgis_helpers import fake_iface, world
 from terrain_sketch.gui.map_tools.draw_line import DrawLineTool
 from terrain_sketch.gui.map_tools.draw_polygon import DrawPolygonTool
+from terrain_sketch.gui.map_tools.brush import BrushTool
 from terrain_sketch.gui.map_tools.freehand import FreehandTool
 
 
@@ -92,3 +93,29 @@ def test_freehand_closes_the_ring_in_area_mode():
     tool.finished.connect(drawn.append)
     drag(tool, canvas, [(50, 50), (150, 50), (150, 150), (50, 150)])
     assert len(drawn) == 1 and drawn[0].area() > 0
+
+
+def test_brush_paints_erases_and_changes_its_radius():
+    canvas = fake_iface().mapCanvas()
+    tool = BrushTool(canvas, radius=2.0)
+    painted = []
+    tool.finished.connect(painted.append)
+    drag(tool, canvas, [(100, 100), (150, 100), (200, 100)])
+    assert not tool.geometry.isEmpty()
+    area = tool.geometry.area()
+    drag(tool, canvas, [(190, 100), (210, 100)], modifiers=Qt.KeyboardModifier.ShiftModifier)
+    assert tool.geometry.area() < area  # Shift cut a bite out of the painted area
+    press(tool, Qt.Key.Key_BracketRight)
+    assert tool.radius == pytest.approx(2.5)
+    press(tool, Qt.Key.Key_Return)
+    assert len(painted) == 1 and painted[0].area() > 0 and tool.geometry.isEmpty()
+
+
+def test_brush_starts_from_an_existing_area_when_extending():
+    canvas = fake_iface().mapCanvas()
+    start = QgsGeometry.fromPolygonXY([[QgsPointXY(*world(c, r)) for c, r in
+                                        ((5, 5), (10, 5), (10, 10), (5, 10), (5, 5))]])
+    tool = BrushTool(canvas, radius=2.0, initial=start)
+    assert tool.geometry.area() == pytest.approx(start.area())
+    tool.apply_stroke([QgsPointXY(*world(12, 7))])
+    assert tool.geometry.area() > start.area()

@@ -163,3 +163,76 @@ def test_polygon_vertex_editing_respects_minimum_ring_size():
     tool.canvasMoveEvent(event(canvas, mid_x, mid_y, QEvent.Type.MouseMove))
     press(tool, Qt.Key.Key_Delete)
     assert tool.vertex_count() == 4 and len(changes) == 3
+
+
+def test_the_brush_clamps_the_radius_it_is_constructed_with():
+    canvas = fake_iface().mapCanvas()
+    assert BrushTool(canvas, radius=0.0).radius == pytest.approx(0.01)
+
+
+def test_erasing_the_whole_painted_area_cancels_instead_of_finishing():
+    canvas = fake_iface().mapCanvas()
+    tool = BrushTool(canvas, radius=2.0)
+    painted, cancelled = [], []
+    tool.finished.connect(painted.append)
+    tool.cancelled.connect(lambda: cancelled.append(True))
+    tool.apply_stroke([QgsPointXY(*world(10, 10))])
+    tool.set_radius(6.0)
+    tool.apply_stroke([QgsPointXY(*world(10, 10))], erase=True)
+    assert tool.geometry.isEmpty()
+    press(tool, Qt.Key.Key_Return)
+    assert painted == [] and cancelled == [True]
+
+
+def test_clicking_a_vertex_without_moving_it_emits_nothing():
+    canvas = fake_iface().mapCanvas()
+    a, b, c = QgsPointXY(*world(5, 20)), QgsPointXY(*world(20, 20)), QgsPointXY(*world(30, 20))
+    tool = VertexEditTool(canvas, QgsGeometry.fromPolylineXY([a, b, c]))
+    changes = []
+    tool.geometryChanged.connect(changes.append)
+    x, y = pixel(canvas, a)
+    drag(tool, canvas, [(x, y), (x, y)])  # press and release on the vertex without moving it
+    assert changes == []
+    drag(tool, canvas, [(x, y), (x, y - 20), (x, y - 20)])
+    assert len(changes) == 1
+
+
+def test_an_inserted_vertex_snaps_like_a_dragged_one():
+    canvas = fake_iface().mapCanvas()
+    a, b = QgsPointXY(*world(5, 20)), QgsPointXY(*world(25, 20))
+    tool = VertexEditTool(canvas, QgsGeometry.fromPolylineXY([a, b]))
+    target = QgsPointXY(*world(15, 12))
+    tool.snap = lambda _event: target  # as if the project's snapping caught a nearby feature
+    mid_x, mid_y = pixel(canvas, QgsPointXY((a.x() + b.x()) / 2, a.y()))
+    tool.canvasDoubleClickEvent(event(canvas, mid_x, mid_y, QEvent.Type.MouseButtonDblClick))
+    assert tool.vertex_count() == 3
+    assert tool.geometry.vertexAt(1).x() == pytest.approx(target.x())
+    assert tool.geometry.vertexAt(1).y() == pytest.approx(target.y())
+
+
+def donut() -> QgsGeometry:
+    """A square with a triangular hole — what the brush makes when a stroke erases a bite out of a blob."""
+    shell = [QgsPointXY(*world(c, r)) for c, r in ((5, 5), (25, 5), (25, 25), (5, 25), (5, 5))]
+    hole = [QgsPointXY(*world(c, r)) for c, r in ((8, 14), (14, 20), (8, 20), (8, 14))]
+    return QgsGeometry.fromPolygonXY([shell, hole])
+
+
+def test_vertex_deletion_guards_each_ring_not_the_whole_geometry():
+    canvas = fake_iface().mapCanvas()
+    tool = VertexEditTool(canvas, donut())
+    changes = []
+    tool.geometryChanged.connect(changes.append)
+    assert tool.vertex_count() == 9 and tool.geometry.constGet().numInteriorRings() == 1
+
+    # The hole is already a triangle, even though the geometry as a whole has nine vertices.
+    tool.delete_vertex_near(QgsPointXY(*world(14, 20)))
+    assert tool.vertex_count() == 9 and changes == []
+
+    # The exterior ring is a square and can spare a corner.
+    tool.delete_vertex_near(QgsPointXY(*world(25, 5)))
+    assert tool.vertex_count() == 8 and len(changes) == 1
+
+    # It is a triangle now: dropping another corner would discard the shell and promote the hole.
+    tool.delete_vertex_near(QgsPointXY(*world(25, 25)))
+    assert tool.vertex_count() == 8 and len(changes) == 1
+    assert tool.geometry.constGet().numInteriorRings() == 1 and tool.geometry.isGeosValid()

@@ -20,8 +20,8 @@ METHOD_LABELS = {
 
 METHOD_ICONS = {
     Method.CLICK: "/mActionCaptureLine.svg",
-    Method.FREEHAND: "/mActionCaptureCurve.svg",
-    Method.BRUSH: "/mActionCircle.svg",
+    Method.FREEHAND: "/mActionSelectFreehand.svg",
+    Method.BRUSH: "/mActionAddBasicCircle.svg",
     Method.LAYER: "/mActionAddOgrLayer.svg",
 }
 
@@ -40,6 +40,11 @@ METHOD_HINTS = {
                   "radius. Right-click or Enter finishes, Esc cancels.",
     Method.LAYER: "Pick a layer below and press 'Use these features'.",
 }
+
+BRUSH_EXTEND_HINT = ("Extending {} — paint with the left mouse button to add to it, hold Shift to erase. "
+                     "[ and ] or Ctrl+wheel change the radius. Right-click or Enter finishes, Esc cancels.")
+
+EDIT_ICON = "/mActionVertexTool.svg"
 
 EDIT_HINT = ("Drag a vertex to move it, double-click a segment to add one, press Delete to remove the vertex "
              "under the cursor. Esc stops editing.")

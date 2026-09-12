@@ -10,8 +10,6 @@ from .base import SketchTool
 class FreehandTool(SketchTool):
     """Press, trace, release. Area mode closes the traced ring; Esc cancels."""
 
-    min_vertices = 2
-
     def __init__(self, canvas, geometry_type=Qgis.GeometryType.Line):
         self.geometry_type = geometry_type
         super().__init__(canvas)

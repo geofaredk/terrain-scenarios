@@ -1,9 +1,10 @@
 import pytest
+from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem
 
 from qgis_helpers import UTM, line_layer, line_through, sample, square, start_session
 from terrain_sketch.core.tools import Mode, PixelMode, Tool
 from terrain_sketch.gui.properties_page import PropertiesPage
-from terrain_sketch.gui.selection import Method
+from terrain_sketch.gui.selection import EDIT_ICON, METHOD_ICONS, Method
 from terrain_sketch.gui.tool_gallery import ToolGallery
 
 
@@ -54,3 +55,19 @@ def test_properties_show_the_tool_fields_and_apply_changes(tmp_path):
     assert page.form.isRowVisible(page.slope_position) and page.slope_position.currentData() is True
     page.pixel_mode.setCurrentIndex(page.pixel_mode.findData(PixelMode.ALL_TOUCHED.value))
     assert c.feature(pond.id).pixel_mode is PixelMode.ALL_TOUCHED
+
+
+def test_every_panel_icon_exists_in_the_qgis_theme():
+    """getThemeIcon returns a null icon for an unknown name, and the button then renders blank."""
+    for name in (*METHOD_ICONS.values(), EDIT_ICON):
+        assert not QgsApplication.getThemeIcon(name).isNull(), name
+
+
+def test_the_brush_radius_is_labelled_with_the_units_it_is_really_in():
+    gallery = ToolGallery()
+    gallery.set_radius_units(QgsCoordinateReferenceSystem("EPSG:25832").mapUnits())
+    assert gallery.brush_spin.suffix() == " m"
+    gallery.set_radius_units(QgsCoordinateReferenceSystem("EPSG:4326").mapUnits())
+    assert gallery.brush_spin.suffix() == " degrees"
+    gallery.set_radius_units(Qgis.DistanceUnit.Unknown)
+    assert gallery.brush_spin.suffix() == " map units"

@@ -1,7 +1,7 @@
 """'What do you want to build?' — the tool list, the Line/Area toggle and the 'Where?' methods."""
 from __future__ import annotations
 
-from qgis.core import QgsApplication
+from qgis.core import Qgis, QgsApplication, QgsUnitTypes
 from qgis.gui import QgsDoubleSpinBox
 from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import (QButtonGroup, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QRadioButton,
@@ -61,7 +61,6 @@ class ToolGallery(QWidget):
         self.brush_spin = QgsDoubleSpinBox()
         self.brush_spin.setRange(0.1, 1000.0)
         self.brush_spin.setDecimals(1)
-        self.brush_spin.setSuffix(" m")
         self.brush_spin.setValue(DEFAULT_BRUSH_RADIUS)
         self.brush_spin.setToolTip(self.tr("Radius of the round brush; [ and ] or Ctrl+wheel change it while painting."))
         brush_row.addWidget(self.brush_spin)
@@ -100,6 +99,17 @@ class ToolGallery(QWidget):
 
     def set_brush_radius(self, radius: float) -> None:
         self.brush_spin.setValue(radius)
+
+    def set_radius_units(self, units) -> None:
+        """Name the units the brush radius is really in — the canvas's map units, never converted."""
+        self.brush_spin.setSuffix(f" {self._unit_label(units)}")
+
+    def _unit_label(self, units) -> str:
+        if units == Qgis.DistanceUnit.Meters:
+            return self.tr("m")
+        if units == Qgis.DistanceUnit.Degrees:
+            return self.tr("degrees")
+        return QgsUnitTypes.toAbbreviatedString(units) or self.tr("map units")
 
     def _method_button(self, method: Method) -> QToolButton:
         button = QToolButton()

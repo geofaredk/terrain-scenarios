@@ -186,3 +186,21 @@ def test_set_geometry_replaces_the_shape(tmp_path):
     c.message.connect(lambda level, text: messages.append(text))
     assert c.set_geometry(dike.id, square(10, 10, 20, 20), UTM) is False  # an area cannot replace a path
     assert messages
+
+
+def test_reshaping_a_feature_that_was_deleted_is_reported_not_raised(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.delete_feature(dike.id)  # e.g. the Delete button while a brush stroke was still running
+    messages = []
+    c.message.connect(lambda level, text: messages.append(text))
+    assert c.set_geometry(dike.id, line_through(5, 30, 34, 30), UTM) is False
+    assert messages and c.features == ()
+
+
+def test_importing_the_same_layer_twice_numbers_the_second_feature(tmp_path):
+    c = start_session(tmp_path)
+    layer = line_layer("Planned dikes", [line_through(5, 10, 30, 10)])
+    first = c.add_from_layer(Tool.RAISE_PATH, Mode.PATH, layer)
+    second = c.add_from_layer(Tool.RAISE_PATH, Mode.PATH, layer)
+    assert (first.name, second.name) == ("Planned dikes", "Planned dikes 2")

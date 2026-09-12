@@ -1,7 +1,7 @@
 import pytest
 from qgis.core import QgsProject
 
-from qgis.core import QgsPointXY
+from qgis.core import QgsCoordinateReferenceSystem, QgsPointXY
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_through, sample, square, world
 from terrain_sketch import classFactory
@@ -149,3 +149,61 @@ def test_selecting_a_feature_highlights_it_on_the_map(tmp_path):
     assert dock.highlight.numberOfVertices() > 0
     dock.feature_view.clearSelection()
     assert dock.highlight.numberOfVertices() == 0
+
+
+def test_deleting_the_brushed_feature_mid_stroke_does_not_take_qgis_down(tmp_path):
+    _iface, controller, dock = _session_dock(tmp_path)
+    pond = controller.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
+    dock.feature_view.select_id(pond.id)
+    dock.gallery.select_tool(Tool.LOWER_FLAT)
+    dock.gallery.select_mode(Mode.AREA)
+    dock.gallery.method_buttons[Method.BRUSH].click()
+    brush = dock.draw_tool
+    assert dock._brush_fid == pond.id
+    controller.delete_feature(pond.id)  # the Delete button or the row context menu, still painting
+    assert dock._brush_fid is None
+    brush.apply_stroke([QgsPointXY(*world(25, 15))])
+    brush.finish()  # a stale target used to raise StopIteration out of this Qt callback
+    assert len(controller.features) == 1 and controller.features[0].id != pond.id
+
+
+def test_the_brush_hint_names_the_feature_it_extends(tmp_path):
+    _iface, controller, dock = _session_dock(tmp_path)
+    pond = controller.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
+    dock.feature_view.select_id(pond.id)
+    dock.gallery.select_tool(Tool.LOWER_FLAT)
+    dock.gallery.select_mode(Mode.AREA)
+    dock.gallery.method_buttons[Method.BRUSH].click()
+    assert dock._brush_fid == pond.id and pond.name in dock.hint.text()
+    dock.end_drawing()
+    dock.feature_view.clearSelection()
+    dock.gallery.method_buttons[Method.BRUSH].click()  # nothing selected: this paints a new feature
+    assert dock._brush_fid is None and pond.name not in dock.hint.text()
+
+
+def test_selecting_a_row_leaves_the_drawing_hint_up(tmp_path):
+    _iface, controller, dock = _session_dock(tmp_path)
+    dike = controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.gallery.select_tool(Tool.RAISE_PATH)
+    dock.gallery.select_mode(Mode.PATH)
+    dock.gallery.method_buttons[Method.FREEHAND].click()
+    assert not dock.hint.isHidden()
+    dock.feature_view.select_id(dike.id)  # the user checks a row while the trace is still running
+    assert dock.draw_tool is not None and not dock.hint.isHidden()
+
+
+def test_closing_the_panel_stops_the_edit_tool_too(tmp_path):
+    iface, controller, dock = _session_dock(tmp_path)
+    dike = controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.select_id(dike.id)
+    dock.edit_button.setChecked(True)
+    assert dock.edit_tool is not None
+    dock.close()
+    assert dock.edit_tool is None and iface.mapCanvas().mapTool() is None
+
+
+def test_the_brush_radius_follows_the_canvas_crs(tmp_path):
+    iface, _controller, dock = _session_dock(tmp_path)
+    assert dock.gallery.brush_spin.suffix() == " m"  # the test canvas is UTM
+    iface.mapCanvas().setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+    assert dock.gallery.brush_spin.suffix() == " degrees"

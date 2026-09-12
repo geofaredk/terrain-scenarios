@@ -51,9 +51,6 @@ FLAG_TEXTS = {
     FLAG_BAD_GEOMETRY: "The shape of this feature cannot be used.",
 }
 
-DRAW_HINT = ("Click to add points. Right-click or press Enter to finish, Backspace removes the last "
-             "point, Esc cancels.")
-
 NO_SESSION = "Pick a DEM and press Start first."
 
 EXPORT_OVER_SOURCE = "Choose a new file name: Terrain Sketch never overwrites your DEM or its own working files."

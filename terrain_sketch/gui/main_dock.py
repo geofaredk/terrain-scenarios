@@ -17,7 +17,7 @@ from .map_tools.draw_polygon import DrawPolygonTool
 from .map_tools.freehand import FreehandTool
 from .map_tools.vertex_edit import VertexEditTool
 from .properties_page import PropertiesPage
-from .selection import EDIT_HINT, METHOD_HINTS, Method
+from .selection import BRUSH_EXTEND_HINT, EDIT_HINT, EDIT_ICON, METHOD_HINTS, Method
 from .tool_gallery import ToolGallery
 
 PAGE_START, PAGE_GALLERY, PAGE_PROPERTIES = range(3)
@@ -71,7 +71,7 @@ class MainDock(QgsDockWidget):
         list_row = QHBoxLayout()
         self.new_button = QPushButton(QgsApplication.getThemeIcon("/mActionAdd.svg"), self.tr("New feature"))
         self.delete_button = QPushButton(QgsApplication.getThemeIcon("/mActionDeleteSelected.svg"), self.tr("Delete"))
-        self.edit_button = QPushButton(QgsApplication.getThemeIcon("/mActionNodeTool.svg"), self.tr("Edit shape"))
+        self.edit_button = QPushButton(QgsApplication.getThemeIcon(EDIT_ICON), self.tr("Edit shape"))
         self.edit_button.setCheckable(True)
         self.edit_button.setToolTip(self.tr("Move, add or remove the points of the selected feature."))
         list_row.addWidget(self.new_button)
@@ -107,7 +107,9 @@ class MainDock(QgsDockWidget):
         self.gallery.layerRequested.connect(self._use_layer)
         self.edit_button.toggled.connect(self._toggle_edit)
         self.iface.mapCanvas().mapToolSet.connect(self._map_tool_set)
+        self.iface.mapCanvas().destinationCrsChanged.connect(self._update_radius_units)
         controller.featuresChanged.connect(self._refresh_highlight)
+        controller.featuresChanged.connect(self._drop_missing_brush_target)
         controller.sessionChanged.connect(self._session_changed)
         controller.message.connect(self._show_message)
         self._session_changed()
@@ -145,10 +147,10 @@ class MainDock(QgsDockWidget):
                     canvas.unsetMapTool(tool)
             tool.dispose()
             tool.deleteLater()
-        self.hint.hide()
+            self.hint.hide()
 
     def closeEvent(self, event):  # noqa: N802 — Qt override
-        self.end_drawing()
+        self.stop_tools()
         super().closeEvent(event)
 
     def _session_changed(self) -> None:
@@ -166,6 +168,16 @@ class MainDock(QgsDockWidget):
         else:
             self.dem_combo.setExceptedLayerList([])
         self.pages.setCurrentIndex(PAGE_GALLERY if has_dem else PAGE_START)
+        self._update_radius_units()
+
+    def _update_radius_units(self) -> None:
+        """Label the brush radius with the canvas's own map units — the brush buffers in them."""
+        self.gallery.set_radius_units(self.iface.mapCanvas().mapUnits())
+
+    def _drop_missing_brush_target(self) -> None:
+        """The feature a brush stroke extends can be deleted while the stroke is still running."""
+        if self._brush_fid is not None and self._brush_fid not in {f.id for f in self.controller.features}:
+            self._brush_fid = None
 
     def _start(self) -> None:
         layer = self.dem_combo.currentLayer()
@@ -216,8 +228,14 @@ class MainDock(QgsDockWidget):
         self.draw_tool.cancelled.connect(self.end_drawing)
         self._previous_tool = canvas.mapTool()
         canvas.setMapTool(self.draw_tool)
-        self.hint.setText(self.tr(METHOD_HINTS[method]))
+        self.hint.setText(self._drawing_hint(method))
         self.hint.show()
+
+    def _drawing_hint(self, method) -> str:
+        """The instruction text for `method`, naming the feature when the brush extends one."""
+        if self._brush_fid is not None:
+            return self.tr(BRUSH_EXTEND_HINT).format(self.controller.feature(self._brush_fid).name)
+        return self.tr(METHOD_HINTS[method])
 
     def _brush_target(self, tool, mode) -> str | None:
         """The selected feature the brush should extend, if it fits the chosen tool and shape."""

@@ -21,7 +21,7 @@ class BrushTool(SketchTool):
 
     def __init__(self, canvas, radius: float, initial: QgsGeometry | None = None):
         super().__init__(canvas)
-        self.radius = float(radius)
+        self.set_radius(radius)
         self.geometry = QgsGeometry(initial) if initial is not None and not initial.isEmpty() else QgsGeometry()
         self.cursor_band = self.add_band(Qgis.GeometryType.Polygon, stroke_only=True)
         self._points: list[QgsPointXY] = []
@@ -88,11 +88,13 @@ class BrushTool(SketchTool):
         event.accept()
 
     def finish(self) -> None:
-        """Emit the painted area; an empty area is dropped."""
+        """Emit the painted area; an area erased to nothing ends the stroke as a cancellation."""
         geometry = QgsGeometry(self.geometry)
         self.reset()
-        if not geometry.isEmpty():
-            self.finished.emit(geometry)
+        if geometry.isEmpty():
+            self.cancelled.emit()
+            return
+        self.finished.emit(geometry)
 
     def reset(self) -> None:
         self.geometry = QgsGeometry()

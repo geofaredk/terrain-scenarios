@@ -71,12 +71,20 @@ def set_cross_section(feature, side: int, points) -> dict:
         changes["slope_n"] = round(run / rise, 4) if rise > 1e-9 else 0.0
         changes["reach"] = round(last[0] - edge, 4)
     else:
-        # No terminal slope: all points after edge are breaks, preserve slope_n and reach
-        interior = pts[2:]
+        # No terminal slope: all points after edge are breaks. Derive slope_n and reach.
+        # Filter out breaks at distance 0 (at the edge itself) and collapse duplicates.
+        interior = [(d, z) for d, z in pts[2:] if d > edge]
+
+        # Collapse duplicate distances: keep the later (rightmost) value
+        seen_distances = {}
+        for d, z in interior:
+            seen_distances[d] = z
+
+        deduplicated = sorted(seen_distances.items())
         changes["cross_right" if side >= 0 else "cross_left"] = tuple(
-            (d - edge, z) for d, z in interior)
-        changes["slope_n"] = feature.slope_n
-        changes["reach"] = feature.reach
+            (d - edge, z) for d, z in deduplicated)
+        changes["slope_n"] = 0.0
+        changes["reach"] = round(deduplicated[-1][0] - edge, 4) if deduplicated else 0.0
 
     return changes
 

@@ -117,7 +117,7 @@ def test_a_feature_with_no_terminal_slope_and_multiple_breaks_survives_a_round_t
     assert changes["width"] == pytest.approx(4.0)
     assert changes["cross_right"] == ((3.0, -1.0), (6.0, -2.0))
     assert changes["slope_n"] == pytest.approx(0.0)
-    assert changes["reach"] == pytest.approx(10.0)
+    assert changes["reach"] == pytest.approx(6.0)
 
 
 def test_an_unsorted_break_list_produces_a_non_decreasing_distance_sequence():
@@ -135,3 +135,25 @@ def test_an_ordinary_round_trip_with_one_break_and_a_slope_remains_unchanged():
     assert changes["cross_right"] == ((3.0, -1.0),)
     assert changes["slope_n"] == pytest.approx(3.0)
     assert changes["reach"] == pytest.approx(20.0)
+
+
+def test_deleting_the_terminal_slope_yields_zero_slope_and_reach():
+    f = dike(width=4.0, slope_n=3.0, reach=20.0)
+    changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0)])
+    assert changes["slope_n"] == pytest.approx(0.0)
+    assert changes["reach"] == pytest.approx(0.0)
+    assert changes["cross_right"] == ()
+
+
+def test_a_terminus_dragged_onto_the_edge_produces_no_break_at_distance_zero():
+    f = dike(width=4.0, slope_n=3.0, reach=20.0)
+    changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (2.0, -0.5)])
+    assert changes["cross_right"] == ()
+    assert changes["slope_n"] == pytest.approx(0.0)
+
+
+def test_a_terminus_dragged_onto_the_last_break_produces_one_break_not_two():
+    f = dike(width=4.0, slope_n=3.0, reach=20.0, cross_right=((3.0, -1.0),))
+    changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (5.0, -1.0), (5.0, -1.5)])
+    assert changes["cross_right"] == ((3.0, -1.5),)
+    assert changes["slope_n"] == pytest.approx(0.0)

@@ -322,6 +322,7 @@ class SketchController(QObject):
         return f"{name} {n}"
 
     def _drop_session(self) -> None:
+        self.cancel_preview()  # a queued frame must not fire against a session that is gone
         had_session = self.stack is not None
         self.stack = self.info = self.files = self.layers = None
         self.dem_layer_id = None

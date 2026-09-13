@@ -236,3 +236,44 @@ def test_vertex_deletion_guards_each_ring_not_the_whole_geometry():
     tool.delete_vertex_near(QgsPointXY(*world(25, 25)))
     assert tool.vertex_count() == 8 and len(changes) == 1
     assert tool.geometry.constGet().numInteriorRings() == 1 and tool.geometry.isGeosValid()
+
+
+def test_deleting_a_corner_that_would_put_the_hole_outside_the_shell_is_refused():
+    canvas = fake_iface().mapCanvas()
+    tool = VertexEditTool(canvas, donut())
+    changes = []
+    tool.geometryChanged.connect(changes.append)
+    before = tool.geometry.asWkt()
+
+    # The shell is a square and has vertices to spare, but losing this corner leaves a triangle
+    # that no longer contains the hole — makeValid() would rewrite the feature and there is no undo.
+    tool.delete_vertex_near(QgsPointXY(*world(5, 5)))
+    assert tool.geometry.asWkt() == before and tool.geometry.isGeosValid() and changes == []
+
+
+def test_dragging_a_corner_into_the_hole_is_refused_on_release():
+    canvas = fake_iface().mapCanvas()
+    tool = VertexEditTool(canvas, donut())
+    changes = []
+    tool.geometryChanged.connect(changes.append)
+    before = tool.geometry.asWkt()
+
+    corner = pixel(canvas, QgsPointXY(*world(5, 25)))
+    inside_the_hole = pixel(canvas, QgsPointXY(*world(10, 18)))
+    drag(tool, canvas, [corner, inside_the_hole, inside_the_hole])
+    assert tool.geometry.asWkt() == before and tool.geometry.isGeosValid() and changes == []
+
+
+def test_ordinary_deletes_and_drags_on_a_simple_area_still_go_through():
+    canvas = fake_iface().mapCanvas()
+    corners = [QgsPointXY(*world(c, r)) for c, r in ((5, 5), (25, 5), (25, 25), (5, 25), (5, 5))]
+    tool = VertexEditTool(canvas, QgsGeometry.fromPolygonXY([corners]))
+    changes = []
+    tool.geometryChanged.connect(changes.append)
+
+    x, y = pixel(canvas, corners[0])
+    drag(tool, canvas, [(x, y), (x + 30, y + 30), (x + 30, y + 30)])
+    assert len(changes) == 1 and changes[-1].vertexAt(0).x() > corners[0].x()
+
+    tool.delete_vertex_near(corners[1])
+    assert tool.vertex_count() == 4 and len(changes) == 2 and tool.geometry.isGeosValid()

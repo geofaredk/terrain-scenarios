@@ -9,7 +9,10 @@ from .base import SketchTool
 
 class VertexEditTool(SketchTool):
     """Drag a vertex to move it, double-click a segment to add one, Delete removes the vertex
-    under the cursor. Every change is emitted as `geometryChanged`; Esc stops editing."""
+    under the cursor. A change that would leave the shape invalid — a hole falling outside its
+    shell, say — is refused and the geometry stays as it was, because committing it would hand
+    `to_dem_wkb` a shape only `makeValid()` could rescue and there is no undo. Every change that
+    is kept is emitted as `geometryChanged`; Esc stops editing."""
 
     geometryChanged = pyqtSignal(object)  # QgsGeometry in the canvas CRS
 
@@ -43,8 +46,13 @@ class VertexEditTool(SketchTool):
         if self._dragging is None:
             return
         before, self._dragging, self._before = self._before, None, None
-        if before is not None and self.geometry.isExactlyEqual(before):
-            return  # a bare click on a vertex must not cost a recompute
+        if before is not None:
+            if self.geometry.isExactlyEqual(before):
+                return  # a bare click on a vertex must not cost a recompute
+            if not self.geometry.isGeosValid():
+                self.geometry = before  # the drag showed the invalid shape; it must not be committed
+                self._redraw()
+                return
         self._changed()
 
     def canvasDoubleClickEvent(self, event):  # noqa: N802 — Qt override
@@ -78,7 +86,11 @@ class VertexEditTool(SketchTool):
         index = self.vertex_near(point)
         if index is None or not self._can_delete(index):
             return
+        before = QgsGeometry(self.geometry)
         self.geometry.deleteVertex(index)
+        if not self.geometry.isGeosValid():
+            self.geometry = before  # a square shell can lose a corner and leave its hole outside
+            return
         self._changed()
 
     def vertex_count(self) -> int:
@@ -97,8 +109,10 @@ class VertexEditTool(SketchTool):
         return count
 
     def _can_delete(self, index: int) -> bool:
-        """The ring or part holding the vertex must survive on its own: a polygon with a hole can have
-        plenty of vertices overall while its exterior ring is already down to a triangle."""
+        """The cheap first check: the ring or part holding the vertex keeps its minimum vertex count on
+        its own, because a polygon with a hole can have plenty of vertices overall while its exterior
+        ring is already down to a triangle. Passing this does not mean the result is usable — the
+        deletion is refused as well when the geometry it leaves behind is invalid."""
         minimum = self._minimum_vertices()
         return self.vertex_count() > minimum and self.ring_vertex_count(index) > minimum
 

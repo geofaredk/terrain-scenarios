@@ -49,7 +49,7 @@ class PreviewOverlay(QgsMapCanvasItem):
         """Take the item off the canvas; call before dropping the reference."""
         self.clear()
         scene = self.canvas.scene()
-        if scene is not None:
+        if scene is not None and self.scene() == scene:
             scene.removeItem(self)
 
     def updatePosition(self) -> None:  # noqa: N802 — Qt/QGIS override

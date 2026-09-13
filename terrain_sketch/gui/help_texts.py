@@ -64,6 +64,20 @@ DRAWING_NOT_TRANSFORMED = "The drawing could not be converted to the DEM's coord
 NO_FEATURES_IN_LAYER = "That layer has no features of the right kind to use here."
 
 
+PROFILE_EMPTY_HINT = "Select or draw a feature to edit its shape here."
+
+CUSTOM_PROFILE_NOTE = ("Custom long profile: the heights are fixed and no longer follow the "
+                       "terrain underneath. Use Reset to rule to go back.")
+
+AREA_LONG_SECTION_NOTE = ("For an area this panel is a read-only section through the feature, "
+                          "showing the terrain before and after.")
+
+SYMMETRIC_TIP = "Mirror every cross-profile edit to the other side of the path."
+
+AMOUNT_IS_CUSTOM = ("The long profile was edited by hand, so its heights are fixed. Use "
+                    "Reset to rule in the profile panel to drive the shape from this value again.")
+
+
 def amount_label(tool: Tool) -> str | None:
     """Label of the amount field, or None when the tool has no amount."""
     if tool is Tool.INTERPOLATE:

@@ -32,7 +32,7 @@ class TerrainSketchPlugin:
 
     def unload(self):
         if self.dock is not None:
-            self.dock.end_drawing()
+            self.dock.shutdown()
             self.iface.removeDockWidget(self.dock)
             self.dock.deleteLater()
             self.dock = None
@@ -51,7 +51,7 @@ class TerrainSketchPlugin:
             return
         if self.dock is not None:
             if not checked:
-                self.dock.end_drawing()
+                self.dock.stop_tools()
             self.dock.setUserVisible(checked)
 
     def _create_dock(self) -> bool:

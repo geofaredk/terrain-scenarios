@@ -2080,8 +2080,8 @@ from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
 from .map_tools.freehand import FreehandTool
 from .map_tools.vertex_edit import VertexEditTool
-from .selection import EDIT_HINT, METHOD_HINTS, Method
 from .properties_page import PropertiesPage
+from .selection import EDIT_HINT, METHOD_HINTS, Method
 from .tool_gallery import ToolGallery
 
 PAGE_START, PAGE_GALLERY, PAGE_PROPERTIES = range(3)
@@ -2499,3 +2499,50 @@ git commit -m "feat(gui): selection methods, layer form, shape editing and map h
 | 4 | Profile dock (cross + long), live preview while dragging, `FeatureStack.terrain_before` | `SketchController.set_geometry/update_feature`, `Preview`, `PropertiesPage` |
 | 5 | Illustrated gallery, help texts, tooltips, pixel-mode pictures, "Reproject…" button, `QgsSettings` persistence | `selection.py` labels/tips, `ToolGallery`, `help_texts.py` |
 | 6 | Scenario GeoPackage, volumes panel, undo/redo, 3D view, duplicate/rename, ZIP packaging | `SketchController`, `TerrainFeature.to_dict/from_dict`, `FeatureStats` |
+
+---
+
+## Addendum: final-review fixes
+
+The task blocks above are the plan as written. Five tasks landed on `feat/selection-methods`, each reviewed as it
+landed, followed by a whole-branch review and one fix wave. **Where this addendum and the task blocks disagree, the
+code is authoritative** — the blocks were generated from a prototype that the reviews then improved.
+
+### Changed after the task blocks
+
+| # | What changed | Why |
+|---|---|---|
+| C1 | `SketchController.set_geometry` looks the feature up with a `None` default and guards on `has_dem` | Deleting a feature mid-brush-stroke raised `StopIteration` inside a Qt callback — an interpreter abort that took QGIS down with unsaved work. `main_dock` also clears `_brush_fid` when its target disappears. |
+| I2 | `VertexEditTool` guards the ring/part containing the vertex (`vertexIdFromVertexNr`), not the whole geometry | The whole-geometry count let an exterior ring be reduced while a hole existed, producing invalid geometry that `makeValid()` silently rewrote. The Brush makes donuts by design (`difference` → one interior ring), so the path is reachable. **See the known residual below.** |
+| I3 | Icons: `/mActionSelectFreehand.svg`, `/mActionAddBasicCircle.svg`, `EDIT_ICON = /mActionVertexTool.svg` | `/mActionCaptureCurve.svg`, `/mActionCircle.svg` and `/mActionNodeTool.svg` are null in QGIS 4.2.2, so three buttons rendered blank. `getThemeIcon` fails silently; a test now asserts every panel icon resolves. |
+| I4 | Added `test_vertex_deletion_guards_each_ring_not_the_whole_geometry` | The original polygon test used a single-ring triangle, where per-ring and whole-geometry guards are indistinguishable — it pinned nothing. |
+| I5 | Brush radius suffix derives from the canvas CRS's map units | It was hardcoded `" m"` while the brush buffers in the canvas CRS. A UTM DEM in an EPSG:4326 project made "5.0 m" buffer 5 degrees. |
+| I6 | `BRUSH_EXTEND_HINT` names the feature being extended | Extend-vs-create was decided on a conjunction the user could not see. The behaviour stands; only its visibility changed. |
+| — | Smaller: `hint.hide()` moved inside its guard; `closeEvent` → `stop_tools()`; brush `finish()` emits `cancelled` on an empty geometry; dead `freehand.min_vertices` and `help_texts.DRAW_HINT` removed; `BrushTool.__init__` routes through `set_radius`; vertex insert snaps; release emits only when the geometry actually changed; `_unique`'s collision branch covered | Each confirmed by review. |
+
+### Ring editing refuses edits that would leave the shape invalid
+
+The per-ring guard alone was not enough: it blocked a *second* exterior deletion but not the first. An exterior ring
+going 5 → 4 vertices left a triangle with the hole outside it (`isGeosValid() == False`), and `to_dem_wkb`'s
+`makeValid()` rewrote the feature into a shape the user never drew — with no undo to recover it. A probe then showed
+the **drag** path had the same hazard: dragging a shell corner into the hole produced an invalid geometry too.
+
+`VertexEditTool` now snapshots the geometry before a delete and reuses the press-time snapshot on a drag release; if
+the result is not `isGeosValid()`, it restores the snapshot and emits nothing. Insertion is deliberately excluded —
+adding a point on an existing segment cannot make a valid ring invalid. The check is free (`isGeosValid()` measured
+0.00 ms on a 500-vertex polygon).
+
+Two things worth knowing about the guard. It refuses on the *result* being invalid without asking whether the
+geometry was already invalid on entry; that is safe because everything reaching the tool has been through
+`makeValid()`, and the only gap — reprojection in `_to_canvas` distorting a valid shape — would make that one feature
+refuse edits until redrawn rather than corrupt it. And a refusal is **silent**, matching the existing ring-guard
+behaviour: the drag visibly snaps back, but a refused Delete simply does nothing.
+
+### Deferred to later plans
+
+| Plan | Items |
+|---|---|
+| 4 | Watch `main_dock.py` (336 lines, coordinating session state, drawing, editing, brush-extend, highlight, export and context menus) before it grows further. |
+| 5 | `tr()` is called on non-literals (`METHOD_HINTS[method]`, `EDIT_HINT`) so `pylupdate` cannot extract them — harmless while English-only, but it defeats the point of the `tr()` calls; `NO_FEATURES_IN_LAYER` misdiagnoses its most likely trigger ("Selected features only" with nothing selected); "Use these features" is a dead button on an empty combo; a refused vertex edit gives no feedback at all (see above) — a status hint would stop users reading a refusal as an unresponsive tool. |
+| 6 | `add_from_layer` has no size ceiling and `_set` is synchronous — importing a large road network freezes QGIS with no progress or warning; undo/redo would also defuse the ring residual above. |
+| — | Ship-as-is, recorded for completeness: `brush.py` hardcodes `Polygon` in one `reset`; no brush move-distance throttle; Esc skips `reset()` in `VertexEditTool` (the wired path covers it); `_unique_name`/`_unique` near-duplication; no distinct "layer with zero features" test; no direct `featuresChanged → _refresh_highlight` test; vestigial `snap_indicator is not None` checks. |

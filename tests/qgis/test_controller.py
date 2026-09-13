@@ -2,7 +2,7 @@ import pytest
 from qgis.core import Qgis, QgsProject
 
 import terrain_sketch.gui.controller as controller_module
-from qgis_helpers import UTM, dem_layer, line_through, read_tif, sample, start_session
+from qgis_helpers import UTM, dem_layer, line_layer, line_through, read_tif, sample, square, start_session
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.controller import SketchController
 from terrain_sketch.qgis_io.layers import GROUP_NAME
@@ -147,3 +147,60 @@ def test_drawing_or_exporting_without_a_session_is_reported_not_raised(tmp_path)
     assert messages and not c.dem_crs.isValid()
     with pytest.raises(RuntimeError, match="Start"):
         c.export_dem(str(tmp_path / "out.tif"))
+
+
+def test_features_from_a_layer_become_one_multi_part_feature(tmp_path):
+    c = start_session(tmp_path)
+    layer = line_layer("Planned dikes", [line_through(5, 10, 30, 10), line_through(5, 30, 30, 30)])
+    feature = c.add_from_layer(Tool.RAISE_PATH, Mode.PATH, layer)
+    assert feature.name == "Planned dikes" and len(c.features) == 1
+    assert sample(c.layers.working, 20, 10) == pytest.approx(11.0)
+    assert sample(c.layers.working, 20, 30) == pytest.approx(11.0)
+
+
+def test_only_the_selected_features_are_used(tmp_path):
+    c = start_session(tmp_path)
+    layer = line_layer("Planned dikes", [line_through(5, 10, 30, 10), line_through(5, 30, 30, 30)])
+    layer.selectByIds([next(layer.getFeatures()).id()])
+    c.add_from_layer(Tool.RAISE_PATH, Mode.PATH, layer, selected_only=True)
+    assert sample(c.layers.working, 20, 10) == pytest.approx(11.0)
+    assert sample(c.layers.working, 20, 30) == pytest.approx(10.0)
+
+
+def test_an_empty_layer_selection_is_reported(tmp_path):
+    c = start_session(tmp_path)
+    layer = line_layer("Planned dikes", [line_through(5, 10, 30, 10)])
+    messages = []
+    c.message.connect(lambda level, text: messages.append(text))
+    assert c.add_from_layer(Tool.RAISE_PATH, Mode.PATH, layer, selected_only=True) is None
+    assert c.features == () and messages
+
+
+def test_set_geometry_replaces_the_shape(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    assert c.set_geometry(dike.id, line_through(5, 30, 34, 30), UTM)
+    assert sample(c.layers.working, 20, 20) == pytest.approx(10.0)
+    assert sample(c.layers.working, 20, 30) == pytest.approx(11.0)
+    messages = []
+    c.message.connect(lambda level, text: messages.append(text))
+    assert c.set_geometry(dike.id, square(10, 10, 20, 20), UTM) is False  # an area cannot replace a path
+    assert messages
+
+
+def test_reshaping_a_feature_that_was_deleted_is_reported_not_raised(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.delete_feature(dike.id)  # e.g. the Delete button while a brush stroke was still running
+    messages = []
+    c.message.connect(lambda level, text: messages.append(text))
+    assert c.set_geometry(dike.id, line_through(5, 30, 34, 30), UTM) is False
+    assert messages and c.features == ()
+
+
+def test_importing_the_same_layer_twice_numbers_the_second_feature(tmp_path):
+    c = start_session(tmp_path)
+    layer = line_layer("Planned dikes", [line_through(5, 10, 30, 10)])
+    first = c.add_from_layer(Tool.RAISE_PATH, Mode.PATH, layer)
+    second = c.add_from_layer(Tool.RAISE_PATH, Mode.PATH, layer)
+    assert (first.name, second.name) == ("Planned dikes", "Planned dikes 2")

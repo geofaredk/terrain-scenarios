@@ -3,8 +3,8 @@ from unittest import mock
 
 import numpy as np
 from osgeo import gdal
-from qgis.core import (QgsCoordinateReferenceSystem, QgsGeometry, QgsPointXY, QgsProject, QgsRasterLayer,
-                       QgsRectangle)
+from qgis.core import (QgsCoordinateReferenceSystem, QgsFeature, QgsGeometry, QgsPointXY, QgsProject,
+                       QgsRasterLayer, QgsRectangle, QgsVectorLayer)
 from qgis.gui import QgisInterface, QgsMapCanvas
 from qgis.PyQt.QtWidgets import QMainWindow
 
@@ -85,3 +85,18 @@ def start_session(tmp_path, array=None):
     controller = SketchController(QgsProject.instance())
     controller.set_dem(dem_layer(tmp_path, array))
     return controller
+
+
+def line_layer(name, geometries, add_to_project=True) -> QgsVectorLayer:
+    """A memory line layer in the test CRS holding `geometries`."""
+    layer = QgsVectorLayer("LineString?crs=EPSG:25832", name, "memory")
+    features = []
+    for geometry in geometries:
+        feature = QgsFeature()
+        feature.setGeometry(geometry)
+        features.append(feature)
+    layer.dataProvider().addFeatures(features)
+    layer.updateExtents()
+    if add_to_project:
+        QgsProject.instance().addMapLayer(layer)
+    return layer

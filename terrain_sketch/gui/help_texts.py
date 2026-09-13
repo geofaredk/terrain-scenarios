@@ -51,9 +51,6 @@ FLAG_TEXTS = {
     FLAG_BAD_GEOMETRY: "The shape of this feature cannot be used.",
 }
 
-DRAW_HINT = ("Click to add points. Right-click or press Enter to finish, Backspace removes the last "
-             "point, Esc cancels.")
-
 NO_SESSION = "Pick a DEM and press Start first."
 
 EXPORT_OVER_SOURCE = "Choose a new file name: Terrain Sketch never overwrites your DEM or its own working files."
@@ -63,6 +60,8 @@ SESSION_ENDED_DEM_REMOVED = "The Terrain Sketch session ended because its DEM wa
 RESULT_LAYER_REMOVED = "A Terrain Sketch layer was removed from the project. Your features are kept and export still works."
 
 DRAWING_NOT_TRANSFORMED = "The drawing could not be converted to the DEM's coordinate system."
+
+NO_FEATURES_IN_LAYER = "That layer has no features of the right kind to use here."
 
 
 def amount_label(tool: Tool) -> str | None:

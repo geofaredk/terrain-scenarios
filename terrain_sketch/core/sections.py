@@ -30,10 +30,11 @@ def cross_section(feature, side: int = 1) -> tuple:
     if not info.has_slopes:
         return tuple(points)
     limit = side_limit(breaks, feature.slope_n, feature.reach)
-    for distance, dz in breaks:
+    sorted_breaks = sorted(breaks, key=lambda b: b[0])
+    for distance, dz in sorted_breaks:
         points.append((edge + float(distance), float(dz)))
-    if limit > (breaks[-1][0] if breaks else 0.0):
-        dz, _in_extent = side_dz(np.array([limit]), breaks, feature.slope_n, feature.reach,
+    if limit > (sorted_breaks[-1][0] if sorted_breaks else 0.0):
+        dz, _in_extent = side_dz(np.array([limit]), sorted_breaks, feature.slope_n, feature.reach,
                                  info.direction)
         points.append((edge + limit, float(dz[0])))
     return tuple(points)
@@ -46,20 +47,37 @@ def set_cross_section(feature, side: int, points) -> dict:
     The first interior point sets the width; the rest become break points relative to the
     corridor edge; the last segment's run over rise sets the side slope.
     """
-    pts = [(float(d), float(z)) for d, z in points if float(d) >= 0.0]
+    pts = sorted([(float(d), float(z)) for d, z in points if float(d) >= 0.0], key=lambda p: p[0])
     if len(pts) < 2:
         raise ValueError("a cross section needs at least a centre and an edge point")
     edge = pts[1][0]
     changes: dict = {}
     if feature.mode is Mode.PATH:
         changes["width"] = max(2.0 * edge, 0.1)
-    interior, last = pts[2:-1], pts[-1]
-    changes["cross_right" if side >= 0 else "cross_left"] = tuple(
-        (d - edge, z) for d, z in interior)
-    run = last[0] - (interior[-1][0] if interior else edge)
-    rise = abs(last[1] - (interior[-1][1] if interior else 0.0))
-    changes["slope_n"] = round(run / rise, 4) if rise > 1e-9 else 0.0
-    changes["reach"] = round(last[0] - edge, 4)
+
+    # Only treat the final point as a slope terminus when the feature has a terminal slope
+    # AND that point lies strictly beyond the last break; otherwise all points after the
+    # edge are break points.
+    has_terminal_slope = feature.slope_n > 0.0
+    last_break_distance = pts[-2][0] if len(pts) > 2 else edge
+    last_point_is_terminus = has_terminal_slope and pts[-1][0] > last_break_distance
+
+    if last_point_is_terminus:
+        interior, last = pts[2:-1], pts[-1]
+        changes["cross_right" if side >= 0 else "cross_left"] = tuple(
+            (d - edge, z) for d, z in interior)
+        run = last[0] - (interior[-1][0] if interior else edge)
+        rise = abs(last[1] - (interior[-1][1] if interior else 0.0))
+        changes["slope_n"] = round(run / rise, 4) if rise > 1e-9 else 0.0
+        changes["reach"] = round(last[0] - edge, 4)
+    else:
+        # No terminal slope: all points after edge are breaks, preserve slope_n and reach
+        interior = pts[2:]
+        changes["cross_right" if side >= 0 else "cross_left"] = tuple(
+            (d - edge, z) for d, z in interior)
+        changes["slope_n"] = feature.slope_n
+        changes["reach"] = feature.reach
+
     return changes
 
 

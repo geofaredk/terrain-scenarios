@@ -108,3 +108,30 @@ def test_rescaling_leaves_a_rule_profile_and_an_unchanged_path_alone():
     assert rescale_long_profile(rule, line_wkb([(5, 20), (65, 20)]), 1.0) is None
     same = dike(long_profile=((0.0, 10.0), (30.0, 11.0)))
     assert rescale_long_profile(same, same.geometry_wkb, 1.0) is same.long_profile
+
+
+def test_a_feature_with_no_terminal_slope_and_multiple_breaks_survives_a_round_trip():
+    f = dike(width=4.0, slope_n=0.0, reach=10.0, cross_right=((3.0, -1.0), (6.0, -2.0)))
+    points = cross_section(f)
+    changes = set_cross_section(f, 1, points)
+    assert changes["width"] == pytest.approx(4.0)
+    assert changes["cross_right"] == ((3.0, -1.0), (6.0, -2.0))
+    assert changes["slope_n"] == pytest.approx(0.0)
+    assert changes["reach"] == pytest.approx(10.0)
+
+
+def test_an_unsorted_break_list_produces_a_non_decreasing_distance_sequence():
+    f = dike(width=4.0, slope_n=2.0, reach=20.0, cross_right=((6.0, -2.0), (3.0, -1.0)))
+    points = cross_section(f)
+    distances = [d for d, z in points]
+    assert distances == sorted(distances)
+
+
+def test_an_ordinary_round_trip_with_one_break_and_a_slope_remains_unchanged():
+    f = dike(width=4.0, slope_n=3.0, reach=20.0, cross_right=((3.0, -1.0),))
+    points = cross_section(f)
+    changes = set_cross_section(f, 1, points)
+    assert changes["width"] == pytest.approx(4.0)
+    assert changes["cross_right"] == ((3.0, -1.0),)
+    assert changes["slope_n"] == pytest.approx(3.0)
+    assert changes["reach"] == pytest.approx(20.0)

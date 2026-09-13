@@ -84,7 +84,7 @@ def set_cross_section(feature, side: int, points) -> dict:
         changes["cross_right" if side >= 0 else "cross_left"] = tuple(
             (d - edge, z) for d, z in deduplicated)
         changes["slope_n"] = 0.0
-        changes["reach"] = round(deduplicated[-1][0] - edge, 4) if deduplicated else 0.0
+        changes["reach"] = 0.0 if not deduplicated else feature.reach
 
     return changes
 

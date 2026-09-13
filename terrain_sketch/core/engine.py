@@ -28,7 +28,7 @@ class FeatureStack:
         self.stats: dict[str, FeatureStats] = {}
         self._windows: dict = {}
         self._before_key = None
-        self._before_grid: DemGrid | None = None
+        self._before_cache: tuple[DemGrid, dict] | None = None
 
     def footprint(self, feature) -> Window | None:
         if feature not in self._windows:
@@ -92,6 +92,7 @@ class FeatureStack:
             if f.id == feature_id:
                 break
             apply_feature(f, grid)
+        self._prune_windows()
         return window, grid
 
     def preview_for(self, feature_id: str, features) -> Preview | None:
@@ -115,11 +116,14 @@ class FeatureStack:
         key = (feature_id, window, tuple(f for f in replay[:index]))
         if self._before_key != key:
             base = self.original.subgrid(window)
+            before_stats = {}
             for f in replay[:index]:
-                apply_feature(f, base)
-            self._before_key, self._before_grid = key, base
-        grid = self._before_grid.copy()
-        stats = {f.id: apply_feature(f, grid) for f in replay[index:]}
+                before_stats[f.id] = apply_feature(f, base)
+            self._before_key, self._before_cache = key, (base, before_stats)
+        base, before_stats = self._before_cache
+        grid = base.copy()
+        stats = dict(before_stats)
+        stats.update({f.id: apply_feature(f, grid) for f in replay[index:]})
         self._prune_windows()
         return Preview(window, grid, stats)
 
@@ -162,7 +166,7 @@ class FeatureStack:
         self._windows = {f: w for f, w in self._windows.items() if f in current}
 
     def _refresh_bookkeeping(self) -> None:
-        self._before_key, self._before_grid = None, None
+        self._before_key, self._before_cache = None, None
         current = set(self.features)
         self._windows = {f: w for f, w in self._windows.items() if f in current}
         ids = {f.id for f in self.features}

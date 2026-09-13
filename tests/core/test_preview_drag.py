@@ -33,6 +33,9 @@ def test_preview_for_matches_a_full_replay():
     for f in (features[0], dragged, features[2]):
         apply_feature(f, expected)
     assert np.allclose(result.grid.data, expected.data, equal_nan=True)
+    # Verify stats keys match between preview_for and full preview
+    full_result = stack.preview([features[0], dragged, features[2]])
+    assert set(result.stats.keys()) == set(full_result.stats.keys())
 
 
 def test_preview_for_reuses_the_terrain_under_the_dragged_feature():
@@ -114,3 +117,39 @@ def test_renaming_a_feature_changes_no_terrain_and_no_window():
     assert window is None
     assert np.array_equal(stack.working.data, before, equal_nan=True)
     assert stack.features[1].name == "Embankment"
+
+
+def test_terrain_before_the_first_feature_is_the_original():
+    stack, features = stack_with_three()
+    result = stack.terrain_before("pad", features)
+    assert result is not None
+    window, grid = result
+    # The terrain before the first feature should be the original (unmodified)
+    expected = stack.original.subgrid(window)
+    assert np.array_equal(grid.data, expected.data, equal_nan=True)
+
+
+def test_terrain_before_a_later_feature_includes_earlier_ones():
+    stack, features = stack_with_three()
+    result = stack.terrain_before("pond", features)
+    assert result is not None
+    window, grid = result
+    # The terrain before pond should include pad and dike
+    expected = stack.original.subgrid(window)
+    apply_feature(features[0], expected)  # pad
+    apply_feature(features[1], expected)  # dike
+    assert np.allclose(grid.data, expected.data, equal_nan=True)
+
+
+def test_terrain_before_returns_none_for_unknown_feature():
+    stack, features = stack_with_three()
+    assert stack.terrain_before("unknown", features) is None
+
+
+def test_terrain_before_cache_does_not_grow_with_transient_features():
+    stack, features = stack_with_three()
+    assert len(stack._windows) == 3
+    for amount in np.linspace(2.0, 5.0, 40):
+        moved = replace(features[1], amount=float(amount))
+        stack.terrain_before("pond", [features[0], moved, features[2]])
+    assert len(stack._windows) == 3  # should not grow with transient features

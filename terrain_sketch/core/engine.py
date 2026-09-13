@@ -27,6 +27,8 @@ class FeatureStack:
         self.features: tuple = ()
         self.stats: dict[str, FeatureStats] = {}
         self._windows: dict = {}
+        self._before_key = None
+        self._before_grid: DemGrid | None = None
 
     def footprint(self, feature) -> Window | None:
         if feature not in self._windows:
@@ -44,7 +46,7 @@ class FeatureStack:
         dirty = None
         for fid in old.keys() | new.keys():
             o, n = old.get(fid), new.get(fid)
-            if o is not None and o == n and old_before[fid] == new_before[fid]:
+            if o is not None and _same_result(o, n) and old_before[fid] == new_before[fid]:
                 continue
             for f in (o, n):
                 if f is not None and f.enabled:
@@ -73,6 +75,54 @@ class FeatureStack:
         stats = {f.id: apply_feature(f, grid) for f in features}
         return grid, stats
 
+    def terrain_before(self, feature_id: str, features=None) -> tuple[Window, DemGrid] | None:
+        """The terrain as it stands just before `feature_id` is applied, over that feature's
+        own window. This is the reference a profile editor draws as its dashed line, and the
+        `before` state volumes are measured against."""
+        features = tuple(self.features if features is None else features)
+        target = next((f for f in features if f.id == feature_id), None)
+        if target is None:
+            return None
+        window = self.footprint(target)
+        if window is None:
+            return None
+        window, replay = self.closure(window, features)
+        grid = self.original.subgrid(window)
+        for f in replay:
+            if f.id == feature_id:
+                break
+            apply_feature(f, grid)
+        return window, grid
+
+    def preview_for(self, feature_id: str, features) -> Preview | None:
+        """Preview while one feature is being dragged.
+
+        Everything before the dragged feature is independent of the drag, so it is computed
+        once and cached; each later call replays only the dragged feature and the ones after
+        it onto that cached terrain. That is what makes a drag interactive on a large window
+        — the full `preview` path re-replays the whole stack every frame."""
+        features = tuple(features)
+        target = next((f for f in features if f.id == feature_id), None)
+        if target is None or not target.enabled:
+            return self.preview(features)
+        window = self.footprint(target)
+        if window is None:
+            return None
+        window, replay = self.closure(window, features)
+        index = next((i for i, f in enumerate(replay) if f.id == feature_id), None)
+        if index is None:
+            return None
+        key = (feature_id, window, tuple(f for f in replay[:index]))
+        if self._before_key != key:
+            base = self.original.subgrid(window)
+            for f in replay[:index]:
+                apply_feature(f, base)
+            self._before_key, self._before_grid = key, base
+        grid = self._before_grid.copy()
+        stats = {f.id: apply_feature(f, grid) for f in replay[index:]}
+        self._prune_windows()
+        return Preview(window, grid, stats)
+
     def preview(self, features) -> Preview | None:
         """Result of `features` for the changed window, without changing the stack."""
         features = tuple(features)
@@ -81,6 +131,7 @@ class FeatureStack:
             return None
         window, replay = self.closure(dirty, features)
         grid, stats = self.compute(replay, window)
+        self._prune_windows()
         return Preview(window, grid, stats)
 
     def update(self, features) -> Window | None:
@@ -102,7 +153,16 @@ class FeatureStack:
         self.stats.update(stats)
         return window
 
+    def _prune_windows(self) -> None:
+        """Drop cached footprints of features that are not in the committed list.
+
+        Every preview frame asks for the footprint of a *different* transient feature, so
+        without this a drag would add one cache entry per frame and never give them back."""
+        current = set(self.features)
+        self._windows = {f: w for f, w in self._windows.items() if f in current}
+
     def _refresh_bookkeeping(self) -> None:
+        self._before_key, self._before_grid = None, None
         current = set(self.features)
         self._windows = {f: w for f, w in self._windows.items() if f in current}
         ids = {f.id for f in self.features}
@@ -112,6 +172,18 @@ class FeatureStack:
                 self.stats[f.id] = FeatureStats()
             elif self.footprint(f) is None:
                 self.stats[f.id] = FeatureStats(flags=footprint_flags(f))
+
+
+COMPUTED_FIELDS = ("geometry_wkb", "tool", "mode", "enabled", "pixel_mode", "amount", "width",
+                   "slope_n", "reach", "slopes_inside", "cross_left", "cross_right", "long_profile")
+
+
+def _same_result(a, b) -> bool:
+    """Whether two versions of a feature produce the same terrain. `name` is not in that set,
+    so renaming a feature costs nothing."""
+    if a is None or b is None:
+        return False
+    return all(getattr(a, f) == getattr(b, f) for f in COMPUTED_FIELDS)
 
 
 def _predecessors(features, common) -> dict:

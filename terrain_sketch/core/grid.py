@@ -112,6 +112,15 @@ class DemGrid:
         row_off, col_off = self.offset
         return (rx0 + (col_off + window.col0) * px, px, 0.0, ry0 + (row_off + window.row0) * py, 0.0, py)
 
+    def window_bounds(self, window: Window) -> tuple:
+        """(xmin, ymin, xmax, ymax) of a window in map units, for georeferencing an overlay."""
+        x0, w, _rx, y0, _ry, h = self.geotransform
+        left = x0 + window.col0 * w
+        right = x0 + window.col1 * w
+        top = y0 + window.row0 * h
+        bottom = y0 + window.row1 * h
+        return (min(left, right), min(top, bottom), max(left, right), max(top, bottom))
+
     def subgrid(self, window: Window) -> DemGrid:
         """Independent copy of a window."""
         rs, cs = window.slices

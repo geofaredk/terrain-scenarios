@@ -98,12 +98,13 @@ def test_plugin_adds_and_removes_its_button_menu_and_panel():
     iface.addToolBarIcon.assert_called_once_with(plugin.action)
     iface.addPluginToRasterMenu.assert_called_once()
     plugin.action.setChecked(True)
-    assert plugin.dock is not None
-    iface.addDockWidget.assert_called_once()
+    assert plugin.dock is not None and plugin.profiles is not None
+    assert iface.addDockWidget.call_count == 2  # the panel on the right, the profiles below
     plugin.unload()
     iface.removeToolBarIcon.assert_called_once()
-    iface.removeDockWidget.assert_called_once()
-    assert plugin.dock is None and plugin.controller is None and plugin.action is None
+    assert iface.removeDockWidget.call_count == 2
+    assert plugin.dock is None and plugin.profiles is None
+    assert plugin.controller is None and plugin.action is None
 
 
 def _session_dock(tmp_path):

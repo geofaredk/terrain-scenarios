@@ -16,6 +16,7 @@ from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
 from .map_tools.freehand import FreehandTool
 from .map_tools.vertex_edit import VertexEditTool
+from .overlay import PreviewOverlay
 from .properties_page import PropertiesPage
 from .selection import BRUSH_EXTEND_HINT, EDIT_HINT, EDIT_ICON, METHOD_HINTS, Method
 from .tool_gallery import ToolGallery
@@ -24,12 +25,14 @@ PAGE_START, PAGE_GALLERY, PAGE_PROPERTIES = range(3)
 
 
 class MainDock(QgsDockWidget):
-    def __init__(self, iface, controller, parent=None):
+    def __init__(self, iface, controller, profiles=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Terrain Sketch"))
         self.setObjectName("TerrainSketchDock")
         self.iface = iface
         self.controller = controller
+        self.profiles = profiles          # the bottom profile dock, if the plugin made one
+        self.overlay = PreviewOverlay(iface.mapCanvas())
         self.draw_tool = None
         self._previous_tool = None
         self.confirm = self._confirm_dialog  # replaceable in tests
@@ -112,6 +115,8 @@ class MainDock(QgsDockWidget):
         controller.featuresChanged.connect(self._drop_missing_brush_target)
         controller.sessionChanged.connect(self._session_changed)
         controller.message.connect(self._show_message)
+        controller.previewUpdated.connect(self._preview_updated)
+        controller.previewCleared.connect(lambda: self.overlay.clear())
         self._session_changed()
 
     def end_drawing(self) -> None:
@@ -130,10 +135,13 @@ class MainDock(QgsDockWidget):
         """Stop drawing and editing — the panel is hidden, the session ended or the tool changed."""
         self.end_drawing()
         self.stop_editing()
+        self.controller.cancel_preview()
 
     def shutdown(self) -> None:
-        """Stop the tools and release the highlight; called when the plugin unloads."""
+        """Stop the tools and release the highlight and overlay; called when the plugin unloads."""
         self.stop_tools()
+        self.controller.cancel_preview()
+        self.overlay.dispose()
         self.highlight.reset(Qgis.GeometryType.Line)
         self.iface.mapCanvas().scene().removeItem(self.highlight)
 
@@ -200,9 +208,14 @@ class MainDock(QgsDockWidget):
         if fid is not None:
             self.controller.delete_feature(fid)
 
+    def _preview_updated(self, _fid, preview) -> None:
+        self.overlay.show_change(preview.bounds, preview.change)
+
     def _selection_changed(self, *_args) -> None:
         fid = self.feature_view.selected_id()
         self.stop_editing()
+        if self.profiles is not None:
+            self.profiles.show_feature(fid)
         self.edit_button.setEnabled(fid is not None)
         self._update_highlight(fid)
         if fid is not None:

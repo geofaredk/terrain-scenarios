@@ -2,7 +2,6 @@ import time
 from dataclasses import replace
 
 import numpy as np
-import pytest
 
 from helpers import feature, flat, make_grid
 from terrain_sketch.core.engine import FeatureStack
@@ -78,7 +77,14 @@ def test_preview_for_beats_a_full_preview_on_a_large_window():
 def test_preview_for_falls_back_to_a_full_preview_for_a_disabled_feature():
     stack, features = stack_with_three()
     off = replace(features[1], enabled=False)
-    assert stack.preview_for("dike", [features[0], off, features[2]]) is not None
+    result = stack.preview_for("dike", [features[0], off, features[2]])
+    assert result is not None
+    # the fallback is a real replay of the stack with the disabled feature contributing nothing
+    expected = stack.original.subgrid(result.window)
+    for f in (features[0], features[2]):
+        apply_feature(f, expected)
+    assert np.allclose(result.grid.data, expected.data, equal_nan=True)
+    assert "dike" not in result.stats
 
 
 def test_preview_for_returns_none_for_an_unknown_feature():
@@ -153,3 +159,22 @@ def test_terrain_before_cache_does_not_grow_with_transient_features():
         moved = replace(features[1], amount=float(amount))
         stack.terrain_before("pond", [features[0], moved, features[2]])
     assert len(stack._windows) == 3  # should not grow with transient features
+
+
+def test_terrain_before_a_disabled_feature_excludes_the_features_after_it():
+    """A disabled feature is not in `replay`, so stopping at its id never fires. Its reference
+    terrain must still be "everything before me", not the whole stack — the profile editor draws
+    it for any selected feature, enabled or not."""
+    stack, features = stack_with_three()
+    off = replace(features[1], enabled=False)
+    result = stack.terrain_before("dike", [features[0], off, features[2]])
+    assert result is not None
+    window, grid = result
+    expected = stack.original.subgrid(window)
+    apply_feature(features[0], expected)      # the pad only: the pond comes after the dike
+    assert np.allclose(grid.data, expected.data, equal_nan=True)
+    # and the pond, which comes later, really would have changed this window
+    with_pond = stack.original.subgrid(window)
+    apply_feature(features[0], with_pond)
+    apply_feature(features[2], with_pond)
+    assert not np.allclose(grid.data, with_pond.data, equal_nan=True)

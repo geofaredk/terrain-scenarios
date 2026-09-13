@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
-from qgis.core import QgsPointXY, QgsRectangle
+from qgis.core import QgsCsException, QgsPointXY, QgsRectangle
 from qgis.gui import QgsMapCanvasItem
 from qgis.PyQt.QtCore import QRectF
 from qgis.PyQt.QtGui import QImage
@@ -21,6 +21,8 @@ class PreviewOverlay(QgsMapCanvasItem):
     """
 
     def __init__(self, canvas, crs_transform=None):
+        """`crs_transform` takes the DEM CRS the bounds are in to the canvas CRS; None means the
+        two are the same. Whoever owns the overlay keeps it in step with both."""
         super().__init__(canvas)
         self.canvas = canvas
         self.crs_transform = crs_transform
@@ -32,11 +34,12 @@ class PreviewOverlay(QgsMapCanvasItem):
     def show_change(self, bounds, change) -> None:
         """`bounds` is (xmin, ymin, xmax, ymax) in the DEM CRS; `change` is new minus original."""
         image = change_image(change)
-        if image is None:
+        canvas_bounds = None if image is None else self._to_canvas_crs(QgsRectangle(*bounds))
+        if image is None or canvas_bounds is None:
             self.clear()
             return
         self.image = image
-        self.bounds = self._to_canvas_crs(QgsRectangle(*bounds))
+        self.bounds = canvas_bounds
         self.updatePosition()
         self.show()
         self.update()
@@ -69,10 +72,17 @@ class PreviewOverlay(QgsMapCanvasItem):
                                                            self.bounds.yMinimum())) - self.pos()
         return QRectF(top_left, bottom_right)
 
-    def _to_canvas_crs(self, rectangle: QgsRectangle) -> QgsRectangle:
+    def _to_canvas_crs(self, rectangle: QgsRectangle):
+        """The bounds in canvas coordinates, or None when they cannot be transformed.
+
+        This runs inside a slot, so a projection that fails must leave the preview unshown
+        rather than raise: an exception in a Qt callback takes QGIS down."""
         if self.crs_transform is None:
             return rectangle
-        return self.crs_transform.transformBoundingBox(rectangle)
+        try:
+            return self.crs_transform.transformBoundingBox(rectangle)
+        except QgsCsException:
+            return None
 
 
 def change_image(change) -> QImage | None:

@@ -52,6 +52,9 @@ def set_cross_section(feature, side: int, points) -> dict:
         raise ValueError("a cross section needs at least a centre and an edge point")
     edge = pts[1][0]
     changes: dict = {}
+    # Break points are not supported for areas in v1 (spec 5.4): `_area_design` passes an empty
+    # break list to `side_dz`, so writing them here would store a value the engine discards.
+    breaks_key = ("cross_right" if side >= 0 else "cross_left") if feature.mode is Mode.PATH else None
     if feature.mode is Mode.PATH:
         changes["width"] = max(2.0 * edge, 0.1)
 
@@ -64,11 +67,11 @@ def set_cross_section(feature, side: int, points) -> dict:
 
     if last_point_is_terminus:
         interior, last = pts[2:-1], pts[-1]
-        changes["cross_right" if side >= 0 else "cross_left"] = tuple(
-            (d - edge, z) for d, z in interior)
+        if breaks_key is not None:
+            changes[breaks_key] = tuple((d - edge, z) for d, z in interior)
         run = last[0] - (interior[-1][0] if interior else edge)
         rise = abs(last[1] - (interior[-1][1] if interior else 0.0))
-        changes["slope_n"] = round(run / rise, 4) if rise > 1e-9 else 0.0
+        changes["slope_n"] = _slope_n(run, rise, feature.slope_n)
         changes["reach"] = round(last[0] - edge, 4)
     else:
         # No terminal slope: all points after edge are breaks. Derive slope_n and reach.
@@ -81,12 +84,25 @@ def set_cross_section(feature, side: int, points) -> dict:
             seen_distances[d] = z
 
         deduplicated = sorted(seen_distances.items())
-        changes["cross_right" if side >= 0 else "cross_left"] = tuple(
-            (d - edge, z) for d, z in deduplicated)
+        if breaks_key is not None:
+            changes[breaks_key] = tuple((d - edge, z) for d, z in deduplicated)
         changes["slope_n"] = 0.0
         changes["reach"] = 0.0 if not deduplicated else feature.reach
 
     return changes
+
+
+def _slope_n(run: float, rise: float, current: float) -> float:
+    """The terminal slope 1:n from a run over a rise, rounded to the stored four decimals.
+
+    0.0 is the "no terminal slope" sentinel, so a run too small to round to a non-zero n — a
+    terminus dragged hard against its neighbour — keeps the slope the feature already has
+    rather than silently losing it. There is no undo.
+    """
+    if rise <= 1e-9:
+        return 0.0
+    rounded = round(run / rise, 4)
+    return rounded if rounded > 0.0 else current
 
 
 def section_part(feature):
@@ -97,12 +113,30 @@ def section_part(feature):
     return max(geometry_parts, key=lambda p: _length(line_coords(p)))
 
 
+def supports_long_profile(feature) -> bool:
+    """Whether a custom long profile would actually drive this feature's terrain.
+
+    `operations.apply_feature` uses one only for a single-part path (spec 5.4), so for anything
+    else the editor must not offer one: it would be stored, shown as custom and then discarded,
+    while the Height/Depth that does drive the result sits disabled.
+    """
+    if feature.mode is not Mode.PATH:
+        return False
+    try:
+        return len(split_parts(feature.geometry_wkb)) == 1
+    except ValueError:
+        return False
+
+
 def long_section(feature, grid: DemGrid, terrain: DemGrid | None = None) -> dict:
     """Reference terrain and design line along the feature's centre line.
 
     Returns `{"stations", "terrain", "design", "custom"}`: stations in metres from the start,
     terrain sampled on `terrain` (the state just before this feature) and the design line
     either from the feature's custom long profile or regenerated from the tool rule.
+
+    `custom` is False whenever the engine would ignore the stored profile — a multi-part path —
+    so the editor never presents a line the terrain does not follow.
     """
     part = section_part(feature)
     coords = None if part is None else line_coords(part)
@@ -113,7 +147,7 @@ def long_section(feature, grid: DemGrid, terrain: DemGrid | None = None) -> dict
     stations = np.linspace(0.0, length, SAMPLES)
     xs, ys = _walk(coords, stations)
     heights = tuple(float(reference.sample(x, y)) for x, y in zip(xs, ys))
-    if feature.long_profile is not None:
+    if feature.long_profile is not None and supports_long_profile(feature):
         design = tuple((float(s), float(z)) for s, z in feature.long_profile)
         return {"stations": tuple(stations), "terrain": heights, "design": design, "custom": True}
     try:

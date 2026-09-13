@@ -34,6 +34,8 @@ class PreviewImage(NamedTuple):
 
 PREVIEW_INTERVAL = 60  # ms between preview recomputes while dragging (spec 8.3)
 
+EMPTY_SECTION = {"stations": (), "terrain": (), "design": (), "custom": False}
+
 
 class SketchController(QObject):
     """Owns the session: the DEM, the ordered feature list, the engine, the files and the layers."""
@@ -221,13 +223,21 @@ class SketchController(QObject):
 
     def long_section(self, fid: str) -> dict:
         """Reference terrain and design line for the profile editors, measured against the
-        terrain as it stands just before this feature."""
+        terrain as it stands just before this feature.
+
+        Called from `ProfileDock._refresh`, which is a slot, and its chain reaches
+        `geometry.split_parts` — which raises for a geometry it cannot use. An exception in a Qt
+        callback takes QGIS down, so a failure is logged and reported as an empty section."""
         feature = self.find(fid)
         if feature is None or not self.has_dem:
-            return {"stations": (), "terrain": (), "design": (), "custom": False}
-        before = self.stack.terrain_before(fid)
-        terrain = before[1] if before is not None else None
-        return long_section(feature, self.stack.working, terrain=terrain)
+            return EMPTY_SECTION.copy()
+        try:
+            before = self.stack.terrain_before(fid)
+            terrain = before[1] if before is not None else None
+            return long_section(feature, self.stack.working, terrain=terrain)
+        except Exception:  # noqa: BLE001 — a profile panel must never take QGIS down
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+            return EMPTY_SECTION.copy()
 
     def _run_preview(self) -> None:
         if self._pending is None:

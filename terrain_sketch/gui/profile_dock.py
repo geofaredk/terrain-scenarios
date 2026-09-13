@@ -6,9 +6,10 @@ from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPushButton, QSplitter, QVBoxLayout,
                                  QWidget)
 
-from ..core.sections import cross_section, long_section, set_cross_section
+from ..core.sections import cross_section, set_cross_section, supports_long_profile
 from ..core.tools import TOOL_INFO, Mode
-from .help_texts import AREA_LONG_SECTION_NOTE, CUSTOM_PROFILE_NOTE, SYMMETRIC_TIP
+from .help_texts import (AREA_LONG_SECTION_HINT, AREA_LONG_SECTION_NOTE, CUSTOM_PROFILE_NOTE,
+                         MULTIPART_LONG_SECTION_NOTE, SYMMETRIC_TIP)
 from .profile_widget import Kind, ProfileWidget
 
 
@@ -85,14 +86,23 @@ class ProfileDock(QgsDockWidget):
         self._loading = True
         try:
             info = TOOL_INFO[feature.tool]
-            self.cross.set_profile(cross_section(feature, side=1), editable=info.has_slopes)
-            self.symmetric.setEnabled(info.has_slopes and feature.mode is Mode.PATH)
+            is_path = feature.mode is Mode.PATH
+            # Break points are for paths only: the engine discards an area's (spec 5.4).
+            self.cross.set_profile(cross_section(feature, side=1), editable=info.has_slopes,
+                                   allow_breaks=is_path)
+            self.symmetric.setEnabled(info.has_slopes and is_path)
             self.reset_cross.setEnabled(info.has_slopes)
             section = self.controller.long_section(self._fid)
             if feature.mode is Mode.AREA:
+                # There is no section through an area yet, so say so rather than paint an empty
+                # plot under a note promising one.
+                self.long.set_profile((), editable=False, hint=AREA_LONG_SECTION_HINT)
+                self.note.setText(AREA_LONG_SECTION_NOTE)
+            elif not supports_long_profile(feature):
+                # A multi-part path: the engine follows the tool rule whatever is stored here.
                 self.long.set_profile(section["design"], terrain=self._pairs(section),
                                       editable=False)
-                self.note.setText(AREA_LONG_SECTION_NOTE)
+                self.note.setText(MULTIPART_LONG_SECTION_NOTE)
             else:
                 self.long.set_profile(section["design"], terrain=self._pairs(section))
                 self.note.setText(CUSTOM_PROFILE_NOTE if section["custom"] else "")

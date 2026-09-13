@@ -1,7 +1,8 @@
+import pytest
 from qgis.PyQt.QtCore import QEvent, QPointF, Qt
-from qgis.PyQt.QtGui import QMouseEvent
+from qgis.PyQt.QtGui import QKeyEvent, QMouseEvent
 
-from terrain_sketch.gui.profile_widget import Kind, ProfileWidget
+from terrain_sketch.gui.profile_widget import NUDGE, NUDGE_FINE, Kind, ProfileWidget
 
 
 def press(widget, x, y, button=Qt.MouseButton.LeftButton, kind=QEvent.Type.MouseButtonPress):
@@ -13,11 +14,24 @@ def press(widget, x, y, button=Qt.MouseButton.LeftButton, kind=QEvent.Type.Mouse
      QEvent.Type.MouseButtonDblClick: widget.mouseDoubleClickEvent}[kind](event)
 
 
-def widget_with(points, kind=Kind.CROSS, size=(400, 200)):
+def widget_with(points, kind=Kind.CROSS, size=(400, 200), **kw):
     w = ProfileWidget(kind)
     w.resize(*size)
-    w.set_profile(points)
+    w.set_profile(points, **kw)
     return w
+
+
+def key(widget, which, modifiers=Qt.KeyboardModifier.NoModifier):
+    event = QKeyEvent(QEvent.Type.KeyPress, which, modifiers)
+    widget.keyPressEvent(event)
+    return event
+
+
+def select(widget, x, z):
+    """Click a handle without moving it, as the user does before nudging with the arrow keys."""
+    point = widget._to_screen(x, z)
+    press(widget, point.x(), point.y())
+    press(widget, point.x(), point.y(), kind=QEvent.Type.MouseButtonRelease)
 
 
 def test_a_widget_with_no_feature_shows_the_hint_and_no_handles():
@@ -95,3 +109,67 @@ def test_the_long_profile_keeps_its_end_stations_fixed():
     press(w, end.x(), end.y())
     press(w, end.x() - 60, end.y() - 10, kind=QEvent.Type.MouseMove)
     assert w.points[-1][0] == 30.0 and w.points[-1][1] > 12.0   # height moved, station did not
+
+
+def test_the_arrow_keys_nudge_the_selected_handle_and_commit_it():
+    """Every keypress commits straight to the working DEM, so this path is worth pinning down."""
+    w = widget_with([(0.0, 0.0), (2.0, 0.0), (12.0, -3.0)])
+    committed = []
+    w.profileCommitted.connect(committed.append)
+
+    ignored = key(w, Qt.Key.Key_Up)                     # nothing selected yet
+    assert not ignored.isAccepted() and committed == []
+
+    select(w, 12.0, -3.0)
+    assert committed == []                              # a click that moves nothing commits nothing
+    accepted = key(w, Qt.Key.Key_Up)
+    assert accepted.isAccepted()
+    assert w.points[2][1] == pytest.approx(-3.0 + NUDGE)
+    assert len(committed) == 1 and committed[-1] == tuple(w.points)
+
+    key(w, Qt.Key.Key_Down)
+    assert w.points[2][1] == pytest.approx(-3.0)
+    key(w, Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier)
+    assert w.points[2][0] == pytest.approx(12.0 + NUDGE_FINE)   # Shift nudges finely
+    key(w, Qt.Key.Key_Left)
+    assert w.points[2][0] == pytest.approx(12.0 + NUDGE_FINE - NUDGE)
+    assert len(committed) == 4
+
+
+def test_the_arrow_keys_are_ignored_in_a_read_only_plot_and_for_other_keys():
+    w = widget_with([(0.0, 10.0), (15.0, 11.0), (30.0, 12.0)], kind=Kind.LONG)
+    committed = []
+    w.profileCommitted.connect(committed.append)
+    select(w, 15.0, 11.0)
+    assert key(w, Qt.Key.Key_Delete).isAccepted() is False   # not a nudge key
+    w.editable = False
+    assert key(w, Qt.Key.Key_Up).isAccepted() is False
+    assert w.points[1] == (15.0, 11.0) and committed == []
+
+
+def test_a_nudge_cannot_push_a_handle_past_its_neighbour():
+    w = widget_with([(0.0, 0.0), (2.0, 0.0), (2.05, -1.0)])
+    select(w, 2.05, -1.0)
+    key(w, Qt.Key.Key_Left)                         # NUDGE is 0.1: further left than the neighbour
+    assert w.points[1][0] < w.points[2][0]
+
+
+def test_a_plot_without_break_points_refuses_to_add_or_remove_them():
+    """An area's break points are discarded by the engine (spec 5.4), so the plot must not
+    pretend to take them."""
+    points = [(0.0, 0.0), (0.0, 0.0), (3.0, 0.5), (8.0, 2.0)]
+    w = widget_with(points, allow_breaks=False)
+    committed = []
+    w.profileCommitted.connect(committed.append)
+    target = w._to_screen(5.0, 1.0)
+    press(w, target.x(), target.y(), kind=QEvent.Type.MouseButtonDblClick)
+    assert len(w.points) == 4 and committed == []           # nothing added
+    handle = w._to_screen(3.0, 0.5)
+    press(w, handle.x(), handle.y(), button=Qt.MouseButton.RightButton)
+    assert len(w.points) == 4 and committed == []           # nothing removed
+    # the terminal slope is still draggable: only the break points are off limits
+    start = w._to_screen(8.0, 2.0)
+    press(w, start.x(), start.y())
+    press(w, start.x(), start.y() - 20, kind=QEvent.Type.MouseMove)
+    press(w, start.x(), start.y() - 20, kind=QEvent.Type.MouseButtonRelease)
+    assert len(committed) == 1 and w.points[3][1] > 2.0

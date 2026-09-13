@@ -5,6 +5,7 @@ from qgis.gui import QgsDoubleSpinBox
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QComboBox, QFormLayout, QLabel, QVBoxLayout, QWidget
 
+from ..core.sections import supports_long_profile
 from ..core.tools import TOOL_INFO, Mode, PixelMode
 from .help_texts import AMOUNT_IS_CUSTOM, FLAG_TEXTS, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS, TOOL_LABELS, TOOL_SUMMARIES, amount_label
 
@@ -92,10 +93,11 @@ class PropertiesPage(QWidget):
         try:
             self.title.setText(f"{feature.name} · {TOOL_LABELS[feature.tool]}")
             self.summary.setText(TOOL_SUMMARIES[feature.tool])
-            custom = feature.long_profile is not None
+            # Only a profile the engine actually uses fixes the heights: on a multi-part path it
+            # is discarded, and Height/Depth is then the one control that still drives the result.
+            custom = feature.long_profile is not None and supports_long_profile(feature)
             self.amount_label.setText(self.tr(label) if label else "")
             self.amount.setValue(feature.amount)
-            # a custom long profile fixes the heights, so H/D no longer drives them
             self.amount.setEnabled(not custom)
             self.amount.setToolTip(AMOUNT_IS_CUSTOM if custom else self._amount_tip)
             self.width.setValue(feature.width)

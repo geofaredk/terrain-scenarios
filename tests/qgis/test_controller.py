@@ -1,8 +1,9 @@
 import pytest
-from qgis.core import Qgis, QgsProject
+from qgis.core import Qgis, QgsGeometry, QgsPointXY, QgsProject
 
 import terrain_sketch.gui.controller as controller_module
-from qgis_helpers import UTM, dem_layer, line_layer, line_through, read_tif, sample, square, start_session
+from qgis_helpers import (UTM, dem_layer, line_layer, line_through, read_tif, sample, square,
+                          start_session, world)
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.controller import SketchController
 from terrain_sketch.qgis_io.layers import GROUP_NAME
@@ -204,3 +205,36 @@ def test_importing_the_same_layer_twice_numbers_the_second_feature(tmp_path):
     first = c.add_from_layer(Tool.RAISE_PATH, Mode.PATH, layer)
     second = c.add_from_layer(Tool.RAISE_PATH, Mode.PATH, layer)
     assert (first.name, second.name) == ("Planned dikes", "Planned dikes 2")
+
+
+def test_a_long_section_that_raises_is_logged_and_reported_empty(tmp_path, monkeypatch):
+    """`ProfileDock._refresh` calls this from a slot, and its chain reaches `split_parts`, which
+    raises for a geometry it cannot use. An exception in a Qt callback takes QGIS down."""
+    from terrain_sketch.gui.profile_dock import ProfileDock
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    log = []
+    monkeypatch.setattr(controller_module.QgsMessageLog, "logMessage",
+                        staticmethod(lambda text, *a, **kw: log.append(text)))
+
+    # a point where a line is expected: what Plan 6 can load from a scenario GeoPackage
+    point = QgsGeometry.fromPointXY(QgsPointXY(*world(20, 20))).asWkb().data()
+    c.update_feature(dike.id, geometry_wkb=point)
+    assert c.feature(dike.id).geometry_wkb == point
+
+    section = c.long_section(dike.id)
+    assert section == {"stations": (), "terrain": (), "design": (), "custom": False}
+    assert log and "ValueError" in log[-1]
+    dock.show_feature(dike.id)          # the panel that runs in the slot survives it
+    assert dock.long.points == []
+
+
+def test_a_long_section_for_a_missing_feature_is_empty_without_logging(tmp_path, monkeypatch):
+    c = start_session(tmp_path)
+    log = []
+    monkeypatch.setattr(controller_module.QgsMessageLog, "logMessage",
+                        staticmethod(lambda text, *a, **kw: log.append(text)))
+    assert c.long_section("nope") == {"stations": (), "terrain": (), "design": (), "custom": False}
+    assert not log

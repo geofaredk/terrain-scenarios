@@ -88,8 +88,13 @@ class FeatureStack:
             return None
         window, replay = self.closure(window, features)
         grid = self.original.subgrid(window)
+        # By list position, not by `replay` membership: a disabled target is not in `replay` at
+        # all, and stopping at its id would then never fire and apply the whole stack — including
+        # the features that come after it.
+        position = next(i for i, f in enumerate(features) if f.id == feature_id)
+        order = {f.id: i for i, f in enumerate(features)}
         for f in replay:
-            if f.id == feature_id:
+            if order.get(f.id, position) >= position:
                 break
             apply_feature(f, grid)
         self._prune_windows()
@@ -167,8 +172,7 @@ class FeatureStack:
 
     def _refresh_bookkeeping(self) -> None:
         self._before_key, self._before_cache = None, None
-        current = set(self.features)
-        self._windows = {f: w for f, w in self._windows.items() if f in current}
+        self._prune_windows()
         ids = {f.id for f in self.features}
         self.stats = {k: v for k, v in self.stats.items() if k in ids}
         for f in self.features:

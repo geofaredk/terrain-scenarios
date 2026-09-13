@@ -9,8 +9,10 @@ from qgis.PyQt.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF
 from qgis.PyQt.QtWidgets import QSizePolicy, QWidget
 
 from .help_texts import PROFILE_EMPTY_HINT
+from .overlay import CUT, FILL
 
 MARGIN_LEFT, MARGIN_BOTTOM, MARGIN_TOP, MARGIN_RIGHT = 46, 26, 10, 12
+SHADE_ALPHA = 70        # the plot shades the same change as the map overlay, but behind the lines
 GRAB_PIXELS = 8
 HANDLE_RADIUS = 4
 NUDGE, NUDGE_FINE = 0.1, 0.01
@@ -39,6 +41,7 @@ class ProfileWidget(QWidget):
         self.points: list[tuple[float, float]] = []
         self.terrain: list[tuple[float, float]] = []
         self.editable = True
+        self.allow_breaks = True
         self.hint = PROFILE_EMPTY_HINT
         self.selected = -1
         self._dragging = -1
@@ -50,10 +53,20 @@ class ProfileWidget(QWidget):
 
     # ---- contents -------------------------------------------------------------------
 
-    def set_profile(self, points, terrain=(), editable=True) -> None:
+    def set_profile(self, points, terrain=(), editable=True, allow_breaks=True,
+                    hint: str = PROFILE_EMPTY_HINT) -> None:
+        """Show `points` over `terrain`.
+
+        `allow_breaks` is False when the engine does not use break points for this feature, so
+        the plot must refuse to add or remove them; `hint` is what an empty plot says instead of
+        the default "select a feature". The widget knows nothing about features: the dock, which
+        does, sets both.
+        """
         self.points = [(float(x), float(z)) for x, z in points]
         self.terrain = [(float(x), float(z)) for x, z in terrain]
         self.editable = editable
+        self.allow_breaks = allow_breaks
+        self.hint = hint
         self.selected = -1
         self._dragging = -1
         self.update()
@@ -130,11 +143,15 @@ class ProfileWidget(QWidget):
         painter.drawPolyline(QPolygonF(design))
 
     def _shade_between(self, painter) -> None:
-        """Fill above the reference in warm, cut below it in cool — the map's change colours."""
+        """Fill above the reference in warm, cut below it in cool — the drag preview's colours.
+
+        These are the overlay's FILL and CUT, so the plot and the map agree while a handle is
+        dragged. The committed change layer has a ramp of its own (`qgis_io/layers.py`).
+        """
         reference = self._resampled_terrain()
         if reference is None:
             return
-        for colour, above in ((QColor(230, 140, 60, 70), True), (QColor(60, 120, 200, 70), False)):
+        for colour, above in ((QColor(*FILL, SHADE_ALPHA), True), (QColor(*CUT, SHADE_ALPHA), False)):
             path = QPainterPath()
             started = False
             for (x, z), (_rx, rz) in zip(self.points, reference):
@@ -177,7 +194,7 @@ class ProfileWidget(QWidget):
             return
         index = self.handle_at(event.position())
         if event.button() == Qt.MouseButton.RightButton:
-            if index > 0 and index < len(self.points) - 1:
+            if self.allow_breaks and index > 0 and index < len(self.points) - 1:
                 self.points.pop(index)
                 self.selected = -1
                 self.update()
@@ -206,7 +223,7 @@ class ProfileWidget(QWidget):
         self._before = None
 
     def mouseDoubleClickEvent(self, event):  # noqa: N802 — Qt override
-        if not self.editable or event.button() != Qt.MouseButton.LeftButton:
+        if not self.editable or not self.allow_breaks or event.button() != Qt.MouseButton.LeftButton:
             return
         x, z = self._to_data(event.position())
         index = self._insertion_index(x)

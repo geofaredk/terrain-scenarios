@@ -3,8 +3,9 @@ import pytest
 
 from helpers import feature, flat, make_grid, tilted
 from terrain_sketch.core.engine import FeatureStack
-from terrain_sketch.core.geometry import line_wkb, polygon_wkb
-from terrain_sketch.core.sections import cross_section, long_section, set_cross_section
+from terrain_sketch.core.geometry import line_wkb, multi_wkb, polygon_wkb
+from terrain_sketch.core.sections import (cross_section, long_section, set_cross_section,
+                                          supports_long_profile)
 from terrain_sketch.core.tools import Mode, Tool
 
 
@@ -169,3 +170,54 @@ def test_an_identity_round_trip_through_the_no_terminus_branch_changes_nothing()
     assert changes["cross_right"] == f.cross_right
     assert changes["slope_n"] == pytest.approx(f.slope_n)
     assert changes["reach"] == pytest.approx(f.reach)
+
+
+def two_part_dike(**kw):
+    """A RAISE_PATH whose geometry has two separate line parts."""
+    return feature(Tool.RAISE_PATH, Mode.PATH,
+                   multi_wkb([line_wkb([(5, 20), (15, 20)]), line_wkb([(25, 20), (35, 20)])]), **kw)
+
+
+def test_a_multi_part_path_does_not_support_a_custom_long_profile():
+    assert supports_long_profile(dike())
+    assert not supports_long_profile(two_part_dike())
+    pond = feature(Tool.LOWER_FLAT, Mode.AREA,
+                   polygon_wkb([(10, 10), (20, 10), (20, 20), (10, 20)]))
+    assert not supports_long_profile(pond)
+
+
+def test_a_multi_part_path_reports_the_rule_line_not_the_stored_custom_profile():
+    """The engine applies a long profile only to a single-part path, so reporting one here
+    would show the user a design line their terrain does not follow."""
+    stored = ((0.0, 20.0), (10.0, 20.0))
+    section = long_section(two_part_dike(amount=2.0, long_profile=stored), make_grid(tilted))
+    assert not section["custom"]
+    assert section["design"] != stored
+    # the rule line: the terrain under the longest part plus the height
+    assert section["design"][0][1] == pytest.approx(section["terrain"][0] + 2.0, abs=0.1)
+
+
+def test_an_areas_cross_section_edit_writes_no_break_points():
+    """Break points are not supported for areas in v1 (spec 5.4): `_area_design` passes an empty
+    break list to `side_dz`, so storing them would keep a value the engine silently discards."""
+    pond = feature(Tool.LOWER_FLAT, Mode.AREA, polygon_wkb([(10, 10), (20, 10), (20, 20), (10, 20)]),
+                   slope_n=2.0, reach=6.0, amount=1.0)
+    changes = set_cross_section(pond, 1, [(0.0, 0.0), (0.0, 0.0), (3.0, 0.5), (8.0, 2.0)])
+    assert "cross_right" not in changes and "cross_left" not in changes
+    assert "width" not in changes                       # an area has no corridor either
+    assert changes["slope_n"] == pytest.approx(3.3333)  # 5 m run over 1.5 m rise
+    assert changes["reach"] == pytest.approx(8.0)
+
+
+def test_a_terminus_dragged_hard_against_its_neighbour_keeps_the_side_slope():
+    """`_move_handle` clamps a dragged handle to neighbour + 1e-6, and a run that small rounds
+    to 0.0 — the "no terminal slope" sentinel. There is no undo, so the slope is kept."""
+    f = dike(width=4.0, slope_n=3.0, reach=20.0)
+    changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (2.000001, -3.0)])
+    assert changes["slope_n"] == pytest.approx(3.0)
+
+
+def test_a_real_but_very_flat_slope_is_still_written():
+    f = dike(width=4.0, slope_n=3.0, reach=20.0)
+    changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (22.0, -0.5)])
+    assert changes["slope_n"] == pytest.approx(40.0)

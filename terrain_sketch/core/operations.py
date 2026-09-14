@@ -15,7 +15,7 @@ from .grid import DemGrid, Window
 from .mask import polygon_mask
 from .profiles import side_dz, side_limit
 from .stations import stations_offsets, vertex_stations
-from .tools import TOOL_INFO, Combine, Mode, Tool
+from .tools import TOOL_INFO, Combine, Mode, Tool, reports_storage
 from .volumes import cut_fill, pond_storage
 
 MARGIN_CELLS = 4  # >= nearest-valid search radius (3) + 1 for bilinear sampling
@@ -145,7 +145,7 @@ def apply_feature(feature, grid: DemGrid) -> FeatureStats:
         c, f = cut_fill(before, after, view.valid, grid.cell_area)
         cut, fill = cut + c, fill + f
         changed += int(((after != before) & view.valid).sum())
-        if info.reports_storage and (feature.tool is not Tool.INTERPOLATE or not want_line):
+        if reports_storage(feature.tool, feature.mode):
             s = pond_storage(after, (after < before) & view.valid, view.valid, grid.cell_area)
             if s is not None:
                 storage = (storage or 0.0) + s

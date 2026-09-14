@@ -14,6 +14,7 @@ from ..core.engine import FeatureStack
 from ..core.operations import FeatureStats
 from ..core.sections import long_section, rescale_long_profile
 from ..core.tools import Mode, Tool
+from ..core.volumes import total_cut_fill
 from ..model.feature import TerrainFeature, new_feature
 from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
@@ -265,6 +266,12 @@ class SketchController(QObject):
             self._throttle.stop()
             return
         self._run_preview()
+
+    def totals(self) -> tuple[float, float]:
+        """(cut, fill) for the whole scenario, in cubic metres."""
+        if not self.has_dem:
+            return (0.0, 0.0)
+        return total_cut_fill(self.stack.original, self.stack.working)
 
     def export_dem(self, path: str) -> None:
         """Write the modified DEM to `path`; raises RuntimeError without a session, or if `path`

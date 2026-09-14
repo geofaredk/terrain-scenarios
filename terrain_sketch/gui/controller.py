@@ -18,7 +18,7 @@ from ..model.feature import TerrainFeature, new_feature
 from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import DemError, WorkingFiles, export_dem, read_dem
-from .help_texts import (DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, NO_FEATURES_IN_LAYER, NO_SESSION,
+from .help_texts import (DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, EMPTY_LAYER, NO_FEATURES_SELECTED, NO_SESSION,
                          RESULT_LAYER_REMOVED, SESSION_ENDED_DEM_REMOVED, TOOL_LABELS)
 
 LOG_TAG = "Terrain Sketch"
@@ -156,7 +156,8 @@ class SketchController(QObject):
         source = layer.getSelectedFeatures() if selected_only else layer.getFeatures()
         geometries = [QgsGeometry(f.geometry()) for f in source if not f.geometry().isEmpty()]
         if not geometries:
-            self.message.emit(Qgis.MessageLevel.Warning, NO_FEATURES_IN_LAYER)
+            self.message.emit(Qgis.MessageLevel.Warning,
+                              NO_FEATURES_SELECTED if selected_only else EMPTY_LAYER)
             return None
         combined = geometries[0] if len(geometries) == 1 else QgsGeometry.collectGeometry(geometries)
         return self.add_drawn(tool, mode, combined, layer.crs(), name=layer.name())

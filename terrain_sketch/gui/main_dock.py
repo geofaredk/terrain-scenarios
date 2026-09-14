@@ -9,8 +9,9 @@ from qgis.PyQt.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QM
                                  QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
 from ..core.tools import Mode
-from ..qgis_io.raster_io import DemError
+from ..qgis_io.raster_io import DemError, GeographicDemError
 from .feature_list import FeatureListModel, FeatureListView
+from .help_texts import REPROJECT_UNAVAILABLE
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
@@ -227,7 +228,10 @@ class MainDock(QgsDockWidget):
         try:
             self.controller.set_dem(layer)
         except DemError as error:
-            self._show_message(Qgis.MessageLevel.Warning, str(error))
+            if isinstance(error, GeographicDemError):
+                self._offer_reproject(str(error))
+            else:
+                self._show_message(Qgis.MessageLevel.Warning, str(error))
 
     def _new_feature(self) -> None:
         self.feature_view.clearSelection()
@@ -385,6 +389,28 @@ class MainDock(QgsDockWidget):
         extent = transform.transformBoundingBox(self.controller.feature_geometry(fid).boundingBox())
         canvas.setExtent(extent.buffered(max(extent.width(), extent.height()) * 0.25 + 1.0))
         canvas.refresh()
+
+    def _offer_reproject(self, text: str) -> None:
+        """A geographic DEM is refused with a button that opens Processing's warp tool, so the
+        user is not left to find it themselves."""
+        try:
+            bar = self.iface.messageBar()
+            widget = bar.createMessage(self.tr("Terrain Sketch"), text)
+            button = QPushButton(self.tr("Reproject…"), widget)
+            button.clicked.connect(self._run_reproject)
+            widget.layout().addWidget(button)
+            bar.pushWidget(widget, Qgis.MessageLevel.Warning, 0)
+        except Exception:  # noqa: BLE001 — this runs in a click handler; a plain message will do
+            self._show_message(Qgis.MessageLevel.Warning, text)
+
+    def _run_reproject(self) -> None:
+        try:
+            from processing import execAlgorithmDialog
+        except ImportError:  # Processing is a core plugin, but it can be disabled
+            self._show_message(Qgis.MessageLevel.Warning, REPROJECT_UNAVAILABLE)
+            return
+        layer = self.dem_combo.currentLayer()
+        execAlgorithmDialog("gdal:warpreproject", {"INPUT": layer} if layer is not None else {})
 
     def _show_message(self, level, text: str) -> None:
         self.iface.messageBar().pushMessage(self.tr("Terrain Sketch"), text, level, 8)

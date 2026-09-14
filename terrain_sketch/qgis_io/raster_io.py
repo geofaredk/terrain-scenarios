@@ -21,6 +21,11 @@ class DemError(Exception):
     """The chosen layer cannot be used as the DEM; the message is shown to the user."""
 
 
+class GeographicDemError(DemError):
+    """A DEM in degrees. A DemError to every existing caller, but the panel checks for it so it
+    can offer to reproject rather than only complaining."""
+
+
 @dataclass(frozen=True)
 class DemInfo:
     path: str
@@ -37,7 +42,7 @@ def read_dem(layer) -> tuple[DemGrid, DemInfo]:
     if layer.providerType() != "gdal":
         raise DemError("Only file-based rasters (for example GeoTIFF) can be used as the DEM.")
     if layer.crs().isGeographic():
-        raise DemError("The DEM uses latitude/longitude. Slopes and widths need metres: reproject it to a "
+        raise GeographicDemError("The DEM uses latitude/longitude. Slopes and widths need metres: reproject it to a "
                        "projected CRS first (Raster ▸ Projections ▸ Warp).")
     try:
         ds = gdal.Open(layer.source())

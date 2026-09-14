@@ -99,6 +99,7 @@ SYMMETRIC_TIP = ("While this is ticked, break points are mirrored to the other s
 AMOUNT_IS_CUSTOM = ("The long profile was edited by hand, so its heights are fixed. Use "
                     "Reset to rule in the profile panel to drive the shape from this value again.")
 
+
 TOOL_EXAMPLES = {
     Tool.INTERPOLATE: ("A ditch crosses your DEM but the survey missed it. Draw a line along the "
                        "ditch and Terrain Sketch runs a smooth grade between the two ends."),
@@ -133,10 +134,8 @@ TOOL_DESCRIPTIONS = {
 }
 
 FIELD_TIPS = {
-    "amount": ("How far the feature rises (height) or cuts (depth): above or below the straight "
-               "grade between the path's ends, the highest or lowest point of the path or "
-               "outline, or the terrain itself for Add and Subtract. For a 1.5 m embankment, "
-               "set 1.5."),
+    "amount": ("How far the feature rises or cuts. For a 1.5 m embankment, set 1.5 — the crest "
+               "ends up 1.5 m above the grade between the path's ends."),
     "width": ("How wide the flat part is — the crest of a dike, or the bottom of a ditch. A farm "
               "track is about 3 m; a footpath about 1.5 m."),
     "slope_n": ("How far the side slope runs out for every metre of height. 1:3 means 3 m "
@@ -152,6 +151,22 @@ FIELD_TIPS = {
                    "cell centre, which is when All touched helps."),
 }
 
+REPROJECT_HINT = ("The DEM uses latitude/longitude. Slopes and widths need metres, so reproject "
+                  "it to a projected CRS first.")
+NO_FEATURES_SELECTED = ("Nothing is selected in that layer. Untick \'Selected features only\', or "
+                        "select the features you want on the map first.")
+EMPTY_LAYER = "That layer has no features to use."
+WRONG_GEOMETRY_IN_LAYER = ("That layer holds {have} features, but this tool needs {want} ones. "
+                           "Pick a different layer, or switch the shape above.")
+VERTEX_EDIT_REFUSED = ("That edit would leave the shape invalid, so it was not applied. Try "
+                       "moving the point somewhere else.")
+PICK_A_LAYER = "Pick a layer above first."
+
+
 def tool_tooltip(tool: Tool) -> str:
     """What a gallery item shows on hover: what the tool does, then a worked example."""
     return f"{TOOL_DESCRIPTIONS[tool]}\n\n{TOOL_EXAMPLES[tool]}"
+
+REPROJECT_UNAVAILABLE = ("Processing is not available, so Terrain Sketch cannot open the warp "
+                         "tool. Enable the Processing plugin, or reproject the DEM with "
+                         "Raster ▸ Projections ▸ Warp.")

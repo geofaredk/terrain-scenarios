@@ -1,10 +1,15 @@
 """Every description, example, tooltip and message the user reads, in one place.
 
-Translation: these are plain strings, not `tr()` calls, and nothing wraps them at the point of
-use either — `tr()` on a variable cannot be extracted by pylupdate, so wrapping them there would
-look like translation support without providing any. The plugin is English-only for v1 (spec
-§7.1); when translations arrive, this module is the single place to mark them, and the widgets
-that already call `self.tr("...")` on literal captions keep working unchanged.
+Translation, and a deliberate deviation from the spec. Spec §2 ("In scope (v1)") asks for every
+string to be wrapped in `tr()` so it can be translated later. That does not work for strings held
+in a module like this one: `tr()` extracts only string *literals*, so `self.tr(SOME_CONSTANT)` at
+the point of use produces nothing for a translator while looking like it does. These are therefore
+plain strings, and the call sites pass them straight through.
+
+The spec's intent still holds — the strings stay in one place, which is what makes translating
+them later a contained job. When that happens, mark them here (with `QT_TRANSLATE_NOOP` or by
+moving them into the classes that show them); widget captions already call `self.tr("literal")`
+and keep working unchanged.
 """
 from __future__ import annotations
 

@@ -3,6 +3,8 @@ from qgis.core import QgsProject
 
 from qgis.core import QgsCoordinateReferenceSystem, QgsPointXY
 
+from qgis.core import QgsRectangle
+
 from qgis_helpers import UTM, dem_layer, fake_iface, line_through, sample, square, world
 from terrain_sketch import classFactory
 from terrain_sketch.core.tools import Mode, Tool
@@ -98,12 +100,13 @@ def test_plugin_adds_and_removes_its_button_menu_and_panel():
     iface.addToolBarIcon.assert_called_once_with(plugin.action)
     iface.addPluginToRasterMenu.assert_called_once()
     plugin.action.setChecked(True)
-    assert plugin.dock is not None
-    iface.addDockWidget.assert_called_once()
+    assert plugin.dock is not None and plugin.profiles is not None
+    assert iface.addDockWidget.call_count == 2  # the panel on the right, the profiles below
     plugin.unload()
     iface.removeToolBarIcon.assert_called_once()
-    iface.removeDockWidget.assert_called_once()
-    assert plugin.dock is None and plugin.controller is None and plugin.action is None
+    assert iface.removeDockWidget.call_count == 2
+    assert plugin.dock is None and plugin.profiles is None
+    assert plugin.controller is None and plugin.action is None
 
 
 def _session_dock(tmp_path):
@@ -207,3 +210,71 @@ def test_the_brush_radius_follows_the_canvas_crs(tmp_path):
     assert dock.gallery.brush_spin.suffix() == " m"  # the test canvas is UTM
     iface.mapCanvas().setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
     assert dock.gallery.brush_spin.suffix() == " degrees"
+
+
+def _dock_on(tmp_path, canvas_crs=None):
+    iface = fake_iface()
+    if canvas_crs is not None:
+        iface.mapCanvas().setDestinationCrs(canvas_crs)
+    dem = dem_layer(tmp_path)                       # EPSG:25832
+    controller = SketchController(QgsProject.instance())
+    dock = MainDock(iface, controller)
+    dock.dem_combo.setLayer(dem)
+    dock.start_button.click()
+    return iface, controller, dock
+
+
+def test_the_drag_preview_is_placed_with_a_dem_to_canvas_transform(tmp_path):
+    """The engine reports preview bounds in the DEM CRS. Without a transform the cut/fill image
+    lands somewhere else on the map — or off-screen — for any project whose CRS differs."""
+    web = QgsCoordinateReferenceSystem("EPSG:3857")
+    iface, controller, dock = _dock_on(tmp_path, canvas_crs=web)
+    transform = dock.overlay.crs_transform
+    assert transform is not None and transform.isValid()
+    assert transform.sourceCrs() == controller.dem_crs
+    assert transform.destinationCrs() == web
+
+    dike = controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    previews = []
+    controller.previewUpdated.connect(lambda _fid, preview: previews.append(preview))
+    controller.preview(dike.id, amount=5.0)
+    assert previews and dock.overlay.bounds is not None
+    expected = transform.transformBoundingBox(QgsRectangle(*previews[0].bounds))
+    assert dock.overlay.bounds.xMinimum() == pytest.approx(expected.xMinimum())
+    assert dock.overlay.bounds.yMinimum() == pytest.approx(expected.yMinimum())
+    # and that is nowhere near the untransformed DEM-CRS bounds
+    assert abs(dock.overlay.bounds.xMinimum() - previews[0].bounds[0]) > 1000.0
+
+
+def test_the_overlay_transform_follows_a_change_of_project_crs(tmp_path):
+    iface, controller, dock = _dock_on(tmp_path, canvas_crs=QgsCoordinateReferenceSystem("EPSG:3857"))
+    assert dock.overlay.crs_transform is not None
+    iface.mapCanvas().setDestinationCrs(UTM)          # the user switches the project to the DEM CRS
+    assert dock.overlay.crs_transform is None         # same CRS: the bounds need no transform
+    iface.mapCanvas().setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+    assert dock.overlay.crs_transform is not None
+    assert dock.overlay.crs_transform.destinationCrs().authid() == "EPSG:4326"
+
+
+def test_a_dem_crs_that_cannot_be_projected_leaves_the_preview_unshown(tmp_path):
+    """`_update_overlay_transform` runs in a slot, so it must not raise — and it must not let the
+    overlay paint bounds it cannot place."""
+    iface, controller, dock = _dock_on(tmp_path, canvas_crs=QgsCoordinateReferenceSystem("EPSG:3857"))
+    dike = controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    previews = []
+    controller.previewUpdated.connect(lambda _fid, preview: previews.append(preview))
+    controller.preview(dike.id, amount=5.0)
+    assert dock.overlay.isVisible()
+
+    controller.dem_crs = QgsCoordinateReferenceSystem()   # a DEM whose CRS is unknown
+    dock._update_overlay_transform()
+    assert dock.overlay.crs_transform is None and not dock.overlay.isVisible()
+    controller.previewUpdated.emit(dike.id, previews[0])  # the next frame of the drag arrives
+    assert not dock.overlay.isVisible() and dock.overlay.bounds is None
+
+
+def test_without_a_session_the_overlay_has_no_transform(tmp_path):
+    iface, controller, dock = _dock_on(tmp_path, canvas_crs=QgsCoordinateReferenceSystem("EPSG:3857"))
+    assert dock.overlay.crs_transform is not None
+    controller.close()
+    assert dock.overlay.crs_transform is None

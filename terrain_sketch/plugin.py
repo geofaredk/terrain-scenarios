@@ -9,6 +9,7 @@ from qgis.PyQt.QtGui import QAction, QIcon
 
 from .gui.controller import SketchController
 from .gui.main_dock import MainDock
+from .gui.profile_dock import ProfileDock
 from .qgis_io.compat import gdal_problems
 
 MENU = "&Terrain Sketch"
@@ -19,6 +20,7 @@ class TerrainSketchPlugin:
         self.iface = iface
         self.action = None
         self.dock = None
+        self.profiles = None
         self.controller = None
 
     def initGui(self):  # noqa: N802 — QGIS plugin API
@@ -31,6 +33,11 @@ class TerrainSketchPlugin:
         self.iface.addPluginToRasterMenu(MENU, self.action)
 
     def unload(self):
+        if self.profiles is not None:
+            self.profiles.shutdown()
+            self.iface.removeDockWidget(self.profiles)
+            self.profiles.deleteLater()
+            self.profiles = None
         if self.dock is not None:
             self.dock.shutdown()
             self.iface.removeDockWidget(self.dock)
@@ -53,6 +60,8 @@ class TerrainSketchPlugin:
             if not checked:
                 self.dock.stop_tools()
             self.dock.setUserVisible(checked)
+        if self.profiles is not None:
+            self.profiles.setUserVisible(checked)
 
     def _create_dock(self) -> bool:
         problems = gdal_problems()
@@ -60,7 +69,9 @@ class TerrainSketchPlugin:
             self.iface.messageBar().pushCritical("Terrain Sketch", " ".join(problems))
             return False
         self.controller = SketchController(QgsProject.instance())
-        self.dock = MainDock(self.iface, self.controller, self.iface.mainWindow())
+        self.profiles = ProfileDock(self.controller, self.iface.mainWindow())
+        self.dock = MainDock(self.iface, self.controller, self.profiles, self.iface.mainWindow())
         self.dock.closedStateChanged.connect(lambda closed: self.action.setChecked(not closed))
         self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
+        self.iface.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.profiles)
         return True

@@ -6,6 +6,7 @@ from osgeo import gdal
 from qgis.core import (QgsCoordinateReferenceSystem, QgsFeature, QgsGeometry, QgsPointXY, QgsProject,
                        QgsRasterLayer, QgsRectangle, QgsVectorLayer)
 from qgis.gui import QgisInterface, QgsMapCanvas
+from qgis.PyQt.QtCore import QEventLoop, QTimer
 from qgis.PyQt.QtWidgets import QMainWindow
 
 gdal.UseExceptions()
@@ -85,6 +86,14 @@ def start_session(tmp_path, array=None):
     controller = SketchController(QgsProject.instance())
     controller.set_dem(dem_layer(tmp_path, array))
     return controller
+
+
+def spin_event_loop(ms: int) -> None:
+    """Run the Qt event loop for `ms` milliseconds, so a queued QTimer (like the preview
+    throttle) actually fires instead of just sitting there unexercised in a synchronous test."""
+    loop = QEventLoop()
+    QTimer.singleShot(ms, loop.quit)
+    loop.exec()
 
 
 def line_layer(name, geometries, add_to_project=True) -> QgsVectorLayer:

@@ -16,6 +16,7 @@ from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
 from .map_tools.freehand import FreehandTool
 from .map_tools.vertex_edit import VertexEditTool
+from .overlay import PreviewOverlay
 from .properties_page import PropertiesPage
 from .selection import BRUSH_EXTEND_HINT, EDIT_HINT, EDIT_ICON, METHOD_HINTS, Method
 from .tool_gallery import ToolGallery
@@ -24,12 +25,15 @@ PAGE_START, PAGE_GALLERY, PAGE_PROPERTIES = range(3)
 
 
 class MainDock(QgsDockWidget):
-    def __init__(self, iface, controller, parent=None):
+    def __init__(self, iface, controller, profiles=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Terrain Sketch"))
         self.setObjectName("TerrainSketchDock")
         self.iface = iface
         self.controller = controller
+        self.profiles = profiles          # the bottom profile dock, if the plugin made one
+        self.overlay = PreviewOverlay(iface.mapCanvas())
+        self._overlay_transform_failed = False
         self.draw_tool = None
         self._previous_tool = None
         self.confirm = self._confirm_dialog  # replaceable in tests
@@ -108,10 +112,13 @@ class MainDock(QgsDockWidget):
         self.edit_button.toggled.connect(self._toggle_edit)
         self.iface.mapCanvas().mapToolSet.connect(self._map_tool_set)
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_radius_units)
+        self.iface.mapCanvas().destinationCrsChanged.connect(self._update_overlay_transform)
         controller.featuresChanged.connect(self._refresh_highlight)
         controller.featuresChanged.connect(self._drop_missing_brush_target)
         controller.sessionChanged.connect(self._session_changed)
         controller.message.connect(self._show_message)
+        controller.previewUpdated.connect(self._preview_updated)
+        controller.previewCleared.connect(lambda: self.overlay.clear())
         self._session_changed()
 
     def end_drawing(self) -> None:
@@ -130,10 +137,13 @@ class MainDock(QgsDockWidget):
         """Stop drawing and editing — the panel is hidden, the session ended or the tool changed."""
         self.end_drawing()
         self.stop_editing()
+        self.controller.cancel_preview()
 
     def shutdown(self) -> None:
-        """Stop the tools and release the highlight; called when the plugin unloads."""
+        """Stop the tools and release the highlight and overlay; called when the plugin unloads."""
         self.stop_tools()
+        self.controller.cancel_preview()
+        self.overlay.dispose()
         self.highlight.reset(Qgis.GeometryType.Line)
         self.iface.mapCanvas().scene().removeItem(self.highlight)
 
@@ -169,6 +179,34 @@ class MainDock(QgsDockWidget):
             self.dem_combo.setExceptedLayerList([])
         self.pages.setCurrentIndex(PAGE_GALLERY if has_dem else PAGE_START)
         self._update_radius_units()
+        self._update_overlay_transform()
+
+    def _update_overlay_transform(self) -> None:
+        """Keep the drag preview georeferenced.
+
+        Its bounds come from the engine in the DEM's CRS, while the canvas item is placed in the
+        project CRS: without this the cut/fill image lands somewhere else on the map, silently,
+        whenever the two differ. Runs from `sessionChanged` and `destinationCrsChanged` — both
+        slots, so a CRS that cannot be projected leaves the preview unshown instead of raising."""
+        canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+        dem_crs = self.controller.dem_crs
+        transform, failed = None, False
+        if not self.controller.has_dem:
+            pass                                   # no session, so no preview to place
+        elif not (dem_crs.isValid() and canvas_crs.isValid()):
+            failed = True                          # nothing to project between
+        elif dem_crs != canvas_crs:
+            try:
+                transform = QgsCoordinateTransform(dem_crs, canvas_crs, QgsProject.instance())
+                failed = not transform.isValid()
+            except Exception:                      # noqa: BLE001 — this runs in a slot
+                failed = True
+            if failed:
+                transform = None
+        self._overlay_transform_failed = failed
+        self.overlay.crs_transform = transform
+        if failed:
+            self.overlay.clear()
 
     def _update_radius_units(self) -> None:
         """Label the brush radius with the canvas's own map units — the brush buffers in them."""
@@ -200,9 +238,16 @@ class MainDock(QgsDockWidget):
         if fid is not None:
             self.controller.delete_feature(fid)
 
+    def _preview_updated(self, _fid, preview) -> None:
+        if self._overlay_transform_failed:
+            return  # the bounds cannot be placed on this canvas; showing them would mislead
+        self.overlay.show_change(preview.bounds, preview.change)
+
     def _selection_changed(self, *_args) -> None:
         fid = self.feature_view.selected_id()
         self.stop_editing()
+        if self.profiles is not None:
+            self.profiles.show_feature(fid)
         self.edit_button.setEnabled(fid is not None)
         self._update_highlight(fid)
         if fid is not None:

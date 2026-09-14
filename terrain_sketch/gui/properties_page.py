@@ -5,8 +5,9 @@ from qgis.gui import QgsDoubleSpinBox
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QComboBox, QFormLayout, QLabel, QVBoxLayout, QWidget
 
+from ..core.sections import supports_long_profile
 from ..core.tools import TOOL_INFO, Mode, PixelMode
-from .help_texts import FLAG_TEXTS, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS, TOOL_LABELS, TOOL_SUMMARIES, amount_label
+from .help_texts import AMOUNT_IS_CUSTOM, FLAG_TEXTS, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS, TOOL_LABELS, TOOL_SUMMARIES, amount_label
 
 
 def _spin(minimum: float, maximum: float, step: float, suffix: str, decimals: int) -> QgsDoubleSpinBox:
@@ -34,9 +35,10 @@ class PropertiesPage(QWidget):
         self.summary.setWordWrap(True)
         self.amount_label = QLabel()
         self.amount = _spin(0.0, 100.0, 0.1, " m", 2)
-        self.amount.setToolTip(self.tr("How far the feature rises (height) or cuts (depth): above or below the "
-                                       "straight grade between the path's ends, the highest or lowest point of "
-                                       "the path or outline, or the terrain itself for Add and Subtract."))
+        self._amount_tip = self.tr("How far the feature rises (height) or cuts (depth): above or below the "
+                                   "straight grade between the path's ends, the highest or lowest point of "
+                                   "the path or outline, or the terrain itself for Add and Subtract.")
+        self.amount.setToolTip(self._amount_tip)
         self.width = _spin(0.1, 500.0, 0.5, " m", 2)
         self.width.setToolTip(self.tr("Width of the crest (raise tools) or the bottom (lower tools) of the path."))
         self.slope = _spin(0.0, 50.0, 0.5, "", 1)
@@ -91,8 +93,13 @@ class PropertiesPage(QWidget):
         try:
             self.title.setText(f"{feature.name} · {TOOL_LABELS[feature.tool]}")
             self.summary.setText(TOOL_SUMMARIES[feature.tool])
+            # Only a profile the engine actually uses fixes the heights: on a multi-part path it
+            # is discarded, and Height/Depth is then the one control that still drives the result.
+            custom = feature.long_profile is not None and supports_long_profile(feature)
             self.amount_label.setText(self.tr(label) if label else "")
             self.amount.setValue(feature.amount)
+            self.amount.setEnabled(not custom)
+            self.amount.setToolTip(AMOUNT_IS_CUSTOM if custom else self._amount_tip)
             self.width.setValue(feature.width)
             self.slope.setValue(feature.slope_n)
             self.reach.setValue(feature.reach)

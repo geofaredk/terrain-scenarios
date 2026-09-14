@@ -2,7 +2,7 @@
 import os
 
 import pytest
-from qgis.core import QgsApplication, QgsProject
+from qgis.core import QgsApplication, QgsProject, QgsSettings
 
 QgsApplication.setPrefixPath(os.environ.get("QGIS_PREFIX_PATH", "/Applications/QGIS-final-4_2_2.app"), True)
 QGIS_APP = QgsApplication([], True)
@@ -12,5 +12,15 @@ QGIS_APP.initQgis()
 @pytest.fixture(autouse=True)
 def clean_project():
     QgsProject.instance().clear()
+    _clear_plugin_settings()
     yield
     QgsProject.instance().clear()
+    _clear_plugin_settings()
+
+
+def _clear_plugin_settings() -> None:
+    """Drop everything under the plugin's settings group so tests cannot inherit each other's."""
+    settings = QgsSettings()
+    settings.beginGroup("terrain_sketch")
+    settings.remove("")
+    settings.endGroup()

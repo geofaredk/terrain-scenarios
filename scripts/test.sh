@@ -13,6 +13,9 @@ export PROJ_DATA="$B/Resources/qgis/proj"
 export QGIS_PREFIX_PATH="$QGIS_APP"
 export QT_PLUGIN_PATH="$B/PlugIns"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+# Keep QgsSettings out of the developer's real QGIS profile: without this the suite writes
+# settings into ~/Library/Application Support/QGIS/... and tests see each other's leftovers.
+export QGIS_CUSTOM_CONFIG_PATH="${QGIS_CUSTOM_CONFIG_PATH:-$ROOT/.devdeps/qgis-profile}"
 if [ ! -d "$ROOT/.devdeps/pytest" ]; then
   if ! "$PY" -m pip install -q --disable-pip-version-check --target "$ROOT/.devdeps" pytest; then
     echo "scripts/test.sh: could not install pytest into .devdeps/ (the first run needs a network connection)" >&2

@@ -547,16 +547,30 @@ class MainDock(QgsDockWidget):
         self._show_message(Qgis.MessageLevel.Success, self.tr("Exported the modified DEM to {}").format(path))
 
     def _context_menu(self, position) -> None:
-        index = self.feature_view.indexAt(position)
+        menu = self.feature_menu(self.feature_view.indexAt(position))
+        if menu is not None:
+            menu.exec(self.feature_view.viewport().mapToGlobal(position))
+
+    def feature_menu(self, index) -> QMenu | None:
+        """The list's context menu for the row at `index` (spec §7.2), or None off the rows."""
         if not index.isValid():
-            return
+            return None
         fid = self.model.data(index, Qt.ItemDataRole.UserRole)
         menu = QMenu(self)
+        menu.addAction(self.tr("Rename"), lambda: self.feature_view.edit(index))
+        menu.addAction(QgsApplication.getThemeIcon("/mActionDuplicateFeature.svg"), self.tr("Duplicate"),
+                       lambda: self._duplicate(fid))
         menu.addAction(QgsApplication.getThemeIcon("/mActionZoomToLayer.svg"), self.tr("Zoom to feature"),
                        lambda: self._zoom_to(fid))
+        menu.addSeparator()
         menu.addAction(QgsApplication.getThemeIcon("/mActionDeleteSelected.svg"), self.tr("Delete"),
                        lambda: self.controller.delete_feature(fid))
-        menu.exec(self.feature_view.viewport().mapToGlobal(position))
+        return menu
+
+    def _duplicate(self, fid: str) -> None:
+        copy = self.controller.duplicate_feature(fid)
+        if copy is not None:
+            self.feature_view.select_id(copy.id)
 
     def _zoom_to(self, fid: str) -> None:
         """Runs from the context menu, so a feature that has gone or an outline that cannot be

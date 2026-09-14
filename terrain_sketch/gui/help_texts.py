@@ -87,6 +87,8 @@ UNDO_REORDER = "Reorder features"
 UNDO_SHAPE = "Edit the shape of {}"
 UNDO_PROFILE = "Change the profile of {}"
 UNDO_SETTINGS = "Change the settings of {}"
+UNDO_DUPLICATE = "Duplicate {}"
+COPY_NAME = "{} (copy)"
 
 
 def amount_label(tool: Tool) -> str | None:

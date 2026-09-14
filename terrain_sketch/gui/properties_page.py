@@ -168,7 +168,7 @@ class PropertiesPage(QWidget):
         label = amount_label(feature.tool)
         self._loading = True
         try:
-            self.title.setText(f"{feature.name} · {TOOL_LABELS[feature.tool]}")
+            self.title.setText(_title(feature))
             self.summary.setText(TOOL_SUMMARIES[feature.tool])
             # Only a profile the engine actually uses fixes the heights: on a multi-part path it
             # is discarded, and Height/Depth is then the one control that still drives the result.
@@ -228,6 +228,12 @@ class PropertiesPage(QWidget):
         if self._fid not in {f.id for f in self.controller.features}:
             self._fid = None
             return
+        feature = self.controller.find(self._fid)
+        self.title.setText(_title(feature))   # follows a rename in the list
         flags = self.controller.stats(self._fid).flags
         self.problems.setText("\n".join(FLAG_TEXTS[flag] for flag in flags))
         self.problems.setVisible(bool(flags))
+
+
+def _title(feature) -> str:
+    return f"{feature.name} · {TOOL_LABELS[feature.tool]}"

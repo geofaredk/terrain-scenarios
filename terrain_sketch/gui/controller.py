@@ -7,6 +7,7 @@ import pathlib
 import shutil
 import tempfile
 import traceback
+import uuid
 from dataclasses import replace
 from typing import NamedTuple
 
@@ -24,10 +25,11 @@ from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import DemError, WorkingFiles, export_dem, read_dem
 from ..qgis_io.scenario import ScenarioError
-from .help_texts import (DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, EMPTY_LAYER, NO_FEATURES_SELECTED, NO_SESSION,
-                         RESULT_LAYER_REMOVED, SCENARIO_NOT_APPLIED, SESSION_ENDED_DEM_REMOVED, TOOL_LABELS,
-                         UNDO_ADD, UNDO_DELETE, UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER, UNDO_SETTINGS, UNDO_SHAPE,
-                         UNDO_TURN_OFF, UNDO_TURN_ON)
+from .help_texts import (COPY_NAME, DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, EMPTY_LAYER,
+                         NO_FEATURES_SELECTED, NO_SESSION, RESULT_LAYER_REMOVED, SCENARIO_NOT_APPLIED,
+                         SESSION_ENDED_DEM_REMOVED, TOOL_LABELS, UNDO_ADD, UNDO_DELETE, UNDO_DUPLICATE,
+                         UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER, UNDO_SETTINGS, UNDO_SHAPE, UNDO_TURN_OFF,
+                         UNDO_TURN_ON)
 from .undo import FeatureListChange
 
 LOG_TAG = "Terrain Sketch"
@@ -239,6 +241,22 @@ class SketchController(QObject):
         feature = self.find(fid)
         if feature is not None:
             self._commit([f for f in self._features if f.id != fid], UNDO_DELETE.format(feature.name))
+
+    def duplicate_feature(self, fid: str) -> TerrainFeature | None:
+        """A copy of the feature, with every setting and profile, placed right after it in the list.
+        It starts turned off: most tools measure from the terrain beneath them, so an identical copy
+        on top would not be a copy at all — a raised path would come out twice as high. The user
+        moves or reshapes it, then ticks it on. None when the feature no longer exists."""
+        feature = self.find(fid)
+        if feature is None:
+            return None
+        copy = replace(feature, id=uuid.uuid4().hex, name=self._unique(COPY_NAME.format(feature.name)),
+                       enabled=False)
+        index = self._features.index(feature)
+        features = [*self._features[:index + 1], copy, *self._features[index + 1:]]
+        if not self._commit(features, UNDO_DUPLICATE.format(feature.name)):
+            return None
+        return copy
 
     def reorder(self, ids) -> None:
         by_id = {f.id: f for f in self._features}

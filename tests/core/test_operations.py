@@ -84,6 +84,18 @@ def test_raise_flat_path_is_level_at_highest_vertex_plus_height():
     np.testing.assert_allclose(after[ROW, 5:35], 10 + 0.1 * 34.75 + 0.5, atol=1e-4)
 
 
+def test_raise_flat_area_levels_from_its_outline_so_a_knoll_inside_pokes_through():
+    """The reference is the highest point on the outline the user draws, not the highest ground
+    the outline covers. The panel says so in three places; this is the case that tells them
+    apart, and the one a user drawing a pad around a knoll actually meets."""
+    grid = make_grid(lambda X, Y: 10.0 + bump(X, Y))     # a 3 m knoll at (20, 20.5), flat elsewhere
+    before, after, _ = run(grid, feature(Tool.RAISE_FLAT, Mode.AREA, square(10.3, 10.3, 30.3, 30.3),
+                                         amount=1.0, slope_n=0.0))
+    assert before[ROW, 20] > 12.9                        # the knoll, ~3 m above the outline
+    assert after[15, 15] == pytest.approx(11.0, abs=0.01)          # outline maximum plus 1 m
+    assert after[ROW, 20] == pytest.approx(before[ROW, 20], abs=1e-6)  # left alone: it is higher
+
+
 def test_lower_flat_area_basin_and_storage():
     _, after, stats = run(make_grid(flat(10)),
                           feature(Tool.LOWER_FLAT, Mode.AREA, square(10.3, 10.3, 20.3, 20.3), amount=1.0, slope_n=0.0))

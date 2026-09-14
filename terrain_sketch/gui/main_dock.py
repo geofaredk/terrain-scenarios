@@ -9,8 +9,9 @@ from qgis.PyQt.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QM
                                  QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
 from ..core.tools import Mode
-from ..qgis_io.raster_io import DemError
+from ..qgis_io.raster_io import DemError, GeographicDemError
 from .feature_list import FeatureListModel, FeatureListView
+from .help_texts import REPROJECT_UNAVAILABLE
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
@@ -227,7 +228,10 @@ class MainDock(QgsDockWidget):
         try:
             self.controller.set_dem(layer)
         except DemError as error:
-            self._show_message(Qgis.MessageLevel.Warning, str(error))
+            if isinstance(error, GeographicDemError):
+                self._offer_reproject(str(error))
+            else:
+                self._show_message(Qgis.MessageLevel.Warning, str(error))
 
     def _new_feature(self) -> None:
         self.feature_view.clearSelection()
@@ -279,8 +283,8 @@ class MainDock(QgsDockWidget):
     def _drawing_hint(self, method) -> str:
         """The instruction text for `method`, naming the feature when the brush extends one."""
         if self._brush_fid is not None:
-            return self.tr(BRUSH_EXTEND_HINT).format(self.controller.feature(self._brush_fid).name)
-        return self.tr(METHOD_HINTS[method])
+            return BRUSH_EXTEND_HINT.format(self.controller.feature(self._brush_fid).name)
+        return METHOD_HINTS[method]
 
     def _brush_target(self, tool, mode) -> str | None:
         """The selected feature the brush should extend, if it fits the chosen tool and shape."""
@@ -322,7 +326,7 @@ class MainDock(QgsDockWidget):
         self.edit_tool.cancelled.connect(self.stop_editing)
         self._previous_tool = canvas.mapTool()
         canvas.setMapTool(self.edit_tool)
-        self.hint.setText(self.tr(EDIT_HINT))
+        self.hint.setText(EDIT_HINT)
         self.hint.show()
 
     def _edited(self, fid, geometry) -> None:
@@ -385,6 +389,37 @@ class MainDock(QgsDockWidget):
         extent = transform.transformBoundingBox(self.controller.feature_geometry(fid).boundingBox())
         canvas.setExtent(extent.buffered(max(extent.width(), extent.height()) * 0.25 + 1.0))
         canvas.refresh()
+
+    def _offer_reproject(self, text: str) -> None:
+        """A geographic DEM is refused with a button that opens Processing's warp tool, so the
+        user is not left to find it themselves."""
+        try:
+            # the DEM this message is about, captured now: the combo can hold something else by
+            # the time the button is pressed, and warping a layer the user never saw refused
+            # would be worse than warping nothing
+            layer = self.dem_combo.currentLayer()
+            bar = self.iface.messageBar()
+            widget = bar.createMessage(self.tr("Terrain Sketch"), text)
+            button = QPushButton(self.tr("Reproject…"), widget)
+            button.clicked.connect(lambda _checked=False, dem=layer: self._run_reproject(dem))
+            widget.layout().addWidget(button)
+            bar.pushWidget(widget, Qgis.MessageLevel.Warning, 0)
+        except Exception:  # noqa: BLE001 — this runs in a click handler; a plain message will do
+            self._show_message(Qgis.MessageLevel.Warning, text)
+
+    def _run_reproject(self, layer=None) -> None:
+        """Open Processing's warp tool on `layer`.
+
+        Everything is inside the guard: this runs in a click handler, where an exception — a
+        disabled Processing plugin, a dialog that refuses to open, a mistake of ours — takes the
+        whole interpreter down. A message the user can act on is the worst that should happen.
+        """
+        try:
+            from processing import execAlgorithmDialog  # a core plugin, but it can be disabled
+            alive = layer is not None and not sip.isdeleted(layer)
+            execAlgorithmDialog("gdal:warpreproject", {"INPUT": layer} if alive else {})
+        except Exception:  # noqa: BLE001 — ImportError included
+            self._show_message(Qgis.MessageLevel.Warning, REPROJECT_UNAVAILABLE)
 
     def _show_message(self, level, text: str) -> None:
         self.iface.messageBar().pushMessage(self.tr("Terrain Sketch"), text, level, 8)

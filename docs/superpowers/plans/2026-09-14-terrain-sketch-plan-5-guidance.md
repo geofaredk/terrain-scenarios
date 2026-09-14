@@ -260,11 +260,16 @@ Run: `scripts/test.sh tests/core/test_preview_drag.py` → Expected: `15 passed`
 ```python
 """Every description, example, tooltip and message the user reads, in one place.
 
-Translation: these are plain strings, not `tr()` calls, and nothing wraps them at the point of
-use either — `tr()` on a variable cannot be extracted by pylupdate, so wrapping them there would
-look like translation support without providing any. The plugin is English-only for v1 (spec
-§7.1); when translations arrive, this module is the single place to mark them, and the widgets
-that already call `self.tr("...")` on literal captions keep working unchanged.
+Translation, and a deliberate deviation from the spec. Spec §2 ("In scope (v1)") asks for every
+string to be wrapped in `tr()` so it can be translated later. That does not work for strings held
+in a module like this one: `tr()` extracts only string *literals*, so `self.tr(SOME_CONSTANT)` at
+the point of use produces nothing for a translator while looking like it does. These are therefore
+plain strings, and the call sites pass them straight through.
+
+The spec's intent still holds — the strings stay in one place, which is what makes translating
+them later a contained job. When that happens, mark them here (with `QT_TRANSLATE_NOOP` or by
+moving them into the classes that show them); widget captions already call `self.tr("literal")`
+and keep working unchanged.
 """
 from __future__ import annotations
 
@@ -802,18 +807,18 @@ class PropertiesPage(QWidget):
         self.width = _spin(0.1, 500.0, 0.5, " m", 2)
         self.width.setToolTip(self.tr("Width of the crest (raise tools) or the bottom (lower tools) of the path."))
         self.slope = _spin(0.0, 50.0, 0.5, "", 1)
-        self.slope.setPrefix("1 : ")
         self.slope.setToolTip(self.tr("Horizontal metres per metre of height: 1 : 3 goes 3 m outwards for every "
                                       "1 m. 0 means no side slopes."))
+        self.slope.setPrefix("1 : ")
         self.reach = _spin(0.0, 500.0, 1.0, " m", 1)
         self.reach.setToolTip(self.tr("Side slopes stop this far from the edge, even if they have not met the "
                                       "ground yet."))
         self.slope_position = QComboBox()
         self.slope_position.addItem(self.tr("Outside the outline"), False)
         self.slope_position.addItem(self.tr("Inside the outline"), True)
+        self.pixel_mode = QComboBox()
         self.slope_position.setToolTip(self.tr("Inside: the outline is the top edge (e.g. a pond). Outside: the "
                                                "outline is the flat part (e.g. a raised pad)."))
-        self.pixel_mode = QComboBox()
         for mode in PixelMode:
             self.pixel_mode.addItem(PIXEL_MODE_LABELS[mode], mode.value)
             self.pixel_mode.setItemData(self.pixel_mode.count() - 1, PIXEL_MODE_TIPS[mode], Qt.ItemDataRole.ToolTipRole)
@@ -1053,9 +1058,9 @@ def colours(palette: QPalette) -> dict:
 def svg_source(name: str, palette: QPalette, highlight: str | None = None) -> str:
     """The template with its colour tokens filled in, and one part optionally emphasised.
 
-    A template may tag parts with `class="part-<key>"`. When `highlight` names one, every other
-    tagged part is dimmed, so the same drawing can point at width, slope, reach or height
-    depending on which field has focus.
+    A template tags a part by putting `{opacity-<key>}` where that part's `opacity` value goes.
+    When `highlight` names one key, every other tagged part is dimmed, so the same drawing can
+    point at width, height, slope or reach depending on which field has focus.
     """
     text = (HERE / f"{name}.svg").read_text()
     for token, value in colours(palette).items():
@@ -1172,7 +1177,7 @@ def available() -> list[str]:
 **File:** `terrain_sketch/gui/illustrations/pixels_centre.svg`
 ```xml
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect x="24" y="8" width="16" height="16" fill="{fill}" opacity="0.45"/>
+  <rect x="40" y="8" width="16" height="16" fill="{fill}" opacity="0.45"/>
   <rect x="24" y="24" width="16" height="16" fill="{fill}" opacity="0.45"/>
   <rect x="40" y="24" width="16" height="16" fill="{fill}" opacity="0.45"/>
   <rect x="24" y="40" width="16" height="16" fill="{fill}" opacity="0.45"/>
@@ -1381,7 +1386,11 @@ def test_the_diagram_is_hidden_for_a_tool_that_has_no_slopes(tmp_path):
 
 def test_every_numeric_field_quotes_a_real_measurement_in_its_tooltip(tmp_path):
     c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     page = PropertiesPage(c)
+    # check AFTER a feature is shown: that is the only state in which these fields are visible,
+    # and show_feature rewrites the amount tooltip, so checking before it proves nothing
+    page.show_feature(dike.id)
     for widget in (page.amount, page.width, page.slope, page.reach):
         tip = widget.toolTip()
         assert len(tip) > 40, tip
@@ -1418,11 +1427,16 @@ Expected: collection error `ImportError: cannot import name 'TOOL_DESCRIPTIONS' 
 ```python
 """Every description, example, tooltip and message the user reads, in one place.
 
-Translation: these are plain strings, not `tr()` calls, and nothing wraps them at the point of
-use either — `tr()` on a variable cannot be extracted by pylupdate, so wrapping them there would
-look like translation support without providing any. The plugin is English-only for v1 (spec
-§7.1); when translations arrive, this module is the single place to mark them, and the widgets
-that already call `self.tr("...")` on literal captions keep working unchanged.
+Translation, and a deliberate deviation from the spec. Spec §2 ("In scope (v1)") asks for every
+string to be wrapped in `tr()` so it can be translated later. That does not work for strings held
+in a module like this one: `tr()` extracts only string *literals*, so `self.tr(SOME_CONSTANT)` at
+the point of use produces nothing for a translator while looking like it does. These are therefore
+plain strings, and the call sites pass them straight through.
+
+The spec's intent still holds — the strings stay in one place, which is what makes translating
+them later a contained job. When that happens, mark them here (with `QT_TRANSLATE_NOOP` or by
+moving them into the classes that show them); widget captions already call `self.tr("literal")`
+and keep working unchanged.
 """
 from __future__ import annotations
 
@@ -1546,8 +1560,10 @@ TOOL_DESCRIPTIONS = {
 }
 
 FIELD_TIPS = {
-    "amount": ("How far the feature rises or cuts. For a 1.5 m embankment, set 1.5 — the crest "
-               "ends up 1.5 m above the grade between the path's ends."),
+    "amount": ("How far the feature rises (height) or cuts (depth): above or below the straight "
+               "grade between the path's ends, the highest or lowest point of the path or "
+               "outline, or the terrain itself for Add and Subtract. For a 1.5 m embankment, "
+               "set 1.5."),
     "width": ("How wide the flat part is — the crest of a dike, or the bottom of a ditch. A farm "
               "track is about 3 m; a footpath about 1.5 m."),
     "slope_n": ("How far the side slope runs out for every metre of height. 1:3 means 3 m "
@@ -1794,25 +1810,24 @@ class PropertiesPage(QWidget):
         self.summary.setWordWrap(True)
         self.amount_label = QLabel()
         self.amount = _spin(0.0, 100.0, 0.1, " m", 2)
-        self._amount_tip = self.tr("How far the feature rises (height) or cuts (depth): above or below the "
-                                   "straight grade between the path's ends, the highest or lowest point of "
-                                   "the path or outline, or the terrain itself for Add and Subtract.")
-        self.amount.setToolTip(self._amount_tip)
+        # one source of truth: show_feature swaps between this and AMOUNT_IS_CUSTOM, so the
+        # concrete example has to live here or it is lost the moment a feature is selected
+        self._amount_tip = FIELD_TIPS["amount"]
         self.width = _spin(0.1, 500.0, 0.5, " m", 2)
         self.width.setToolTip(self.tr("Width of the crest (raise tools) or the bottom (lower tools) of the path."))
         self.slope = _spin(0.0, 50.0, 0.5, "", 1)
-        self.slope.setPrefix("1 : ")
         self.slope.setToolTip(self.tr("Horizontal metres per metre of height: 1 : 3 goes 3 m outwards for every "
                                       "1 m. 0 means no side slopes."))
+        self.slope.setPrefix("1 : ")
         self.reach = _spin(0.0, 500.0, 1.0, " m", 1)
         self.reach.setToolTip(self.tr("Side slopes stop this far from the edge, even if they have not met the "
                                       "ground yet."))
         self.slope_position = QComboBox()
         self.slope_position.addItem(self.tr("Outside the outline"), False)
         self.slope_position.addItem(self.tr("Inside the outline"), True)
+        self.pixel_mode = QComboBox()
         self.slope_position.setToolTip(self.tr("Inside: the outline is the top edge (e.g. a pond). Outside: the "
                                                "outline is the flat part (e.g. a raised pad)."))
-        self.pixel_mode = QComboBox()
         for mode in PixelMode:
             self.pixel_mode.addItem(PIXEL_MODE_LABELS[mode], mode.value)
             self.pixel_mode.setItemData(self.pixel_mode.count() - 1, PIXEL_MODE_TIPS[mode], Qt.ItemDataRole.ToolTipRole)
@@ -2016,6 +2031,19 @@ def test_restoring_something_never_saved_reports_failure_rather_than_raising():
     assert not settings.restore_state("probe_absent", QSplitter())
 
 
+def test_a_deleted_widget_does_not_raise():
+    """These run from Qt callbacks: a PyQt wrapper whose C++ object is gone raises RuntimeError,
+    and an exception in a callback aborts the interpreter."""
+    from qgis.PyQt import sip
+    splitter = QSplitter()
+    splitter.addWidget(QPushButton())
+    splitter.addWidget(QPushButton())
+    settings.save_state("probe_dead", splitter)
+    sip.delete(splitter)
+    settings.save_state("probe_dead", splitter)              # must not raise
+    assert not settings.restore_state("probe_dead", splitter)
+
+
 def test_a_corrupt_stored_value_does_not_raise():
     settings.save("probe_bad/state", "not a byte array")
     assert not settings.restore_state("probe_bad", QSplitter())
@@ -2067,30 +2095,39 @@ def save_state(name: str, widget) -> None:
     QWidget has `saveGeometry`, so probing for it would silently store the wrong thing for a
     QSplitter, whose layout lives in `saveState`.
     """
-    save(f"{name}/state", widget.saveState())
+    _save_from(f"{name}/state", widget, "saveState")
 
 
 def restore_state(name: str, widget) -> bool:
     """Put a splitter's or window's layout back; False when there is nothing usable stored."""
-    return _restore(load(f"{name}/state"), widget.restoreState)
+    return _restore(load(f"{name}/state"), widget, "restoreState")
 
 
 def save_geometry(name: str, widget) -> None:
     """Persist a top-level widget's position and size."""
-    save(f"{name}/geometry", widget.saveGeometry())
+    _save_from(f"{name}/geometry", widget, "saveGeometry")
 
 
 def restore_geometry(name: str, widget) -> bool:
     """Put a widget's position and size back; False when there is nothing usable stored."""
-    return _restore(load(f"{name}/geometry"), widget.restoreGeometry)
+    return _restore(load(f"{name}/geometry"), widget, "restoreGeometry")
 
 
-def _restore(stored, restorer) -> bool:
+def _save_from(key: str, widget, method: str) -> None:
+    """Ask the widget for its layout and store it. The widget call is inside the guard because a
+    PyQt wrapper whose C++ object is gone raises RuntimeError, and these run from Qt callbacks."""
+    try:
+        save(key, getattr(widget, method)())
+    except Exception:  # noqa: BLE001 — persistence is a convenience, never a failure path
+        pass
+
+
+def _restore(stored, widget, method: str) -> bool:
     if not stored:
         return False
     try:
-        return bool(restorer(stored))
-    except (TypeError, ValueError):
+        return bool(getattr(widget, method)(stored))
+    except Exception:  # noqa: BLE001 — a corrupt blob or a deleted widget must not reach Qt
         return False
 ```
 **File:** `scripts/test.sh`
@@ -2130,6 +2167,8 @@ import os
 import pytest
 from qgis.core import QgsApplication, QgsProject, QgsSettings
 
+from terrain_sketch.gui import settings as plugin_settings
+
 QgsApplication.setPrefixPath(os.environ.get("QGIS_PREFIX_PATH", "/Applications/QGIS-final-4_2_2.app"), True)
 QGIS_APP = QgsApplication([], True)
 QGIS_APP.initQgis()
@@ -2147,7 +2186,7 @@ def clean_project():
 def _clear_plugin_settings() -> None:
     """Drop everything under the plugin's settings group so tests cannot inherit each other's."""
     settings = QgsSettings()
-    settings.beginGroup("terrain_sketch")
+    settings.beginGroup(plugin_settings.GROUP)
     settings.remove("")
     settings.endGroup()
 ```
@@ -2318,8 +2357,8 @@ class ProfileDock(QgsDockWidget):
 ```
 - [ ] **Step 4: Run the tests**
 
-Run: `scripts/test.sh tests/qgis/test_settings.py` → Expected: `6 passed`
-Run: `scripts/test.sh` → Expected: `261 passed`
+Run: `scripts/test.sh tests/qgis/test_settings.py` → Expected: `7 passed`
+Run: `scripts/test.sh` → Expected: `262 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -2944,11 +2983,16 @@ def _write_tif(path: str, array: np.ndarray, grid: DemGrid, info: DemInfo, extra
 ```python
 """Every description, example, tooltip and message the user reads, in one place.
 
-Translation: these are plain strings, not `tr()` calls, and nothing wraps them at the point of
-use either — `tr()` on a variable cannot be extracted by pylupdate, so wrapping them there would
-look like translation support without providing any. The plugin is English-only for v1 (spec
-§7.1); when translations arrive, this module is the single place to mark them, and the widgets
-that already call `self.tr("...")` on literal captions keep working unchanged.
+Translation, and a deliberate deviation from the spec. Spec §2 ("In scope (v1)") asks for every
+string to be wrapped in `tr()` so it can be translated later. That does not work for strings held
+in a module like this one: `tr()` extracts only string *literals*, so `self.tr(SOME_CONSTANT)` at
+the point of use produces nothing for a translator while looking like it does. These are therefore
+plain strings, and the call sites pass them straight through.
+
+The spec's intent still holds — the strings stay in one place, which is what makes translating
+them later a contained job. When that happens, mark them here (with `QT_TRANSLATE_NOOP` or by
+moving them into the classes that show them); widget captions already call `self.tr("literal")`
+and keep working unchanged.
 """
 from __future__ import annotations
 
@@ -3072,8 +3116,10 @@ TOOL_DESCRIPTIONS = {
 }
 
 FIELD_TIPS = {
-    "amount": ("How far the feature rises or cuts. For a 1.5 m embankment, set 1.5 — the crest "
-               "ends up 1.5 m above the grade between the path's ends."),
+    "amount": ("How far the feature rises (height) or cuts (depth): above or below the straight "
+               "grade between the path's ends, the highest or lowest point of the path or "
+               "outline, or the terrain itself for Add and Subtract. For a 1.5 m embankment, "
+               "set 1.5."),
     "width": ("How wide the flat part is — the crest of a dike, or the bottom of a ditch. A farm "
               "track is about 3 m; a footpath about 1.5 m."),
     "slope_n": ("How far the side slope runs out for every metre of height. 1:3 means 3 m "
@@ -3123,6 +3169,7 @@ from qgis.PyQt.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QM
 from ..core.tools import Mode
 from ..qgis_io.raster_io import DemError, GeographicDemError
 from .feature_list import FeatureListModel, FeatureListView
+from .help_texts import REPROJECT_UNAVAILABLE
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
@@ -3955,7 +4002,7 @@ class SketchController(QObject):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_help_messages.py` → Expected: `4 passed`
-Run: `scripts/test.sh` → Expected: `265 passed`
+Run: `scripts/test.sh` → Expected: `266 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -3996,3 +4043,66 @@ From the Plan 3 and Plan 4 addenda: `tr()` on non-literals; `NO_FEATURES_IN_LAYE
 | Milestone | Builds on Plan 5 via |
 |---|---|
 | Scenario GeoPackage, volumes in the UI, undo/redo, the 3D view, error flags, and a packaging script that builds the plugin ZIP | `settings.py` for panel state, `help_texts.py` for every new string, `illustrations/` for any new picture, and the deferred profile-editor items above |
+
+---
+
+## Addendum: final-review fixes
+
+The task blocks above are the plan as written. Five tasks landed on `feat/guidance`, each reviewed as
+it landed, followed by a whole-branch review and one fix wave. **Every one of the five needed a fix
+round** — the highest rate of any plan in this project. **Where this addendum and the task blocks
+disagree, the code is authoritative.**
+
+### Changed after the task blocks
+
+| # | What changed | Why |
+|---|---|---|
+| I1 | `TOOL_DESCRIPTIONS` for both flat tools, and `TOOL_EXAMPLES[RAISE_FLAT]`, now say "the highest/lowest point **on the line or outline you draw**" | They said "the highest point it covers". `operations.py` samples `polygon_rings(part)[0]` — the exterior ring — and `rule_profile` samples only the drawn vertices. The interior is never read. Draw a pad around a knoll, believe the tooltip, and the knoll pokes through; there is no undo. `TOOL_SUMMARIES`, displayed twenty pixels above, already said it correctly. |
+| I2 | `TOOL_EXAMPLES[INTERPOLATE]` now describes a culvert captured as a solid bank | It described creating a ditch the survey had missed. Interpolate grades between the edge elevations: it cannot create a ditch, and would erase one that exists. The tool's own summary and illustration both already said the right thing. |
+| I3 | `tool_add.svg`'s band follows the terrain | Its surface sat at offsets of 7.2 / 11.7 / 9.2 px from the ground where `tool_subtract.svg`'s are 7.8 / 7.3 / 7.8 — the picture flattened the terrain its own caption says it preserves. Now 7.2 / 7.7 / 7.2, with a test asserting both bands stay parallel. |
+| I4 | `_run_reproject` is wrapped, and captures the layer when the message is built | It was the one new Qt-callback path, unguarded and untested — and this branch's previous commit existed only because a `NameError` had been sitting on that exact line. |
+| I5 | An unknown `highlight` key is treated as `None` | It dimmed the entire diagram instead. The test named `..._leaves_every_part_visible` asserted the opposite and passed. |
+| 6 | The splitter round-trip test sets sizes first, then asserts them | An earlier ruling refused this because an unshown splitter reports `[0, 0]`. True of the test as written, wrong as a conclusion: set sizes and it reports them, and the assertion becomes mutation-detecting. The bytes assertion proves storage; this proves restoration. |
+| 7 | The four construction-time `setToolTip` calls are removed | They are `self.tr("literal")`, so `pylupdate` extracts four strings the user can never see while the strings actually shown are unextractable by design — Task 1's own problem, re-created one directory over. |
+| — | Smaller: four dead strings deleted; the slope tip no longer calls 1:3 a "maximum" when larger *n* is flatter; the `LOWER_FLAT` example now says to set Slopes to *Inside the outline*, without which the basin grows outward; a tautological assertion, a dead test helper and two unused imports removed; the theme test no longer calls `refresh_icons()` by hand, so it proves the wiring | Each confirmed by review. |
+
+### Corrections to this plan's own text
+
+- **The plan shipped a `NameError`.** The prototype patch prepended `REPROJECT_UNAVAILABLE` to a
+  `from .help_texts import` line in `main_dock.py` that did not exist, so the edit silently did
+  nothing and the name was used unimported — on the path that runs when Processing is disabled, which
+  no test covers. Task 5's implementer found it unprompted.
+- **Two spec §7.2 items were dropped without a decision being recorded**: the pixel-mode combobox's
+  tooltip containing the three-panel picture, and the tool-specific Height/Depth label
+  ("Height above the highest point…"), which `amount_label()` still renders as a bare "Height". They
+  are now in the deferred table below. Had the second been built, the I1 error above would have been
+  hard to write.
+
+### Process notes, recorded because they cost real time
+
+- **A fix that changes a file a *later* task also emits must re-extract that task's brief.** Task 5's
+  `help_texts` slice is the whole file; after fixing the amount tooltip in Task 3 only the earlier
+  briefs were regenerated, so Task 5 faithfully wrote the old wording back. The suite stayed green —
+  the test asserts the tooltip contains a digit, and the wrong text does too. Byte-comparing the
+  branch against the plan's slices is what caught it.
+- **The dry run must check out `main` after cloning.** Once the feature branch existed, the script was
+  cloning the branch and "verifying" tasks against content they had already produced.
+- **Per-task slices work.** This was the first plan whose dry run passed on the first attempt, and the
+  Plan 4 defect they were introduced to prevent — a task shipping strings only a later task uses — was
+  confirmed absent on the file three tasks write.
+
+### Deferred to Plan 6
+
+| Item | Why not here |
+|---|---|
+| The pixel-mode picture inside the combobox tooltip, and tool-specific H/D labels (spec §7.2) | Dropped by this plan without a recorded decision; the H/D label is the structural fix for the I1 class of error. |
+| Dock geometry under `terrain_sketch/` (spec §7.1) | Only the splitter landed. `save_geometry`/`restore_geometry` exist and are unused, waiting for it. |
+| `QgsCollapsibleGroupBox` collapse state | It writes under its own key, not the plugin's group, and the test that collapses the About box leaves it collapsed in the shared test profile. |
+| Illustration polish | The centre-dot hidden under the outline in `pixels_centre.svg`; the reach bar overrunning the toe in `parameters.svg`; sliver gaps where four straight-based bands meet the wavy terrain; and the four path/flat icons being hard to tell apart at 60×32. |
+| Carried from earlier plans | `reach` rounding to 0.0 on a hard terminus drag; the arrow-key nudge committing per keypress; the unreachable left side of a cross profile; the real area section line; the end-cap asymmetry. |
+
+## Manual check in QGIS (for the human, after merge)
+
+The plan's own manual-check list stands, with one correction: **step 4's expectation was wrong** and is
+fixed above — unticking Symmetric stops break points mirroring, but width, side slope and reach are
+single values that always apply to both sides.

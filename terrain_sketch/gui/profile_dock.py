@@ -10,6 +10,7 @@ from ..core.sections import cross_section, set_cross_section, supports_long_prof
 from ..core.tools import TOOL_INFO, Mode
 from .help_texts import (AREA_LONG_SECTION_HINT, AREA_LONG_SECTION_NOTE, CUSTOM_PROFILE_NOTE,
                          MULTIPART_LONG_SECTION_NOTE, SYMMETRIC_TIP)
+from . import settings
 from .profile_widget import Kind, ProfileWidget
 
 
@@ -51,6 +52,11 @@ class ProfileDock(QgsDockWidget):
             column.addLayout(header)
             column.addWidget(widget, 1)
             splitter.addWidget(panel)
+        self.splitter = splitter
+        splitter.setObjectName("TerrainSketchProfileSplitter")
+        settings.restore_state("profile_splitter", splitter)
+        splitter.splitterMoved.connect(
+            lambda *_args: settings.save_state("profile_splitter", splitter))
         layout.addWidget(splitter, 1)
         layout.addWidget(self.note)
         self.setWidget(body)

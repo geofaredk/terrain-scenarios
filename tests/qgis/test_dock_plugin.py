@@ -44,7 +44,8 @@ def test_a_geographic_dem_is_reported_in_the_message_bar(tmp_path):
     dock.dem_combo.setLayer(dem)
     dock.start_button.click()
     assert not dock.controller.has_dem
-    iface.messageBar().pushMessage.assert_called()
+    # it is pushed as a WIDGET now, because it carries a Reproject… button
+    iface.messageBar().pushWidget.assert_called()
 
 
 def test_ending_the_session_stops_a_drawing_in_progress(tmp_path):

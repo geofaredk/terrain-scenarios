@@ -90,3 +90,114 @@ def test_the_three_pixel_modes_really_do_look_different():
         return tuple(image.pixelColor(x, y).alpha() > 0
                      for y in range(8, 56, 4) for x in range(8, 56, 4))
     assert len(set(signature(s) for s in shots)) == 3
+
+
+def point_in_polygon(point, polygon):
+    """Ray casting algorithm for point-in-polygon test."""
+    x, y = point
+    n = len(polygon)
+    inside = False
+    x1, y1 = polygon[0]
+    for i in range(1, n + 1):
+        x2, y2 = polygon[i % n]
+        if y > min(y1, y2):
+            if y <= max(y1, y2):
+                if x <= max(x1, x2):
+                    if y1 != y2:
+                        xinters = (y - y1) * (x2 - x1) / (y2 - y1) + x1
+                    if x1 == x2 or x <= xinters:
+                        inside = not inside
+        x1, y1 = x2, y2
+    return inside
+
+
+def parse_filled_cells_from_svg(svg_path):
+    """Extract filled cell coordinates from pixels_*.svg file."""
+    import re
+    source = open(svg_path).read()
+    cells = set()
+    for match in re.finditer(r'<rect\s+x="(\d+)"\s+y="(\d+)"\s+width="16"\s+height="16"\s+fill=', source):
+        x, y = int(match.group(1)), int(match.group(2))
+        cells.add((x, y))
+    return cells
+
+
+def cell_centre_inside_polygon(cell_x, cell_y, polygon):
+    """Check if the centre of a cell (x, y in SVG coords) is inside the polygon."""
+    centre_x = cell_x + 8
+    centre_y = cell_y + 8
+    return point_in_polygon((centre_x, centre_y), polygon)
+
+
+def cell_fully_inside_polygon(cell_x, cell_y, polygon):
+    """Check if all four corners of a cell are inside the polygon."""
+    corners = [
+        (cell_x, cell_y),
+        (cell_x + 16, cell_y),
+        (cell_x + 16, cell_y + 16),
+        (cell_x, cell_y + 16),
+    ]
+    return all(point_in_polygon(corner, polygon) for corner in corners)
+
+
+def cell_crosses_polygon(cell_x, cell_y, polygon):
+    """Check if a cell is touched by the polygon boundary (any part crosses)."""
+    corners = [
+        (cell_x, cell_y),
+        (cell_x + 16, cell_y),
+        (cell_x + 16, cell_y + 16),
+        (cell_x, cell_y + 16),
+    ]
+    inside_count = sum(1 for corner in corners if point_in_polygon(corner, polygon))
+    return 0 < inside_count < 4 or any(point_in_polygon(corner, polygon) for corner in corners)
+
+
+def test_pixels_centre_fills_cells_whose_centre_is_inside():
+    """Verify pixels_centre.svg fills only cells whose centre falls inside the outline."""
+    outline = [(18, 20), (48, 14), (52, 46), (22, 50)]
+    svg_file = illustrations.HERE / "pixels_centre.svg"
+    filled = parse_filled_cells_from_svg(svg_file)
+
+    expected_filled = set()
+    for cell_x in [8, 24, 40]:
+        for cell_y in [8, 24, 40]:
+            if cell_centre_inside_polygon(cell_x, cell_y, outline):
+                expected_filled.add((cell_x, cell_y))
+
+    assert filled == expected_filled, f"pixels_centre filled {filled}, expected {expected_filled}"
+
+
+def test_pixels_all_touched_fills_all_cells_the_outline_crosses():
+    """Verify pixels_all_touched.svg fills every cell the outline touches."""
+    outline = [(18, 20), (48, 14), (52, 46), (22, 50)]
+    svg_file = illustrations.HERE / "pixels_all_touched.svg"
+    filled = parse_filled_cells_from_svg(svg_file)
+
+    expected_filled = set()
+    for cell_x in [8, 24, 40]:
+        for cell_y in [8, 24, 40]:
+            corners = [
+                (cell_x, cell_y),
+                (cell_x + 16, cell_y),
+                (cell_x + 16, cell_y + 16),
+                (cell_x, cell_y + 16),
+            ]
+            if any(point_in_polygon(corner, outline) for corner in corners):
+                expected_filled.add((cell_x, cell_y))
+
+    assert filled == expected_filled, f"pixels_all_touched filled {filled}, expected {expected_filled}"
+
+
+def test_pixels_fully_inside_fills_only_cells_entirely_within_the_outline():
+    """Verify pixels_fully_inside.svg fills only cells lying entirely within the outline."""
+    outline = [(18, 20), (48, 14), (52, 46), (22, 50)]
+    svg_file = illustrations.HERE / "pixels_fully_inside.svg"
+    filled = parse_filled_cells_from_svg(svg_file)
+
+    expected_filled = set()
+    for cell_x in [8, 24, 40]:
+        for cell_y in [8, 24, 40]:
+            if cell_fully_inside_polygon(cell_x, cell_y, outline):
+                expected_filled.add((cell_x, cell_y))
+
+    assert filled == expected_filled, f"pixels_fully_inside filled {filled}, expected {expected_filled}"

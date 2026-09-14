@@ -34,9 +34,9 @@ def colours(palette: QPalette) -> dict:
 def svg_source(name: str, palette: QPalette, highlight: str | None = None) -> str:
     """The template with its colour tokens filled in, and one part optionally emphasised.
 
-    A template may tag parts with `class="part-<key>"`. When `highlight` names one, every other
-    tagged part is dimmed, so the same drawing can point at width, slope, reach or height
-    depending on which field has focus.
+    A template tags a part by putting `{opacity-<key>}` where that part's `opacity` value goes.
+    When `highlight` names one key, every other tagged part is dimmed, so the same drawing can
+    point at width, height, slope or reach depending on which field has focus.
     """
     text = (HERE / f"{name}.svg").read_text()
     for token, value in colours(palette).items():

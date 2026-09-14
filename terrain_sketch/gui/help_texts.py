@@ -73,8 +73,6 @@ RESULT_LAYER_REMOVED = "A Terrain Sketch layer was removed from the project. You
 
 DRAWING_NOT_TRANSFORMED = "The drawing could not be converted to the DEM's coordinate system."
 
-NO_FEATURES_IN_LAYER = "That layer has no features of the right kind to use here."
-
 
 def amount_label(tool: Tool) -> str | None:
     """Label of the amount field, or None when the tool has no amount."""
@@ -101,16 +99,19 @@ AMOUNT_IS_CUSTOM = ("The long profile was edited by hand, so its heights are fix
 
 
 TOOL_EXAMPLES = {
-    Tool.INTERPOLATE: ("A ditch crosses your DEM but the survey missed it. Draw a line along the "
-                       "ditch and Terrain Sketch runs a smooth grade between the two ends."),
+    Tool.INTERPOLATE: ("A bridge or culvert was captured as a solid bank across a channel, so "
+                       "water cannot pass. Draw a line along the channel through it and Terrain "
+                       "Sketch runs a smooth grade between the two ends."),
     Tool.RAISE_PATH: ("A 1.5 m flood embankment along a river. Draw the line the crest follows, "
                       "set Height 1.5 m, Width 3 m and a 1:3 side slope."),
     Tool.LOWER_PATH: ("A swale carrying runoff to a pond. Draw its route, set Depth 0.6 m and "
                       "Width 2 m; the slopes tie it back into the ground."),
     Tool.RAISE_FLAT: ("A building pad above the flood level. Draw the outline and set the height "
-                      "above the highest point it covers, so the whole pad sits level."),
-    Tool.LOWER_FLAT: ("A detention basin. Draw the outline, set Depth 1.2 m, and the bottom comes "
-                      "out flat with the sides sloping down to it."),
+                      "above the highest point on the outline you draw, so the whole pad sits "
+                      "level."),
+    Tool.LOWER_FLAT: ("A detention basin. Draw the outline, set Depth 1.2 m, and set Slopes to "
+                      "Inside the outline so the sides slope down within it instead of the basin "
+                      "growing outwards; the bottom comes out flat."),
     Tool.ADD: ("A 0.3 m layer of fill over a field. Draw the outline; the ground keeps its shape "
                "and every cell rises by the same amount."),
     Tool.SUBTRACT: ("Stripping 0.2 m of topsoil. Draw the outline; the ground keeps its shape and "
@@ -125,9 +126,11 @@ TOOL_DESCRIPTIONS = {
     Tool.LOWER_PATH: ("Cuts a channel along a line: a flat bottom of the width you set, with "
                       "sides sloping up to meet the ground."),
     Tool.RAISE_FLAT: ("Lifts everything inside the shape to one level, measured from the highest "
-                      "point it covers, with slopes tying the edge back into the ground."),
+                      "point on the line or outline you draw, with slopes tying the edge back "
+                      "into the ground."),
     Tool.LOWER_FLAT: ("Cuts everything inside the shape down to one level, measured from the "
-                      "lowest point it covers, with slopes tying the edge back in."),
+                      "lowest point on the line or outline you draw, with slopes tying the edge "
+                      "back in."),
     Tool.ADD: "Adds the same height to every cell inside the shape; the terrain keeps its shape.",
     Tool.SUBTRACT: ("Takes the same height off every cell inside the shape; the terrain keeps "
                     "its shape."),
@@ -141,7 +144,7 @@ FIELD_TIPS = {
     "width": ("How wide the flat part is — the crest of a dike, or the bottom of a ditch. A farm "
               "track is about 3 m; a footpath about 1.5 m."),
     "slope_n": ("How far the side slope runs out for every metre of height. 1:3 means 3 m "
-                "outwards per 1 m up, which is the usual maximum for a mown grass embankment. "
+                "outwards per 1 m up, about the steepest a mown grass embankment usually gets. "
                 "0 means no side slopes at all."),
     "reach": ("The side slopes stop this far from the edge even if they have not met the ground. "
               "Set 5 m to keep a 1.5 m embankment out of a neighbouring plot that starts 5 m "
@@ -153,15 +156,9 @@ FIELD_TIPS = {
                    "cell centre, which is when All touched helps."),
 }
 
-REPROJECT_HINT = ("The DEM uses latitude/longitude. Slopes and widths need metres, so reproject "
-                  "it to a projected CRS first.")
 NO_FEATURES_SELECTED = ("Nothing is selected in that layer. Untick \'Selected features only\', or "
                         "select the features you want on the map first.")
 EMPTY_LAYER = "That layer has no features to use."
-WRONG_GEOMETRY_IN_LAYER = ("That layer holds {have} features, but this tool needs {want} ones. "
-                           "Pick a different layer, or switch the shape above.")
-VERTEX_EDIT_REFUSED = ("That edit would leave the shape invalid, so it was not applied. Try "
-                       "moving the point somewhere else.")
 PICK_A_LAYER = "Pick a layer above first."
 
 

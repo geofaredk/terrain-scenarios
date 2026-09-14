@@ -1,4 +1,5 @@
-import pytest
+import re
+
 from qgis.PyQt.QtCore import QSize
 from qgis.PyQt.QtGui import QColor, QPalette
 
@@ -65,8 +66,10 @@ def test_highlighting_one_part_dims_the_others():
 
 
 def test_an_unknown_highlight_leaves_every_part_visible():
+    """A key the template does not tag must emphasise nothing, not dim the whole diagram: that is
+    what a renamed part in an SVG would otherwise do, silently."""
     source = illustrations.svg_source("parameters", light(), highlight="nope")
-    assert source.count('opacity="0.25"') == 4
+    assert source.count('opacity="1"') == 4 and '0.25' not in source
 
 
 def test_every_illustration_renders_to_a_non_blank_pixmap():
@@ -113,7 +116,6 @@ def point_in_polygon(point, polygon):
 
 def parse_filled_cells_from_svg(svg_path):
     """Extract filled cell coordinates from pixels_*.svg file."""
-    import re
     source = open(svg_path).read()
     cells = set()
     for match in re.finditer(r'<rect\s+x="(\d+)"\s+y="(\d+)"\s+width="16"\s+height="16"\s+fill=', source):
@@ -138,18 +140,6 @@ def cell_fully_inside_polygon(cell_x, cell_y, polygon):
         (cell_x, cell_y + 16),
     ]
     return all(point_in_polygon(corner, polygon) for corner in corners)
-
-
-def cell_crosses_polygon(cell_x, cell_y, polygon):
-    """Check if a cell is touched by the polygon boundary (any part crosses)."""
-    corners = [
-        (cell_x, cell_y),
-        (cell_x + 16, cell_y),
-        (cell_x + 16, cell_y + 16),
-        (cell_x, cell_y + 16),
-    ]
-    inside_count = sum(1 for corner in corners if point_in_polygon(corner, polygon))
-    return 0 < inside_count < 4 or any(point_in_polygon(corner, polygon) for corner in corners)
 
 
 def test_pixels_centre_fills_cells_whose_centre_is_inside():
@@ -201,3 +191,42 @@ def test_pixels_fully_inside_fills_only_cells_entirely_within_the_outline():
                 expected_filled.add((cell_x, cell_y))
 
     assert filled == expected_filled, f"pixels_fully_inside filled {filled}, expected {expected_filled}"
+
+
+def path_points(d):
+    """The vertices of an SVG path written with absolute M and L commands only."""
+    return [(float(x), float(y)) for x, y in re.findall(r"[ML]\s*(-?[\d.]+)\s+(-?[\d.]+)", d)]
+
+
+def drawn_path(source, attribute, colour):
+    """The `d` of the first path whose `attribute` is `colour` (a colour token, unrendered)."""
+    for d, value in re.findall(r'<path\s+d="([^"]+)"[^>]*?\s' + attribute + r'="([^"]+)"', source):
+        if value == colour:
+            return d
+    raise AssertionError(f"no path with {attribute}={colour}")
+
+
+def height_at(polyline, x):
+    """The y of a polyline at x, interpolated straight between the vertices around it."""
+    for (x1, y1), (x2, y2) in zip(polyline, polyline[1:]):
+        if x1 <= x <= x2:
+            return y1 + (y2 - y1) * (x - x1) / (x2 - x1)
+    raise AssertionError(f"x={x} lies outside the drawn terrain")
+
+
+def test_the_add_and_subtract_bands_stay_parallel_to_the_terrain():
+    """Add and Subtract shift every cell by the same amount, so the band they draw has to keep a
+    constant distance from the ground. A band that pinches or bows shows relief the tool never
+    makes — and the descriptions beside these pictures promise the terrain keeps its shape."""
+    for name, band in (("tool_add", "{fill}"), ("tool_subtract", "{cut}")):
+        source = (illustrations.HERE / f"{name}.svg").read_text()
+        ground = path_points(drawn_path(source, "stroke", "{terrain}"))
+        surface = path_points(drawn_path(source, "stroke", "{line}"))
+        assert len(surface) >= 3, name
+        offsets = [height_at(ground, x) - y for x, y in surface]
+        assert max(offsets) - min(offsets) < 1.0, f"{name} surface is not parallel: {offsets}"
+        # and the band between the two lines closes on the ground, with nothing floating between
+        for x, y in path_points(drawn_path(source, "fill", band)):
+            on_surface = any(abs(x - sx) < 0.01 and abs(y - sy) < 0.01 for sx, sy in surface)
+            assert on_surface or abs(height_at(ground, x) - y) < 1.0, \
+                f"{name} band vertex ({x}, {y}) is neither on its surface nor on the ground"

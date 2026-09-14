@@ -36,12 +36,17 @@ def svg_source(name: str, palette: QPalette, highlight: str | None = None) -> st
 
     A template tags a part by putting `{opacity-<key>}` where that part's `opacity` value goes.
     When `highlight` names one key, every other tagged part is dimmed, so the same drawing can
-    point at width, height, slope or reach depending on which field has focus.
+    point at width, height, slope or reach depending on which field has focus. A `highlight` this
+    template does not tag emphasises nothing rather than dimming the whole picture: renaming a
+    part key in an SVG must not silently turn the diagram grey.
     """
     text = (HERE / f"{name}.svg").read_text()
     for token, value in colours(palette).items():
         text = text.replace("{" + token + "}", value)
-    for key in tagged_parts(text):
+    keys = tagged_parts(text)
+    if highlight not in keys:
+        highlight = None
+    for key in keys:
         opacity = HIGHLIGHT_OPACITY if highlight is None or key == highlight else DIMMED_OPACITY
         text = text.replace("{opacity-" + key + "}", opacity)
     return text

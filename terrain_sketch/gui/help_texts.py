@@ -194,3 +194,7 @@ def cubic_metres(value: float) -> str:
     if text.startswith("-") and not any(digit in "123456789" for digit in text):
         text = text[1:]
     return f"{text} m³"
+
+
+SCENARIO_NOT_APPLIED = ("The scenario could not be applied to this DEM, so it was not opened. "
+                        "Your current features are unchanged.")

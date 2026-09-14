@@ -1,7 +1,9 @@
 """SketchController: the one place where the GUI talks to the engine, the files and the layers."""
 from __future__ import annotations
 
+import configparser
 import os
+import pathlib
 import tempfile
 import traceback
 from dataclasses import replace
@@ -16,13 +18,25 @@ from ..core.sections import long_section, rescale_long_profile
 from ..core.tools import Mode, Tool
 from ..core.volumes import total_cut_fill
 from ..model.feature import TerrainFeature, new_feature
+from ..qgis_io import scenario
 from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import DemError, WorkingFiles, export_dem, read_dem
+from ..qgis_io.scenario import ScenarioError
 from .help_texts import (DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, EMPTY_LAYER, NO_FEATURES_SELECTED, NO_SESSION,
-                         RESULT_LAYER_REMOVED, SESSION_ENDED_DEM_REMOVED, TOOL_LABELS)
+                         RESULT_LAYER_REMOVED, SCENARIO_NOT_APPLIED, SESSION_ENDED_DEM_REMOVED, TOOL_LABELS)
 
 LOG_TAG = "Terrain Sketch"
+
+
+def plugin_version() -> str:
+    """The version from metadata.txt, so a scenario records what wrote it."""
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(pathlib.Path(__file__).resolve().parent.parent / "metadata.txt")
+        return parser.get("general", "version", fallback="")
+    except Exception:  # noqa: BLE001 — a missing version must never stop a save
+        return ""
 
 
 class PreviewImage(NamedTuple):
@@ -59,6 +73,13 @@ class SketchController(QObject):
         self._features: list[TerrainFeature] = []
         self._closing = False
         self._pending = None
+        self._dirty = False
+        self._scenario_path = None
+        self._created = ""
+        # Called, if set, just before a session with unsaved changes is dropped — the project
+        # closing, the DEM being removed, the plugin unloading — so the panel can offer to save.
+        # The controller shows no UI itself; the callable must not raise, but is guarded anyway.
+        self.before_discard = None
         self._throttle = QTimer(self)
         self._throttle.setInterval(PREVIEW_INTERVAL)
         self._throttle.timeout.connect(self._throttle_elapsed)
@@ -273,6 +294,61 @@ class SketchController(QObject):
             return (0.0, 0.0)
         return total_cut_fill(self.stack.original, self.stack.working)
 
+    @property
+    def is_dirty(self) -> bool:
+        """Whether anything has changed since the last save or load of a scenario."""
+        return self._dirty
+
+    @property
+    def scenario_path(self) -> str | None:
+        """Where this scenario was last saved or loaded from, if anywhere."""
+        return self._scenario_path
+
+    def new_scenario(self) -> None:
+        """Drop every feature and forget the file, keeping the DEM session as it is."""
+        if self._set([]):
+            self._forget_scenario()
+            self.sessionChanged.emit()
+
+    def save_scenario(self, path: str) -> None:
+        """Write the scenario to `path`. Raises ScenarioError with a message for the user."""
+        if not self.has_dem:
+            raise ScenarioError(NO_SESSION)
+        created = self._created if path == self._scenario_path else ""
+        meta = scenario.dem_meta(self.info, self.stack.original, version=plugin_version(), created=created)
+        written = scenario.save(path, self._features, meta, crs_wkt=getattr(self.info, "crs_wkt", ""))
+        self._scenario_path = path
+        self._created = written.created
+        self._dirty = False
+        self.sessionChanged.emit()
+
+    def scenario_differences(self, path: str) -> list[str]:
+        """How the DEM `path` was built on differs from the one in use, in words for the user;
+        empty when they match. Raises ScenarioError when the file cannot be read."""
+        if not self.has_dem:
+            raise ScenarioError(NO_SESSION)
+        return scenario.dem_meta(self.info, self.stack.original).differences(scenario.load_meta(path))
+
+    def open_scenario(self, path: str) -> None:
+        """Replace the features with the scenario at `path`. Raises ScenarioError when the file
+        cannot be read or its features cannot be applied — and then nothing has changed: the
+        current features, the file they belong to and their unsaved state all stay as they were,
+        so the next Save cannot write them over the scenario that failed to open."""
+        if not self.has_dem:
+            raise ScenarioError(NO_SESSION)
+        features, meta = scenario.load(path)
+        if not self._set(features):
+            raise ScenarioError(SCENARIO_NOT_APPLIED)
+        self._scenario_path = path
+        self._created = meta.created
+        self._dirty = False
+        self.sessionChanged.emit()
+
+    def _forget_scenario(self) -> None:
+        self._scenario_path = None
+        self._created = ""
+        self._dirty = False
+
     def export_dem(self, path: str) -> None:
         """Write the modified DEM to `path`; raises RuntimeError without a session, or if `path`
         would overwrite the source DEM or one of this session's working files."""
@@ -289,7 +365,8 @@ class SketchController(QObject):
         if self.layers is not None:
             self.layers.set_hillshade_visible(visible)
 
-    def _set(self, features) -> None:
+    def _set(self, features) -> bool:
+        """Apply `features`; False, with the previous list kept, when the engine refuses them."""
         features = list(features)
         try:
             window = self.stack.update(features)
@@ -298,7 +375,7 @@ class SketchController(QObject):
             self.message.emit(Qgis.MessageLevel.Critical, "Terrain Sketch could not update the terrain; "
                                                           "see the 'Terrain Sketch' log tab for details.")
             self.featuresChanged.emit()
-            return
+            return False
         self._features = features
         try:
             if window is not None:
@@ -309,7 +386,9 @@ class SketchController(QObject):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
             self.message.emit(Qgis.MessageLevel.Critical, "Terrain Sketch could not update the terrain; "
                                                           "see the 'Terrain Sketch' log tab for details.")
+        self._dirty = True
         self.featuresChanged.emit()
+        return True
 
     def _outline_items(self) -> list:
         items = []
@@ -340,8 +419,10 @@ class SketchController(QObject):
         return f"{name} {n}"
 
     def _drop_session(self) -> None:
+        self._offer_save_before_discard()
         self.cancel_preview()  # a queued frame must not fire against a session that is gone
         had_session = self.stack is not None
+        self._forget_scenario()  # a Save after this must not write the next session over this file
         self.stack = self.info = self.files = self.layers = None
         self.dem_layer_id = None
         self.dem_crs = QgsCoordinateReferenceSystem()
@@ -349,6 +430,14 @@ class SketchController(QObject):
         if had_session:
             self.sessionChanged.emit()
             self.featuresChanged.emit()
+
+    def _offer_save_before_discard(self) -> None:
+        if self.before_discard is None or self.stack is None or not self._dirty or not self._features:
+            return
+        try:
+            self.before_discard()
+        except Exception:  # noqa: BLE001 — reached from project and layer signals; must not take QGIS down
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _on_layers_removed(self, items) -> None:
         if self._closing or self.stack is None:

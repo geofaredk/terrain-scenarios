@@ -44,6 +44,19 @@ def test_restoring_something_never_saved_reports_failure_rather_than_raising():
     assert not settings.restore_state("probe_absent", QSplitter())
 
 
+def test_a_deleted_widget_does_not_raise():
+    """These run from Qt callbacks: a PyQt wrapper whose C++ object is gone raises RuntimeError,
+    and an exception in a callback aborts the interpreter."""
+    from qgis.PyQt import sip
+    splitter = QSplitter()
+    splitter.addWidget(QPushButton())
+    splitter.addWidget(QPushButton())
+    settings.save_state("probe_dead", splitter)
+    sip.delete(splitter)
+    settings.save_state("probe_dead", splitter)              # must not raise
+    assert not settings.restore_state("probe_dead", splitter)
+
+
 def test_a_corrupt_stored_value_does_not_raise():
     settings.save("probe_bad/state", "not a byte array")
     assert not settings.restore_state("probe_bad", QSplitter())

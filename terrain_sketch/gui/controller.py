@@ -426,6 +426,11 @@ class SketchController(QObject):
                 and current.layer().id() == ours:
             properties.setTerrainProvider(before)
 
+    @property
+    def dem_is_integer(self) -> bool:
+        """Whether the session's DEM stores whole numbers — its export is float32 regardless."""
+        return self.info is not None and self.info.integer
+
     def export_dem(self, path: str) -> None:
         """Write the modified DEM to `path`; raises RuntimeError without a session, or if `path`
         would overwrite the source DEM or one of this session's working files."""

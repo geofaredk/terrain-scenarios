@@ -76,6 +76,10 @@ SHAPE_NOT_TRANSFORMED = ("This feature's shape cannot be shown in the map's coor
                          "be zoomed to or edited here. Set the project to the DEM's coordinate system and "
                          "try again.")
 EXPORT_REPLACE = "{} already exists. Replace it?"
+EXPORT_DONE = "Exported the modified DEM to {}"
+EXPORT_INTEGER_NOTE = ("Your DEM stores whole numbers; the export keeps decimals (32-bit float), so changes "
+                       "smaller than a metre are not rounded away.")
+EXPORT_NOT_ADDED = "The exported DEM could not be added to the project: {} cannot be read as a raster."
 
 # What Undo and Redo will do, shown as "Undo Add Dike 1" in their buttons' tooltips.
 UNDO_ADD = "Add {}"

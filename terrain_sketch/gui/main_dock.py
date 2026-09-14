@@ -5,7 +5,7 @@ import os
 import traceback
 
 from qgis.core import (Qgis, QgsApplication, QgsCoordinateTransform, QgsCsException, QgsGeometry, QgsMessageLog,
-                       QgsProject)
+                       QgsProject, QgsRasterLayer)
 from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsRubberBand
 from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt
@@ -18,7 +18,8 @@ from ..qgis_io.raster_io import DemError, GeographicDemError
 from ..qgis_io.scenario import ScenarioError
 from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
-from .help_texts import (EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_REPLACE,
+from .help_texts import (EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED, EXPORT_REPLACE,
+                         REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_REPLACE,
                          SCENARIO_SAVED, SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES,
                          VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
 from .map_tools.base import SketchTool
@@ -552,7 +553,38 @@ class MainDock(QgsDockWidget):
         except (OSError, RuntimeError) as error:
             self._show_message(Qgis.MessageLevel.Critical, self.tr("Export failed: {}").format(error))
             return
-        self._show_message(Qgis.MessageLevel.Success, self.tr("Exported the modified DEM to {}").format(path))
+        text = EXPORT_DONE.format(path)
+        if self.controller.dem_is_integer:
+            text = f"{text}. {EXPORT_INTEGER_NOTE}"
+        self._offer_to_add_export(path, text)
+
+    def _offer_to_add_export(self, path: str, text: str) -> None:
+        """Spec §8.5's "adds the result to the project", offered after the export rather than as a
+        dialog option: the file dialog is the platform's own and cannot carry one."""
+        try:
+            bar = self.iface.messageBar()
+            widget = bar.createMessage(self.tr("Terrain Sketch"), text)
+            button = QPushButton(self.tr("Add to project"), widget)
+            button.clicked.connect(lambda _checked=False: self._add_export(path, button))
+            widget.layout().addWidget(button)
+            bar.pushWidget(widget, Qgis.MessageLevel.Success, 0)
+        except Exception:  # noqa: BLE001 — this runs in a click handler; a plain message will do
+            self._show_message(Qgis.MessageLevel.Success, text)
+
+    def _add_export(self, path: str, button=None) -> None:
+        """Add the exported GeoTIFF as a layer. Runs from the message's button, so a file that has
+        since been moved or deleted becomes a message."""
+        try:
+            layer = QgsRasterLayer(path, os.path.splitext(os.path.basename(path))[0])
+            if not layer.isValid():
+                self._show_message(Qgis.MessageLevel.Warning, EXPORT_NOT_ADDED.format(path))
+                return
+            QgsProject.instance().addMapLayer(layer)
+            if button is not None and not sip.isdeleted(button):
+                button.setEnabled(False)       # once is enough; a second click would add a duplicate
+        except Exception:  # noqa: BLE001
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+            self._show_message(Qgis.MessageLevel.Warning, EXPORT_NOT_ADDED.format(path))
 
     def _open_3d_view(self) -> None:
         """The modified DEM as the project's terrain, then a new 3D view (spec §8.5): through the
@@ -683,7 +715,9 @@ class MainDock(QgsDockWidget):
         return answer == QMessageBox.StandardButton.Save
 
     def _export_dialog(self) -> str:
-        path, _ = QFileDialog.getSaveFileName(self, self.tr("Export modified DEM"), "", self.tr("GeoTIFF (*.tif)"))
+        title = (self.tr("Export modified DEM (saved with decimals, 32-bit float)") if self.controller.dem_is_integer
+                 else self.tr("Export modified DEM"))
+        path, _ = QFileDialog.getSaveFileName(self, title, "", self.tr("GeoTIFF (*.tif)"))
         if path and not path.lower().endswith((".tif", ".tiff")):
             path += ".tif"
             # as for scenarios: the dialog asked about replacing the name as typed, not this one

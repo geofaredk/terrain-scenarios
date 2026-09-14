@@ -84,19 +84,34 @@ def test_saving_again_keeps_the_date_the_scenario_was_created(tmp_path):
 
 
 def test_a_scenario_that_cannot_be_applied_changes_nothing(tmp_path):
+    """`theirs.gpkg` is someone else's scenario, never opened by this session before — if
+    `_scenario_path` were wrongly retargeted to it, the next Save would write over a file this
+    session never touched. Saving the current work to `mine.gpkg` first, and building `theirs`
+    from a separate feature list rather than through this controller, is what lets the test
+    catch that: with both saved to the same file (as the previous version of this test did),
+    `scenario_path` already equals it before opening, so a retarget to the same value is
+    invisible."""
     c = start_session(tmp_path)
     c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    mine = str(tmp_path / "mine.gpkg")
+    c.save_scenario(mine)
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    other = start_session(elsewhere)
+    other.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
     theirs = str(tmp_path / "theirs.gpkg")
-    c.save_scenario(theirs)
-    mine = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
+    save(theirs, other.features, dem_meta(other.info, other.stack.original))
+
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
     before = c.features
 
     with mock.patch.object(c.stack, "update", side_effect=RuntimeError("engine refused")):
         with pytest.raises(ScenarioError, match=SCENARIO_NOT_APPLIED):
             c.open_scenario(theirs)
-    assert c.features == before and c.find(mine.id) is not None
-    assert c.is_dirty                              # the unsaved pond is still unsaved
-    assert c.scenario_path == theirs               # still the file these features came from
+    assert c.features == before and c.find(pond.id) is not None
+    assert c.is_dirty                               # the unsaved pond is still unsaved
+    assert c.scenario_path == mine                  # not retargeted to the file that failed to open
 
 
 def test_starting_on_another_dem_forgets_the_scenario_file(tmp_path):

@@ -4,6 +4,7 @@ from __future__ import annotations
 import configparser
 import os
 import pathlib
+import shutil
 import tempfile
 import traceback
 from dataclasses import replace
@@ -113,9 +114,11 @@ class SketchController(QObject):
         """Start a new session on `layer`. Raises DemError (user-facing message) before changing anything;
         if it fails after the previous session was already closed, the session is dropped cleanly."""
         grid, info = read_dem(layer)
+        folder = tempfile.mkdtemp(prefix="terrain_sketch_")
         try:
-            files = WorkingFiles(tempfile.mkdtemp(prefix="terrain_sketch_"), grid, info)
+            files = WorkingFiles(folder, grid, info)
         except (OSError, RuntimeError, MemoryError) as error:
+            shutil.rmtree(folder, ignore_errors=True)
             raise DemError(f"Terrain Sketch could not create its working files: {error}") from error
         self.close()
         self.stack = FeatureStack(grid)
@@ -423,10 +426,16 @@ class SketchController(QObject):
         self.cancel_preview()  # a queued frame must not fire against a session that is gone
         had_session = self.stack is not None
         self._forget_scenario()  # a Save after this must not write the next session over this file
+        folder = self.files.folder if self.files is not None else None
         self.stack = self.info = self.files = self.layers = None
         self.dem_layer_id = None
         self.dem_crs = QgsCoordinateReferenceSystem()
         self._features = []
+        if folder is not None:
+            # Each session writes a DEM-sized working and change GeoTIFF. Without this every Start
+            # leaves both behind in the temp folder. Errors are ignored: on Windows a layer QGIS has
+            # not released yet keeps its file locked, and a leftover file is not worth a message.
+            shutil.rmtree(folder, ignore_errors=True)
         if had_session:
             self.sessionChanged.emit()
             self.featuresChanged.emit()
@@ -440,7 +449,9 @@ class SketchController(QObject):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _on_layers_removed(self, items) -> None:
-        if self._closing or self.stack is None:
+        # `layers` is still None while set_dem builds the group, and a group that fails half way
+        # removes its own layers again — which lands here, inside a Qt signal
+        if self._closing or self.stack is None or self.layers is None:
             return
         ids = {item if isinstance(item, str) else item.id() for item in items}
         if self.dem_layer_id in ids:

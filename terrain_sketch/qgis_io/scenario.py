@@ -18,6 +18,8 @@ from osgeo import ogr, osr
 from ..core.tools import Mode, PixelMode, Tool
 from ..model.feature import TerrainFeature
 
+ogr.UseExceptions()   # also relied on by sibling modules; set here so this module stands alone
+
 FEATURES_LAYER = "features"
 META_TABLE = "terrain_sketch_meta"
 PARAM_FIELDS = ("amount", "width", "slope_n", "reach", "slopes_inside")

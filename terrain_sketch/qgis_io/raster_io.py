@@ -72,6 +72,7 @@ class WorkingFiles:
 
     def __init__(self, folder: str, original: DemGrid, info: DemInfo):
         os.makedirs(folder, exist_ok=True)
+        self.folder = folder
         self.working_path = os.path.join(folder, "working_dem.tif")
         self.change_path = os.path.join(folder, "change.tif")
         self._original = original

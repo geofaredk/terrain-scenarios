@@ -72,6 +72,10 @@ SESSION_ENDED_DEM_REMOVED = "The Terrain Sketch session ended because its DEM wa
 RESULT_LAYER_REMOVED = "A Terrain Sketch layer was removed from the project. Your features are kept and export still works."
 
 DRAWING_NOT_TRANSFORMED = "The drawing could not be converted to the DEM's coordinate system."
+SHAPE_NOT_TRANSFORMED = ("This feature's shape cannot be shown in the map's coordinate system, so it cannot "
+                         "be zoomed to or edited here. Set the project to the DEM's coordinate system and "
+                         "try again.")
+EXPORT_REPLACE = "{} already exists. Replace it?"
 
 
 def amount_label(tool: Tool) -> str | None:
@@ -180,7 +184,7 @@ NO_VOLUME_YET = "—"
 SCENARIO_TOTALS = "{fill} fill · {cut} cut"
 
 
-def cubic_metres(value: float) -> str:
+def cubic_metres(value: float | None) -> str:
     """A volume a user can read at a glance: no decimals once it is past a hundred.
 
     Cut and fill are magnitudes, so a minus sign here can only be floating-point residue —

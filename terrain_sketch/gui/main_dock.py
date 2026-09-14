@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 
-from qgis.core import Qgis, QgsApplication, QgsCoordinateTransform, QgsGeometry, QgsProject
+from qgis.core import Qgis, QgsApplication, QgsCoordinateTransform, QgsCsException, QgsGeometry, QgsProject
 from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsRubberBand
 from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt
@@ -14,8 +14,8 @@ from ..core.tools import Mode
 from ..qgis_io.raster_io import DemError, GeographicDemError
 from ..qgis_io.scenario import ScenarioError
 from .feature_list import FeatureListModel, FeatureListView
-from .help_texts import (REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_REPLACE,
-                         SCENARIO_SAVED, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES)
+from .help_texts import (EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_REPLACE,
+                         SCENARIO_SAVED, SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES)
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
@@ -309,7 +309,12 @@ class MainDock(QgsDockWidget):
         canvas = self.iface.mapCanvas()
         if method is Method.BRUSH:
             self._brush_fid = self._brush_target(tool, mode)
-            initial = self._to_canvas(self.controller.feature_geometry(self._brush_fid)) if self._brush_fid else None
+            try:
+                initial = self._to_canvas(self.controller.feature_geometry(self._brush_fid)) if self._brush_fid else None
+            except QgsCsException:
+                self._brush_fid = None
+                self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
+                return
             self.draw_tool = BrushTool(canvas, self.gallery.brush_radius(), initial)
             self.draw_tool.radiusChanged.connect(self.gallery.set_brush_radius)
         elif method is Method.FREEHAND:
@@ -365,7 +370,13 @@ class MainDock(QgsDockWidget):
             return
         self.end_drawing()
         canvas = self.iface.mapCanvas()
-        self.edit_tool = VertexEditTool(canvas, self._to_canvas(self.controller.feature_geometry(fid)))
+        try:
+            shape = self._to_canvas(self.controller.feature_geometry(fid))
+        except QgsCsException:
+            self.edit_button.setChecked(False)
+            self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
+            return
+        self.edit_tool = VertexEditTool(canvas, shape)
         self.edit_tool.geometryChanged.connect(lambda geometry, f=fid: self._edited(f, geometry))
         self.edit_tool.cancelled.connect(self.stop_editing)
         self._previous_tool = canvas.mapTool()
@@ -500,10 +511,18 @@ class MainDock(QgsDockWidget):
         menu.exec(self.feature_view.viewport().mapToGlobal(position))
 
     def _zoom_to(self, fid: str) -> None:
+        """Runs from the context menu, so a feature that has gone or an outline that cannot be
+        projected into the map's CRS becomes a message rather than an exception in a slot."""
+        if self.controller.find(fid) is None:
+            return
         canvas = self.iface.mapCanvas()
         transform = QgsCoordinateTransform(self.controller.dem_crs, canvas.mapSettings().destinationCrs(),
                                            QgsProject.instance())
-        extent = transform.transformBoundingBox(self.controller.feature_geometry(fid).boundingBox())
+        try:
+            extent = transform.transformBoundingBox(self.controller.feature_geometry(fid).boundingBox())
+        except QgsCsException:
+            self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
+            return
         canvas.setExtent(extent.buffered(max(extent.width(), extent.height()) * 0.25 + 1.0))
         canvas.refresh()
 
@@ -580,4 +599,7 @@ class MainDock(QgsDockWidget):
         path, _ = QFileDialog.getSaveFileName(self, self.tr("Export modified DEM"), "", self.tr("GeoTIFF (*.tif)"))
         if path and not path.lower().endswith((".tif", ".tiff")):
             path += ".tif"
+            # as for scenarios: the dialog asked about replacing the name as typed, not this one
+            if os.path.exists(path) and not self.confirm(EXPORT_REPLACE.format(os.path.basename(path))):
+                return ""
         return path

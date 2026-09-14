@@ -21,6 +21,8 @@ def test_splitter_state_is_stored_and_handed_back_to_the_widget():
     first = QSplitter()
     first.addWidget(QPushButton())
     first.addWidget(QPushButton())
+    first.setSizes([300, 100])       # a split the user could have dragged, so there is something
+                                     # to recognise at the other end besides a True return value
     settings.save_state("probe_splitter", first)
     # what was stored is exactly what the widget produced — every QWidget also has saveGeometry,
     # so a module that probed for a method would quietly store the wrong one for a splitter
@@ -29,6 +31,7 @@ def test_splitter_state_is_stored_and_handed_back_to_the_widget():
     second.addWidget(QPushButton())
     second.addWidget(QPushButton())
     assert settings.restore_state("probe_splitter", second)
+    assert second.sizes() == first.sizes()   # restored, not merely reported as restored
 
 
 def test_a_splitter_is_stored_by_state_not_by_geometry():

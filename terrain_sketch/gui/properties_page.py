@@ -45,20 +45,13 @@ class PropertiesPage(QWidget):
         # concrete example has to live here or it is lost the moment a feature is selected
         self._amount_tip = FIELD_TIPS["amount"]
         self.width = _spin(0.1, 500.0, 0.5, " m", 2)
-        self.width.setToolTip(self.tr("Width of the crest (raise tools) or the bottom (lower tools) of the path."))
         self.slope = _spin(0.0, 50.0, 0.5, "", 1)
-        self.slope.setToolTip(self.tr("Horizontal metres per metre of height: 1 : 3 goes 3 m outwards for every "
-                                      "1 m. 0 means no side slopes."))
         self.slope.setPrefix("1 : ")
         self.reach = _spin(0.0, 500.0, 1.0, " m", 1)
-        self.reach.setToolTip(self.tr("Side slopes stop this far from the edge, even if they have not met the "
-                                      "ground yet."))
         self.slope_position = QComboBox()
         self.slope_position.addItem(self.tr("Outside the outline"), False)
         self.slope_position.addItem(self.tr("Inside the outline"), True)
         self.pixel_mode = QComboBox()
-        self.slope_position.setToolTip(self.tr("Inside: the outline is the top edge (e.g. a pond). Outside: the "
-                                               "outline is the flat part (e.g. a raised pad)."))
         for mode in PixelMode:
             self.pixel_mode.addItem(PIXEL_MODE_LABELS[mode], mode.value)
             self.pixel_mode.setItemData(self.pixel_mode.count() - 1, PIXEL_MODE_TIPS[mode], Qt.ItemDataRole.ToolTipRole)

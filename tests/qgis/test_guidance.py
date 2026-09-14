@@ -1,4 +1,3 @@
-import pytest
 from qgis.PyQt.QtCore import QCoreApplication, QEvent, Qt
 from qgis.PyQt.QtGui import QFocusEvent, QPalette
 
@@ -31,8 +30,7 @@ def test_the_gallery_redraws_its_illustrations_when_the_theme_changes():
     dark = QPalette()
     dark.setColor(QPalette.ColorRole.Mid, Qt.GlobalColor.white)
     dark.setColor(QPalette.ColorRole.Highlight, Qt.GlobalColor.yellow)
-    gallery.setPalette(dark)
-    gallery.refresh_icons()
+    gallery.setPalette(dark)   # delivers QEvent.PaletteChange, which must redraw them by itself
     assert gallery.tool_list.item(0).icon().pixmap(60, 32).toImage() != first
 
 
@@ -108,7 +106,6 @@ def test_the_choice_fields_name_a_real_case_for_each_option(tmp_path):
 def test_the_about_group_can_be_collapsed_and_remembers_its_name(tmp_path):
     c = start_session(tmp_path)
     page = PropertiesPage(c)
-    assert page.about.isCheckable() or True          # QgsCollapsibleGroupBox handles the toggle
     assert page.about.objectName() == "TerrainSketchAboutTool"
     page.about.setCollapsed(True)
     assert page.about.isCollapsed()

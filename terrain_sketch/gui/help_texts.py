@@ -196,5 +196,16 @@ def cubic_metres(value: float) -> str:
     return f"{text} m³"
 
 
+UNSAVED_CHANGES = ("This scenario has changes that are not saved. Save them before continuing?")
+SCENARIO_SAVED = "Scenario saved to {}"
+SCENARIO_REPLACE = "{} already exists. Replace it?"
+SCENARIO_OPENED = "Scenario opened from {}"
+SCENARIO_DEM_DIFFERS = ("This scenario was made on a DEM with a different {}.\n\n"
+                        "Open it on this DEM anyway? The features keep their map position, so check "
+                        "the result before using it.\n\n"
+                        "Choose No to keep your current work, then pick the DEM the scenario was made "
+                        "for and press Start before opening it.")
 SCENARIO_NOT_APPLIED = ("The scenario could not be applied to this DEM, so it was not opened. "
                         "Your current features are unchanged.")
+UNSAVED_BEFORE_CLOSING = ("Terrain Sketch is closing this scenario, and it has changes that are not "
+                          "saved. Save them now?")

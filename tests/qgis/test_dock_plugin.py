@@ -10,6 +10,7 @@ from terrain_sketch import classFactory
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.selection import Method
 from terrain_sketch.gui.controller import SketchController
+from terrain_sketch.gui.help_texts import SCENARIO_TOTALS, cubic_metres
 from terrain_sketch.gui.main_dock import PAGE_GALLERY, PAGE_PROPERTIES, PAGE_START, MainDock
 from terrain_sketch.qgis_io.layers import GROUP_NAME
 
@@ -153,6 +154,28 @@ def test_selecting_a_feature_highlights_it_on_the_map(tmp_path):
     assert dock.highlight.numberOfVertices() > 0
     dock.feature_view.clearSelection()
     assert dock.highlight.numberOfVertices() == 0
+
+
+def test_deleting_the_shown_feature_leaves_the_properties_page(tmp_path):
+    """`featuresChanged` resets the list model, which can clear the Qt selection without
+    emitting `selectionChanged` — so the dock must check for itself that Properties is not left
+    showing a feature that Delete just removed."""
+    _iface, controller, dock = _session_dock(tmp_path)
+    dike = controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    controller.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
+    dock.feature_view.select_id(dike.id)
+    assert dock.pages.currentIndex() == PAGE_PROPERTIES
+
+    dock.delete_button.click()
+
+    if dock.pages.currentIndex() == PAGE_PROPERTIES:
+        fid = dock.feature_view.selected_id()
+        assert fid is not None and fid in {f.id for f in controller.features}
+        cut, fill = controller.totals()
+        assert dock.properties.totals_value.text() == SCENARIO_TOTALS.format(fill=cubic_metres(fill),
+                                                                              cut=cubic_metres(cut))
+    else:
+        assert dock.pages.currentIndex() != PAGE_PROPERTIES
 
 
 def test_deleting_the_brushed_feature_mid_stroke_does_not_take_qgis_down(tmp_path):

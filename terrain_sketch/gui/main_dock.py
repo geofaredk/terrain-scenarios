@@ -1,6 +1,8 @@
 """The Terrain Sketch panel: DEM, feature list, tool gallery and feature properties."""
 from __future__ import annotations
 
+import os
+
 from qgis.core import Qgis, QgsApplication, QgsCoordinateTransform, QgsGeometry, QgsProject
 from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsRubberBand
 from qgis.PyQt import sip
@@ -10,8 +12,10 @@ from qgis.PyQt.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QM
 
 from ..core.tools import Mode
 from ..qgis_io.raster_io import DemError, GeographicDemError
+from ..qgis_io.scenario import ScenarioError
 from .feature_list import FeatureListModel, FeatureListView
-from .help_texts import REPROJECT_UNAVAILABLE
+from .help_texts import (REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_REPLACE,
+                         SCENARIO_SAVED, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES)
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
@@ -23,6 +27,18 @@ from .selection import BRUSH_EXTEND_HINT, EDIT_HINT, EDIT_ICON, METHOD_HINTS, Me
 from .tool_gallery import ToolGallery
 
 PAGE_START, PAGE_GALLERY, PAGE_PROPERTIES = range(3)
+
+
+def _file_button(icon: str, text: str, tip: str) -> QToolButton:
+    """An icon-only, auto-raised button like those in QGIS's own dock toolbars. The text is kept
+    for screen readers and heads the tooltip, so the icon is never the only way to tell them apart."""
+    button = QToolButton()
+    button.setIcon(QgsApplication.getThemeIcon(icon))
+    button.setText(text)
+    button.setToolTip(f"{text}\n{tip}")
+    button.setAutoRaise(True)
+    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+    return button
 
 
 class MainDock(QgsDockWidget):
@@ -39,6 +55,11 @@ class MainDock(QgsDockWidget):
         self._previous_tool = None
         self.confirm = self._confirm_dialog  # replaceable in tests
         self.ask_export_path = self._export_dialog  # replaceable in tests
+        self.ask_save_path = self._save_dialog
+        self.ask_open_path = self._open_dialog
+        self.confirm_save = self._save_question
+        self._asked_about_unsaved = False
+        controller.before_discard = self._offer_save_before_discard
         self.edit_tool = None
         self._brush_fid = None
         self.highlight = QgsRubberBand(iface.mapCanvas(), Qgis.GeometryType.Line)
@@ -59,8 +80,24 @@ class MainDock(QgsDockWidget):
         layout.addLayout(dem_row)
 
         tools_row = QHBoxLayout()
+        self.new_scenario_button = _file_button(
+            "/mActionFileNew.svg", self.tr("New scenario"),
+            self.tr("Start again with no features. The DEM stays as it is."))
+        self.open_scenario_button = _file_button(
+            "/mActionFileOpen.svg", self.tr("Open scenario…"),
+            self.tr("Open a saved scenario (.gpkg) onto the DEM you started on."))
+        self.save_scenario_button = _file_button(
+            "/mActionFileSave.svg", self.tr("Save scenario"),
+            self.tr("Save the features to a scenario file you can open again later."))
+        self.save_as_scenario_button = _file_button(
+            "/mActionFileSaveAs.svg", self.tr("Save scenario as…"),
+            self.tr("Save the features to a new scenario file, leaving the current one as it is."))
+        self.scenario_buttons = (self.new_scenario_button, self.open_scenario_button,
+                                 self.save_scenario_button, self.save_as_scenario_button)
+        for button in self.scenario_buttons:
+            tools_row.addWidget(button)
         self.export_button = QToolButton()
-        self.export_button.setIcon(QgsApplication.getThemeIcon("/mActionFileSaveAs.svg"))
+        self.export_button.setIcon(QgsApplication.getThemeIcon("/mActionSharingExport.svg"))
         self.export_button.setText(self.tr("Export DEM…"))
         self.export_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.export_button.setToolTip(self.tr("Write the modified DEM to a new GeoTIFF, e.g. for a flood simulation."))
@@ -103,6 +140,10 @@ class MainDock(QgsDockWidget):
 
         self.start_button.clicked.connect(self._start)
         self.export_button.clicked.connect(self._export)
+        self.new_scenario_button.clicked.connect(self._new_scenario)
+        self.open_scenario_button.clicked.connect(self._open_scenario)
+        self.save_scenario_button.clicked.connect(lambda: self._save_scenario())
+        self.save_as_scenario_button.clicked.connect(lambda: self._save_scenario(save_as=True))
         self.hillshade_box.toggled.connect(controller.set_hillshade_visible)
         self.new_button.clicked.connect(self._new_feature)
         self.delete_button.clicked.connect(self._delete_selected)
@@ -116,6 +157,7 @@ class MainDock(QgsDockWidget):
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_overlay_transform)
         controller.featuresChanged.connect(self._refresh_highlight)
         controller.featuresChanged.connect(self._drop_missing_brush_target)
+        controller.featuresChanged.connect(self._sync_selection_page)
         controller.sessionChanged.connect(self._session_changed)
         controller.message.connect(self._show_message)
         controller.previewUpdated.connect(self._preview_updated)
@@ -170,7 +212,7 @@ class MainDock(QgsDockWidget):
             self.stop_tools()  # a drawing or edit cannot outlive its session
             self._update_highlight(None)
         for widget in (self.export_button, self.hillshade_box, self.new_button, self.delete_button,
-                       self.edit_button, self.feature_view):
+                       self.edit_button, self.feature_view, *self.scenario_buttons):
             widget.setEnabled(has_dem)
         if self.controller.layers is not None:
             project = self.controller.project
@@ -222,9 +264,9 @@ class MainDock(QgsDockWidget):
         layer = self.dem_combo.currentLayer()
         if layer is None:
             return
-        if self.controller.features and not self.confirm(
-                self.tr("Start again on this DEM? The current features will be discarded.")):
+        if self._keep_unsaved_work():
             return
+        self._asked_about_unsaved = True   # the user has just answered; closing the old session must not ask again
         try:
             self.controller.set_dem(layer)
         except DemError as error:
@@ -232,6 +274,8 @@ class MainDock(QgsDockWidget):
                 self._offer_reproject(str(error))
             else:
                 self._show_message(Qgis.MessageLevel.Warning, str(error))
+        finally:
+            self._asked_about_unsaved = False
 
     def _new_feature(self) -> None:
         self.feature_view.clearSelection()
@@ -347,6 +391,17 @@ class MainDock(QgsDockWidget):
             result.transform(QgsCoordinateTransform(self.controller.dem_crs, canvas_crs, QgsProject.instance()))
         return result
 
+    def _sync_selection_page(self) -> None:
+        """The list model resets on every change, which can clear the Qt selection without
+        emitting `selectionChanged` (a clear that leaves nothing selected is a no-op) — so a
+        deleted feature can be left showing on the Properties page with stale figures. Make the
+        dock behave as if the user had deselected whenever that happens."""
+        if self.pages.currentIndex() != PAGE_PROPERTIES:
+            return
+        fid = self.feature_view.selected_id()
+        if fid is None or fid not in {f.id for f in self.controller.features}:
+            self._selection_changed()
+
     def _refresh_highlight(self) -> None:
         self._update_highlight(self.feature_view.selected_id())
 
@@ -358,6 +413,68 @@ class MainDock(QgsDockWidget):
         geometry = self._to_canvas(self.controller.feature_geometry(fid))
         self.highlight.reset(geometry.type())
         self.highlight.setToGeometry(geometry, None)
+
+    def _new_scenario(self) -> None:
+        if self._keep_unsaved_work():
+            return
+        self.stop_tools()               # an edit in progress belongs to a feature that is about to go
+        self.controller.new_scenario()
+
+    def _open_scenario(self) -> None:
+        """Ask about unsaved work first, then for the file — the order QGIS's own Open Project uses.
+        A scenario made on a different DEM is only opened once the user has agreed to it."""
+        if self._keep_unsaved_work():
+            return
+        path = self.ask_open_path()
+        if not path:
+            return
+        try:
+            differences = self.controller.scenario_differences(path)
+            if differences and not self.confirm(SCENARIO_DEM_DIFFERS.format(", ".join(differences))):
+                return
+            self.stop_tools()
+            self.controller.open_scenario(path)
+        except ScenarioError as error:
+            self._show_message(Qgis.MessageLevel.Warning, str(error))
+            return
+        self._show_message(Qgis.MessageLevel.Success, SCENARIO_OPENED.format(path))
+
+    def _save_scenario(self, save_as: bool = False) -> bool:
+        """Save, asking for a path when there is not one yet. True when it was written."""
+        path = self.controller.scenario_path
+        if save_as or not path:
+            path = self.ask_save_path()
+        if not path:
+            return False
+        try:
+            self.controller.save_scenario(path)
+        except ScenarioError as error:
+            self._show_message(Qgis.MessageLevel.Warning, str(error))
+            return False
+        self._show_message(Qgis.MessageLevel.Success, SCENARIO_SAVED.format(path))
+        return True
+
+    def _offer_save_before_discard(self) -> None:
+        """The controller is about to drop a session with unsaved changes — the project is closing,
+        the DEM was removed or the plugin is unloading. None of those can be cancelled from here,
+        so the question is only Save or Discard — but choosing Save and then cancelling the file
+        dialog, or a save that fails, must not drop the session silently: the question repeats
+        until a save succeeds or the user chooses Discard."""
+        if self._asked_about_unsaved:
+            return
+        while self.confirm_save(UNSAVED_BEFORE_CLOSING, can_cancel=False) and not self._save_scenario():
+            pass
+
+    def _keep_unsaved_work(self) -> bool:
+        """Ask before discarding unsaved features. True means the user backed out."""
+        if not self.controller.has_dem or not self.controller.is_dirty:
+            return False
+        answer = self.confirm_save(UNSAVED_CHANGES)
+        if answer is None:
+            return True                       # cancelled: keep everything as it is
+        if answer and not self._save_scenario():
+            return True                       # wanted to save but did not; do not discard
+        return False
 
     def _export(self) -> None:
         path = self.ask_export_path()
@@ -426,6 +543,38 @@ class MainDock(QgsDockWidget):
 
     def _confirm_dialog(self, text: str) -> bool:
         return QMessageBox.question(self, self.tr("Terrain Sketch"), text) == QMessageBox.StandardButton.Yes
+
+    def _dialog_start_dir(self) -> str:
+        """Where a scenario file dialog should open: beside the current scenario file, or the
+        project's home folder — empty, same as today, when the project has none either."""
+        path = self.controller.scenario_path
+        return os.path.dirname(path) if path else QgsProject.instance().homePath()
+
+    def _save_dialog(self) -> str:
+        path, _ = QFileDialog.getSaveFileName(self, self.tr("Save scenario"), self._dialog_start_dir(),
+                                              self.tr("Terrain Sketch scenario (*.gpkg)"))
+        if path and not path.lower().endswith(".gpkg"):
+            path += ".gpkg"
+            # The dialog's own overwrite check ran on the name as typed, before the extension was
+            # added, so replacing an existing scenario would otherwise happen without a question.
+            if os.path.exists(path) and not self.confirm(SCENARIO_REPLACE.format(os.path.basename(path))):
+                return ""
+        return path
+
+    def _open_dialog(self) -> str:
+        path, _ = QFileDialog.getOpenFileName(self, self.tr("Open scenario"), self._dialog_start_dir(),
+                                              self.tr("Terrain Sketch scenario (*.gpkg)"))
+        return path
+
+    def _save_question(self, text: str, can_cancel: bool = True):
+        """True to save, False to discard, None to cancel (only offered when `can_cancel`)."""
+        buttons = QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
+        if can_cancel:
+            buttons |= QMessageBox.StandardButton.Cancel
+        answer = QMessageBox.question(self, self.tr("Terrain Sketch"), text, buttons)
+        if answer == QMessageBox.StandardButton.Cancel:
+            return None
+        return answer == QMessageBox.StandardButton.Save
 
     def _export_dialog(self) -> str:
         path, _ = QFileDialog.getSaveFileName(self, self.tr("Export modified DEM"), "", self.tr("GeoTIFF (*.tif)"))

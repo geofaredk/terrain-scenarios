@@ -169,3 +169,43 @@ def tool_tooltip(tool: Tool) -> str:
 REPROJECT_UNAVAILABLE = ("Processing is not available, so Terrain Sketch cannot open the warp "
                          "tool. Enable the Processing plugin, or reproject the DEM with "
                          "Raster ▸ Projections ▸ Warp.")
+
+
+VOLUME_FILL_TIP = "Material added: the volume between the original ground and the new surface."
+VOLUME_CUT_TIP = "Material removed: the volume between the new surface and the original ground."
+VOLUME_STORAGE_TIP = ("Roughly how much water this hollow holds before it spills at its lowest "
+                      "rim point. Static: it ignores inflow, outflow and any pipe.")
+VOLUME_STORAGE_NOTE = "below the lowest rim point (static, no inflow routing)"
+NO_VOLUME_YET = "—"
+SCENARIO_TOTALS = "{fill} fill · {cut} cut"
+
+
+def cubic_metres(value: float) -> str:
+    """A volume a user can read at a glance: no decimals once it is past a hundred.
+
+    Cut and fill are magnitudes, so a minus sign here can only be floating-point residue —
+    a negative zero out of a subtraction, or a few millilitres left over a million cells.
+    Either would reach the user as "-0.00 m³", which reads as a bug, so the sign is dropped
+    from anything that rounds to zero."""
+    if value is None:
+        return NO_VOLUME_YET
+    size = abs(value)
+    text = f"{value:,.0f}" if size >= 100.0 else f"{value:,.1f}" if size >= 1.0 else f"{value:.2f}"
+    if text.startswith("-") and not any(digit in "123456789" for digit in text):
+        text = text[1:]
+    return f"{text} m³"
+
+
+UNSAVED_CHANGES = ("This scenario has changes that are not saved. Save them before continuing?")
+SCENARIO_SAVED = "Scenario saved to {}"
+SCENARIO_REPLACE = "{} already exists. Replace it?"
+SCENARIO_OPENED = "Scenario opened from {}"
+SCENARIO_DEM_DIFFERS = ("This scenario was made on a DEM with a different {}.\n\n"
+                        "Open it on this DEM anyway? The features keep their map position, so check "
+                        "the result before using it.\n\n"
+                        "Choose No to keep your current work, then pick the DEM the scenario was made "
+                        "for and press Start before opening it.")
+SCENARIO_NOT_APPLIED = ("The scenario could not be applied to this DEM, so it was not opened. "
+                        "Your current features are unchanged.")
+UNSAVED_BEFORE_CLOSING = ("Terrain Sketch is closing this scenario, and it has changes that are not "
+                          "saved. Save them now?")

@@ -5,6 +5,7 @@ from typing import NamedTuple
 
 from .grid import DemGrid, Window
 from .operations import FeatureStats, apply_feature, feature_window, footprint_flags
+from .volumes import cut_fill
 
 
 class Preview(NamedTuple):
@@ -29,6 +30,14 @@ class FeatureStack:
         self._windows: dict = {}
         self._before_key = None
         self._before_cache: tuple[DemGrid, dict] | None = None
+        # (cut, fill) for the whole grid, kept in step by `update()` so reading it never re-scans
+        # every cell — working starts equal to original, so there is nothing to report yet.
+        self._totals = (0.0, 0.0)
+
+    @property
+    def totals(self) -> tuple[float, float]:
+        """Running (cut, fill) in cubic metres for the whole scenario."""
+        return self._totals
 
     def footprint(self, feature) -> Window | None:
         if feature not in self._windows:
@@ -156,10 +165,19 @@ class FeatureStack:
             return None
         window, replay = self.closure(dirty, features)
         grid, stats = self.compute(replay, window)
+        valid = self.original.valid[window.slices]
+        cell_area = self.original.cell_area
+        before_cut, before_fill = cut_fill(self.original.data[window.slices], self.working.data[window.slices],
+                                           valid, cell_area)
+        after_cut, after_fill = cut_fill(self.original.data[window.slices], grid.data, valid, cell_area)
         self.features = features
         self._refresh_bookkeeping()
         self.working.data[window.slices] = grid.data
         self.stats.update(stats)
+        cut, fill = self._totals
+        # Clamped: cut and fill are magnitudes, so a genuine total can never be negative — only
+        # floating-point drift from repeated subtract/add over many updates could make it so.
+        self._totals = (max(0.0, cut - before_cut + after_cut), max(0.0, fill - before_fill + after_fill))
         return window
 
     def _prune_windows(self) -> None:

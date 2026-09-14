@@ -3,16 +3,18 @@ from __future__ import annotations
 
 from qgis.core import Qgis, QgsApplication, QgsUnitTypes
 from qgis.gui import QgsDoubleSpinBox
-from qgis.PyQt.QtCore import Qt, pyqtSignal
+from qgis.PyQt.QtCore import QEvent, QSize, Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import (QButtonGroup, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QRadioButton,
                                  QToolButton, QVBoxLayout, QWidget)
 
 from ..core.tools import TOOL_INFO, Mode, Tool
-from .help_texts import TOOL_LABELS, TOOL_SUMMARIES
+from . import illustrations
+from .help_texts import TOOL_LABELS, TOOL_SUMMARIES, tool_tooltip
 from .layer_source import LayerSource
 from .selection import METHOD_ICONS, METHOD_LABELS, METHOD_TIPS, Method
 
 DEFAULT_BRUSH_RADIUS = 5.0
+ICON_WIDTH, ICON_HEIGHT = 60, 32
 
 
 class ToolGallery(QWidget):
@@ -25,10 +27,13 @@ class ToolGallery(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(QLabel(self.tr("What do you want to build?")))
         self.tool_list = QListWidget()
+        self.tool_list.setIconSize(QSize(ICON_WIDTH, ICON_HEIGHT))
         for tool in Tool:
             item = QListWidgetItem(TOOL_LABELS[tool])
             item.setData(Qt.ItemDataRole.UserRole, tool.value)
-            item.setToolTip(TOOL_SUMMARIES[tool])
+            item.setToolTip(tool_tooltip(tool))
+            item.setIcon(illustrations.icon(f"tool_{tool.value}", QSize(ICON_WIDTH, ICON_HEIGHT),
+                                            self.palette()))
             self.tool_list.addItem(item)
         layout.addWidget(self.tool_list)
         self.summary = QLabel()
@@ -80,6 +85,19 @@ class ToolGallery(QWidget):
     def selected_tool(self) -> Tool | None:
         item = self.tool_list.currentItem()
         return Tool(item.data(Qt.ItemDataRole.UserRole)) if item is not None else None
+
+    def changeEvent(self, event):  # noqa: N802 — Qt override
+        """Redraw the illustrations when QGIS switches between its light and dark themes."""
+        if event.type() == QEvent.Type.PaletteChange:
+            self.refresh_icons()
+        super().changeEvent(event)
+
+    def refresh_icons(self) -> None:
+        for row in range(self.tool_list.count()):
+            item = self.tool_list.item(row)
+            tool = Tool(item.data(Qt.ItemDataRole.UserRole))
+            item.setIcon(illustrations.icon(f"tool_{tool.value}", QSize(ICON_WIDTH, ICON_HEIGHT),
+                                            self.palette()))
 
     def selected_mode(self) -> Mode | None:
         if self.area_mode.isChecked():

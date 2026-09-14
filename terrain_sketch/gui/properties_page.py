@@ -1,14 +1,19 @@
 """Values of the selected feature; every change is applied to the terrain immediately."""
 from __future__ import annotations
 
-from qgis.gui import QgsDoubleSpinBox
-from qgis.PyQt.QtCore import Qt
+from qgis.gui import QgsCollapsibleGroupBox, QgsDoubleSpinBox
+from qgis.PyQt.QtCore import QEvent, QSize, Qt
 from qgis.PyQt.QtWidgets import QComboBox, QFormLayout, QLabel, QVBoxLayout, QWidget
 
 from ..core.sections import supports_long_profile
 from ..core.tools import TOOL_INFO, Mode, PixelMode
-from .help_texts import (AMOUNT_IS_CUSTOM, FLAG_TEXTS, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS,
-                         TOOL_LABELS, TOOL_SUMMARIES, amount_label)
+from . import illustrations
+from .help_texts import (AMOUNT_IS_CUSTOM, FIELD_TIPS, FLAG_TEXTS, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS,
+                         TOOL_DESCRIPTIONS, TOOL_EXAMPLES, TOOL_LABELS, TOOL_SUMMARIES, amount_label)
+
+DIAGRAM = QSize(200, 96)
+TOOL_PICTURE = QSize(120, 64)
+PIXEL_ICON = QSize(32, 32)
 
 
 def _spin(minimum: float, maximum: float, step: float, suffix: str, decimals: int) -> QgsDoubleSpinBox:
@@ -65,6 +70,21 @@ class PropertiesPage(QWidget):
         self.form.addRow(self.tr("Max. slope reach"), self.reach)
         self.form.addRow(self.tr("Slopes"), self.slope_position)
         self.form.addRow(self.tr("Pixels to change"), self.pixel_mode)
+        self.about = QgsCollapsibleGroupBox(self.tr("About this tool"))
+        self.about.setObjectName("TerrainSketchAboutTool")  # QgsCollapsibleGroupBox saves state by name
+        self.about_text = QLabel()
+        self.about_text.setWordWrap(True)
+        self.about_picture = QLabel()
+        self.about_picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        about_layout = QVBoxLayout(self.about)
+        about_layout.addWidget(self.about_picture)
+        about_layout.addWidget(self.about_text)
+
+        self.diagram = QLabel()
+        self.diagram.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.diagram.setToolTip(self.tr("The part the field you are editing controls is "
+                                        "highlighted."))
+
         self.problems = QLabel()
         self.problems.setWordWrap(True)
         self.problems.hide()
@@ -72,6 +92,8 @@ class PropertiesPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.title)
         layout.addWidget(self.summary)
+        layout.addWidget(self.about)
+        layout.addWidget(self.diagram)
         layout.addLayout(self.form)
         layout.addWidget(self.problems)
         layout.addStretch(1)
@@ -83,7 +105,41 @@ class PropertiesPage(QWidget):
             lambda _i: self._changed("slopes_inside", bool(self.slope_position.currentData())))
         self.pixel_mode.currentIndexChanged.connect(
             lambda _i: self._changed("pixel_mode", PixelMode(self.pixel_mode.currentData())))
+        for widget, key in ((self.amount, "amount"), (self.width, "width"), (self.slope, "slope_n"),
+                            (self.reach, "reach"), (self.slope_position, "slopes_inside"),
+                            (self.pixel_mode, "pixel_mode")):
+            widget.setToolTip(FIELD_TIPS[key])
+            widget.installEventFilter(self)
+        self._highlight_for = {self.amount: "amount", self.width: "width", self.slope: "slope",
+                               self.reach: "reach"}
         controller.featuresChanged.connect(self._refresh_problems)
+
+    def eventFilter(self, watched, event):  # noqa: N802 — Qt override
+        """Highlight the part of the diagram that belongs to whichever field has focus."""
+        if event.type() == QEvent.Type.FocusIn:
+            self._draw_diagram(self._highlight_for.get(watched))
+        return super().eventFilter(watched, event)
+
+    def changeEvent(self, event):  # noqa: N802 — Qt override
+        if event.type() == QEvent.Type.PaletteChange and self._fid is not None:
+            self._draw_pictures()
+        super().changeEvent(event)
+
+    def _draw_diagram(self, highlight: str | None) -> None:
+        self.diagram.setPixmap(illustrations.pixmap("parameters", DIAGRAM, self.palette(),
+                                                    highlight=highlight))
+
+    def _draw_pictures(self) -> None:
+        feature = self.controller.find(self._fid) if self._fid is not None else None
+        if feature is None:
+            return
+        self.about_picture.setPixmap(illustrations.pixmap(f"tool_{feature.tool.value}",
+                                                          TOOL_PICTURE, self.palette()))
+        self._draw_diagram(None)
+        for index in range(self.pixel_mode.count()):
+            mode = PixelMode(self.pixel_mode.itemData(index))
+            self.pixel_mode.setItemIcon(index, illustrations.icon(f"pixels_{mode.value}",
+                                                                  PIXEL_ICON, self.palette()))
 
     def show_feature(self, fid: str) -> None:
         self._fid = fid
@@ -111,6 +167,10 @@ class PropertiesPage(QWidget):
             self.form.setRowVisible(self.slope, info.has_slopes)
             self.form.setRowVisible(self.reach, info.has_slopes)
             self.form.setRowVisible(self.slope_position, info.has_slopes and feature.mode is Mode.AREA)
+            self.about_text.setText(f"{TOOL_DESCRIPTIONS[feature.tool]}\n\n"
+                                    f"{TOOL_EXAMPLES[feature.tool]}")
+            self._draw_pictures()
+            self.diagram.setVisible(feature.mode is Mode.PATH and info.has_slopes)
         finally:
             self._loading = False
         self._refresh_problems()

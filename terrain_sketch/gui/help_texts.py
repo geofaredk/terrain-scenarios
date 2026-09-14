@@ -83,6 +83,7 @@ def amount_label(tool: Tool) -> str | None:
     if tool in (Tool.LOWER_PATH, Tool.LOWER_FLAT, Tool.SUBTRACT):
         return "Depth"
     return "Height"
+
 PROFILE_EMPTY_HINT = "Select or draw a feature to edit its shape here."
 CUSTOM_PROFILE_NOTE = ("Custom long profile: the heights are fixed and no longer follow the "
                        "terrain underneath. Use Reset to rule to go back.")
@@ -97,3 +98,58 @@ SYMMETRIC_TIP = ("While this is ticked, break points are mirrored to the other s
                  "Width and side slope are single values that always apply to both sides.")
 AMOUNT_IS_CUSTOM = ("The long profile was edited by hand, so its heights are fixed. Use "
                     "Reset to rule in the profile panel to drive the shape from this value again.")
+
+TOOL_EXAMPLES = {
+    Tool.INTERPOLATE: ("A ditch crosses your DEM but the survey missed it. Draw a line along the "
+                       "ditch and Terrain Sketch runs a smooth grade between the two ends."),
+    Tool.RAISE_PATH: ("A 1.5 m flood embankment along a river. Draw the line the crest follows, "
+                      "set Height 1.5 m, Width 3 m and a 1:3 side slope."),
+    Tool.LOWER_PATH: ("A swale carrying runoff to a pond. Draw its route, set Depth 0.6 m and "
+                      "Width 2 m; the slopes tie it back into the ground."),
+    Tool.RAISE_FLAT: ("A building pad above the flood level. Draw the outline and set the height "
+                      "above the highest point it covers, so the whole pad sits level."),
+    Tool.LOWER_FLAT: ("A detention basin. Draw the outline, set Depth 1.2 m, and the bottom comes "
+                      "out flat with the sides sloping down to it."),
+    Tool.ADD: ("A 0.3 m layer of fill over a field. Draw the outline; the ground keeps its shape "
+               "and every cell rises by the same amount."),
+    Tool.SUBTRACT: ("Stripping 0.2 m of topsoil. Draw the outline; the ground keeps its shape and "
+                    "every cell drops by the same amount."),
+}
+
+TOOL_DESCRIPTIONS = {
+    Tool.INTERPOLATE: ("Replaces the terrain under the shape with a smooth grade between its "
+                       "edges, so a missing or wrong patch is bridged rather than raised or cut."),
+    Tool.RAISE_PATH: ("Builds a raised corridor along a line: a flat crest of the width you set, "
+                      "with side slopes running down to meet the ground."),
+    Tool.LOWER_PATH: ("Cuts a channel along a line: a flat bottom of the width you set, with "
+                      "sides sloping up to meet the ground."),
+    Tool.RAISE_FLAT: ("Lifts everything inside the shape to one level, measured from the highest "
+                      "point it covers, with slopes tying the edge back into the ground."),
+    Tool.LOWER_FLAT: ("Cuts everything inside the shape down to one level, measured from the "
+                      "lowest point it covers, with slopes tying the edge back in."),
+    Tool.ADD: "Adds the same height to every cell inside the shape; the terrain keeps its shape.",
+    Tool.SUBTRACT: ("Takes the same height off every cell inside the shape; the terrain keeps "
+                    "its shape."),
+}
+
+FIELD_TIPS = {
+    "amount": ("How far the feature rises or cuts. For a 1.5 m embankment, set 1.5 — the crest "
+               "ends up 1.5 m above the grade between the path's ends."),
+    "width": ("How wide the flat part is — the crest of a dike, or the bottom of a ditch. A farm "
+              "track is about 3 m; a footpath about 1.5 m."),
+    "slope_n": ("How far the side slope runs out for every metre of height. 1:3 means 3 m "
+                "outwards per 1 m up, which is the usual maximum for a mown grass embankment. "
+                "0 means no side slopes at all."),
+    "reach": ("The side slopes stop this far from the edge even if they have not met the ground. "
+              "Set 5 m to keep a 1.5 m embankment out of a neighbouring plot that starts 5 m "
+              "from the crest."),
+    "slopes_inside": ("Inside: the outline is the top edge and the slopes run down within it — a "
+                      "pond. Outside: the outline is the flat part and the slopes run out beyond "
+                      "it — a raised pad."),
+    "pixel_mode": ("Which cells count as covered by your shape. Narrow features can miss every "
+                   "cell centre, which is when All touched helps."),
+}
+
+def tool_tooltip(tool: Tool) -> str:
+    """What a gallery item shows on hover: what the tool does, then a worked example."""
+    return f"{TOOL_DESCRIPTIONS[tool]}\n\n{TOOL_EXAMPLES[tool]}"

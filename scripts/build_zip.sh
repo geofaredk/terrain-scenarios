@@ -6,7 +6,11 @@
 # scratch profile stay out: a user installing this should not receive our test suite.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT_DIR="${1:-$ROOT}"
+# Resolved to an absolute path before anything below `cd`s elsewhere: a relative directory (e.g.
+# `.`, meaning the caller's cwd) would otherwise be interpreted against the staging directory once
+# the script has cd'd there, silently writing the ZIP where the EXIT trap then deletes it. `cd`ing
+# into it here also makes a missing output directory fail immediately, with a clear reason.
+OUT_DIR="$(cd "${1:-$ROOT}" && pwd)"
 PACKAGE="terrain_sketch"
 
 # metadata.txt is what QGIS reads to list the plugin; without it the ZIP installs as nothing.
@@ -28,6 +32,7 @@ trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/$PACKAGE"
 tar -c -C "$ROOT/$PACKAGE" \
     --exclude="__pycache__" --exclude="*.pyc" --exclude="*.pyo" --exclude=".DS_Store" \
+    --exclude="*~" --exclude="*.swp" --exclude=".pytest_cache" \
     . | tar -x -C "$STAGE/$PACKAGE"
 
 # __init__.py is what makes QGIS able to import the plugin at all. Checked on the staging copy,

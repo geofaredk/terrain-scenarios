@@ -92,3 +92,35 @@ def test_a_metadata_file_without_a_version_is_refused(tmp_path):
     assert result.returncode != 0
     assert "no version=" in result.stderr
     assert not list(tmp_path.glob("*.zip"))
+
+
+def test_a_relative_output_directory_still_lands_in_the_caller_s_cwd(tmp_path):
+    """`.` is resolved against the caller's cwd, not against the staging directory the script
+    later `cd`s into — otherwise the ZIP is written where the EXIT trap deletes it, and the
+    script prints a path and exits 0 with nothing at it."""
+    result = subprocess.run([str(SCRIPT), "."], capture_output=True, text=True, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    printed = Path(result.stdout.strip())
+    assert printed.is_file(), f"printed {printed} but it does not exist"
+    assert list(tmp_path.glob("*.zip")), "no ZIP landed in the caller's directory"
+
+
+def test_a_missing_output_directory_is_refused_before_anything_is_built(tmp_path):
+    missing = tmp_path / "does-not-exist"
+    result = subprocess.run([str(SCRIPT), str(missing)], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert not missing.exists()
+    assert not list(tmp_path.glob("*.zip"))
+
+
+def test_an_editor_swap_file_does_not_ship(tmp_path):
+    script = fake_repo(tmp_path)
+    (script.parents[1] / "terrain_sketch" / ".plugin.py.swp").write_text("swap")
+    out = tmp_path / "out"
+    out.mkdir()
+    result = subprocess.run([str(script), str(out)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    path = Path(result.stdout.strip())
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+    assert not [n for n in names if n.endswith(".swp")], names

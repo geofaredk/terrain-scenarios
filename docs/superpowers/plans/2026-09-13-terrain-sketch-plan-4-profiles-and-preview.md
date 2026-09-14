@@ -3219,3 +3219,40 @@ From the Plan 3 addendum and the Plan 1/2 carry-overs:
 |---|---|---|
 | 5 | Illustrated gallery, help texts, pixel-mode pictures, "Reproject…" button, `QgsSettings` persistence, translation-ready strings | `help_texts.py`, `ProfileDock`, `ToolGallery` |
 | 6 | Scenario GeoPackage, volumes panel, undo/redo, 3D view, duplicate/rename, ZIP packaging | `terrain_before` (volumes), `PreviewImage`, `TerrainFeature.to_dict/from_dict` |
+
+---
+
+## Addendum: final-review fixes
+
+The task blocks above are the plan as written. Six tasks landed on `feat/profiles-preview`, each reviewed as
+it landed, followed by a whole-branch review and one fix wave. Four of the six tasks needed a fix round and
+Task 2 needed three. **Where this addendum and the task blocks disagree, the code is authoritative** — the
+blocks were generated from a prototype the reviews then corrected.
+
+### Changed after the task blocks
+
+| # | What changed | Why |
+|---|---|---|
+| C1 | `MainDock` builds a `QgsCoordinateTransform` and assigns `overlay.crs_transform`, refreshed on `sessionChanged` and `destinationCrsChanged`, with a failed transform latching and suppressing the overlay | The overlay was never given a transform — the parameter was dead code — so preview bounds in the DEM CRS were handed to the canvas as canvas coordinates. For any project whose CRS differed from the DEM's, the plan's headline feature painted in the wrong place with no error. |
+| I2 | `sections.supports_long_profile()` mirrors the engine's `len(parts) == 1` gate; `long_section`, `ProfileDock` and `PropertiesPage` all honour it | A multi-part path accepted a custom long profile, reported it as custom, and greyed out Height/Depth — while the engine discarded the profile. The user's drags did nothing and the one control that still worked was disabled. |
+| I3 | `set_cross_section` skips the break-point keys for `Mode.AREA`; `ProfileWidget` gains an `allow_breaks` flag the dock sets | Spec §5.4 says break points are not supported for areas, and `_area_design` passes an empty break list — but the editor stored them anyway, and Plan 6 would have serialised the dead values into the scenario file. |
+| I4 | An area's long panel gets its own hint and a reworded note | The panel painted "Select or draw a feature to edit its shape here" *while a feature was selected*, above a note promising a read-only section it never drew. |
+| I5 | `SYMMETRIC_TIP` now says break points mirror while ticked, and that width and side slope always apply to both sides | Unticking Symmetric did not stop the terminal slope being shared: `slope_n` and `reach` are single fields per spec §5.4. The old tooltip — and this plan's own manual check step 4 — claimed otherwise. |
+| I6 | `terrain_before` stops at the target by list position rather than `replay` membership | A disabled target never appeared in `replay`, so the loop applied *everything*, including features added after it. Selecting a disabled dike drew a reference terrain containing a pond dug later. |
+| I7 | `SketchController.long_section` is wrapped like `_run_preview` and returns the empty section shape | It was the one engine call reachable from a Qt slot without a guard, and its chain reaches a real `raise ValueError`. The mutation check for this fix aborted the interpreter with SIGABRT. |
+| — | Smaller: a near-zero run no longer rounds `slope_n` to the "no slope" sentinel; `_refresh_bookkeeping` calls `_prune_windows`; the cut/fill colours are shared with `overlay.py` and the docstring corrected; tests added for the arrow-key nudge and for `set_cross_section` on an area; four tests strengthened from asserting a proxy to asserting behaviour | Each confirmed by review. |
+
+### Corrections to this plan's own text
+
+- **Manual check step 4 is wrong.** "Untick Symmetric and drag again — only one side should change" describes behaviour the model cannot have: width, side slope and reach are single per-feature values. Only break points are per-side. Read it as "only the break points should stop mirroring".
+- **The area long panel was never going to be a section.** Task 6's prescribed test asserted only `not dock.long.editable and dock.note.text()`, both of which pass on a blank panel, so the gap survived the dry run. The real section (spec §5.4: centroid, oriented minimum bounding box, "Draw section line" button) is Plan 5 work.
+- Task 3's `help_texts.py` block carries four strings only Task 5 consumes, because the generator emitted the prototype's final version of a shared file rather than a per-task slice. Harmless, but worth avoiding when generating Plan 5.
+
+### Deferred to later plans
+
+| Plan | Items |
+|---|---|
+| 5 | `reach` can round to `0.0` in the same hard-against-the-neighbour drag that item 8 fixed for `slope_n` (recoverable from the properties page, but silent); the arrow-key nudge commits to disk on every keypress — ~30 un-undoable states per second on auto-repeat — and should preview then commit on release; editing the **left** side of a cross profile is unreachable from the UI, though `cross_section(side=-1)` exists and is tested in core; the real area section line. |
+| 6 | `add_from_layer` has no size ceiling and `_set` is synchronous; undo/redo would defuse several silent-rewrite risks recorded across Plans 3 and 4. |
+| — | **End-cap asymmetry, carried from Plan 3 with a corrected justification.** Plan 3 deferred it as "invisible while Symmetric is ticked". Plan 4 changes that premise: asymmetric break points are now one unticked checkbox away, so it is reachable. It stays deferred — it is a thin on-axis sliver at two cells, giving a wrong elevation rather than a crash or a data rewrite — but it belongs on an explicit list now, not an open-ended "dedicated pass". Note that I5 partly narrows it: unticking Symmetric only makes the *break points* asymmetric, since the slopes remain shared. |
+| — | Ship-as-is, recorded for completeness: the footprint-`None` early return can leak one window entry per frame; `_ticks` round-half-to-even; right-click resets the handle selection; `change_image` returns a transparent image rather than `None` below ~5 mm; `show_change` conflates "no change" with "malformed"; unguarded `dataclasses.replace`; `ProfileWidget.clear()` does not reset `allow_breaks`; `terrain_before` has no test for a disabled *first* or *last* feature (the fix is correct by construction). |

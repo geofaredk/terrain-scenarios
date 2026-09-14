@@ -11,7 +11,8 @@ import uuid
 from dataclasses import replace
 from typing import NamedTuple
 
-from qgis.core import Qgis, QgsCoordinateReferenceSystem, QgsCsException, QgsGeometry, QgsMessageLog, QgsProject
+from qgis.core import (Qgis, QgsCoordinateReferenceSystem, QgsCsException, QgsGeometry, QgsMessageLog, QgsProject,
+                       QgsRasterDemTerrainProvider)
 from qgis.PyQt.QtCore import QObject, QTimer, pyqtSignal
 from qgis.PyQt.QtGui import QUndoStack
 
@@ -29,7 +30,7 @@ from .help_texts import (COPY_NAME, DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE,
                          NO_FEATURES_SELECTED, NO_SESSION, RESULT_LAYER_REMOVED, SCENARIO_NOT_APPLIED,
                          SESSION_ENDED_DEM_REMOVED, TOOL_LABELS, UNDO_ADD, UNDO_DELETE, UNDO_DUPLICATE,
                          UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER, UNDO_SETTINGS, UNDO_SHAPE, UNDO_TURN_OFF,
-                         UNDO_TURN_ON)
+                         UNDO_TURN_ON, VIEW_3D_NO_LAYER)
 from .undo import FeatureListChange
 
 LOG_TAG = "Terrain Sketch"
@@ -81,6 +82,7 @@ class SketchController(QObject):
         self._closing = False
         self._pending = None
         self.undo_stack = QUndoStack(self)
+        self._terrain_before = None   # the project's terrain before show_in_3d replaced it
         self._scenario_path = None
         self._created = ""
         # Called, if set, just before a session with unsaved changes is dropped — the project
@@ -145,6 +147,7 @@ class SketchController(QObject):
 
     def close(self) -> None:
         """End the session and remove its layers from the project."""
+        self._restore_terrain()   # before the layer the terrain points at goes
         self._closing = True
         try:
             if self.layers is not None:
@@ -392,6 +395,36 @@ class SketchController(QObject):
         self._scenario_path = None
         self._created = ""
         self.undo_stack.clear()
+
+    def show_in_3d(self) -> bool:
+        """Make the modified DEM the project's terrain, at true vertical scale, so a 3D view shows
+        the sketched landscape (spec §8.5). The terrain it replaces is kept and put back when the
+        session ends. False, with a message, when there is no Modified DEM layer to show."""
+        layer = self.project.mapLayer(self.layers.working_id) if self.layers is not None else None
+        if layer is None:
+            self.message.emit(Qgis.MessageLevel.Warning, VIEW_3D_NO_LAYER)
+            return False
+        properties = self.project.elevationProperties()
+        if self._terrain_before is None:
+            self._terrain_before = properties.terrainProvider().clone()
+        provider = QgsRasterDemTerrainProvider()
+        provider.setLayer(layer)
+        provider.setScale(1.0)
+        properties.setTerrainProvider(provider)
+        return True
+
+    def _restore_terrain(self) -> None:
+        """Put back the terrain show_in_3d replaced — unless the user has since chosen another one
+        themselves, which is theirs to keep."""
+        before, self._terrain_before = self._terrain_before, None
+        if before is None:
+            return
+        properties = self.project.elevationProperties()
+        current = properties.terrainProvider()
+        ours = self.layers.working_id if self.layers is not None else None
+        if isinstance(current, QgsRasterDemTerrainProvider) and current.layer() is not None \
+                and current.layer().id() == ours:
+            properties.setTerrainProvider(before)
 
     def export_dem(self, path: str) -> None:
         """Write the modified DEM to `path`; raises RuntimeError without a session, or if `path`

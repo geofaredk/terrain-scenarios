@@ -2,20 +2,25 @@
 from __future__ import annotations
 
 import os
+import traceback
 
-from qgis.core import Qgis, QgsApplication, QgsCoordinateTransform, QgsCsException, QgsGeometry, QgsProject
+from qgis.core import (Qgis, QgsApplication, QgsCoordinateTransform, QgsCsException, QgsGeometry, QgsMessageLog,
+                       QgsProject)
 from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsRubberBand
 from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QAction
 from qgis.PyQt.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
                                  QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from ..core.tools import Mode
 from ..qgis_io.raster_io import DemError, GeographicDemError
 from ..qgis_io.scenario import ScenarioError
+from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
 from .help_texts import (EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_REPLACE,
-                         SCENARIO_SAVED, SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES)
+                         SCENARIO_SAVED, SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES,
+                         VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
 from .map_tools.base import SketchTool
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
@@ -129,6 +134,8 @@ class MainDock(QgsDockWidget):
         self.export_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.export_button.setToolTip(self.tr("Write the modified DEM to a new GeoTIFF, e.g. for a flood simulation."))
         self.toolbar.addWidget(self.export_button)
+        self.view_3d_button = _file_button("/3d.svg", self.tr("3D view"), VIEW_3D_TIP)
+        self.toolbar.addWidget(self.view_3d_button)
         layout.addWidget(self.toolbar)
 
         self.model = FeatureListModel(controller, self)
@@ -164,6 +171,7 @@ class MainDock(QgsDockWidget):
 
         self.start_button.clicked.connect(self._start)
         self.export_button.clicked.connect(self._export)
+        self.view_3d_button.clicked.connect(self._open_3d_view)
         self.new_scenario_button.clicked.connect(self._new_scenario)
         self.open_scenario_button.clicked.connect(self._open_scenario)
         self.save_scenario_button.clicked.connect(lambda: self._save_scenario())
@@ -245,7 +253,7 @@ class MainDock(QgsDockWidget):
             self.stop_tools()  # a drawing or edit cannot outlive its session
             self._update_highlight(None)
         for widget in (self.export_button, self.hillshade_box, self.new_button, self.delete_button,
-                       self.edit_button, self.feature_view, *self.scenario_buttons):
+                       self.edit_button, self.feature_view, self.view_3d_button, *self.scenario_buttons):
             widget.setEnabled(has_dem)
         if self.controller.layers is not None:
             project = self.controller.project
@@ -545,6 +553,23 @@ class MainDock(QgsDockWidget):
             self._show_message(Qgis.MessageLevel.Critical, self.tr("Export failed: {}").format(error))
             return
         self._show_message(Qgis.MessageLevel.Success, self.tr("Exported the modified DEM to {}").format(path))
+
+    def _open_3d_view(self) -> None:
+        """The modified DEM as the project's terrain, then a new 3D view (spec §8.5): through the
+        interface when this QGIS offers it, otherwise through QGIS's own New 3D Map View action,
+        otherwise a message saying how to open one by hand."""
+        if not self.controller.show_in_3d():
+            return
+        try:
+            if self.iface.createNewMapCanvas3D(self.tr("Terrain Sketch 3D")) is not None:
+                return
+        except Exception:  # noqa: BLE001 — a QGIS built without 3D; this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Warning)
+        action = self.iface.mainWindow().findChild(QAction, "mActionNew3DMapCanvas")
+        if action is not None and action.isEnabled():
+            action.trigger()
+            return
+        self._show_message(Qgis.MessageLevel.Warning, VIEW_3D_NOT_OPENED)
 
     def _context_menu(self, position) -> None:
         menu = self.feature_menu(self.feature_view.indexAt(position))

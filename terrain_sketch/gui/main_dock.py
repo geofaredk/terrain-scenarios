@@ -394,23 +394,32 @@ class MainDock(QgsDockWidget):
         """A geographic DEM is refused with a button that opens Processing's warp tool, so the
         user is not left to find it themselves."""
         try:
+            # the DEM this message is about, captured now: the combo can hold something else by
+            # the time the button is pressed, and warping a layer the user never saw refused
+            # would be worse than warping nothing
+            layer = self.dem_combo.currentLayer()
             bar = self.iface.messageBar()
             widget = bar.createMessage(self.tr("Terrain Sketch"), text)
             button = QPushButton(self.tr("Reproject…"), widget)
-            button.clicked.connect(self._run_reproject)
+            button.clicked.connect(lambda _checked=False, dem=layer: self._run_reproject(dem))
             widget.layout().addWidget(button)
             bar.pushWidget(widget, Qgis.MessageLevel.Warning, 0)
         except Exception:  # noqa: BLE001 — this runs in a click handler; a plain message will do
             self._show_message(Qgis.MessageLevel.Warning, text)
 
-    def _run_reproject(self) -> None:
+    def _run_reproject(self, layer=None) -> None:
+        """Open Processing's warp tool on `layer`.
+
+        Everything is inside the guard: this runs in a click handler, where an exception — a
+        disabled Processing plugin, a dialog that refuses to open, a mistake of ours — takes the
+        whole interpreter down. A message the user can act on is the worst that should happen.
+        """
         try:
-            from processing import execAlgorithmDialog
-        except ImportError:  # Processing is a core plugin, but it can be disabled
+            from processing import execAlgorithmDialog  # a core plugin, but it can be disabled
+            alive = layer is not None and not sip.isdeleted(layer)
+            execAlgorithmDialog("gdal:warpreproject", {"INPUT": layer} if alive else {})
+        except Exception:  # noqa: BLE001 — ImportError included
             self._show_message(Qgis.MessageLevel.Warning, REPROJECT_UNAVAILABLE)
-            return
-        layer = self.dem_combo.currentLayer()
-        execAlgorithmDialog("gdal:warpreproject", {"INPUT": layer} if layer is not None else {})
 
     def _show_message(self, level, text: str) -> None:
         self.iface.messageBar().pushMessage(self.tr("Terrain Sketch"), text, level, 8)

@@ -51,6 +51,8 @@ def test_a_second_save_does_not_ask_again(tmp_path):
     c.update_feature(c.features[0].id, amount=2.0)
     dock.save_scenario_button.click()
     assert len(asked) == 1                            # the path is remembered
+    assert not c.is_dirty                              # and the second click actually wrote
+    assert load(path)[0][0].amount == 2.0
 
 
 def test_editing_marks_the_scenario_unsaved_and_saving_clears_it(tmp_path):
@@ -95,6 +97,11 @@ def test_backing_out_of_the_save_dialog_keeps_the_work(tmp_path):
     dock.ask_save_path = lambda: ""                    # the user cancelled the file dialog
     dock.new_scenario_button.click()
     assert len(c.features) == 1
+    # Leave the dock able to end the session cleanly: a real user who keeps choosing Save with a
+    # file dialog that can never succeed would keep being asked (that is the point of I1), but a
+    # stub stuck on "always Save, never a path" must not turn this test's own teardown `clear()`
+    # into an infinite retry.
+    dock.confirm_save = lambda text, can_cancel=True: False
 
 
 def scenario_from_another_dem(tmp_path, array) -> str:
@@ -181,6 +188,22 @@ def test_closing_the_project_offers_to_save_unsaved_work(tmp_path):
     assert len(load(path)[0]) == 1
 
 
+def test_a_failed_save_before_closing_asks_again_until_it_succeeds(tmp_path):
+    """Save chosen but the file dialog is then cancelled (or the save fails) must not drop the
+    session silently — the question repeats until a save succeeds or the user chooses Discard."""
+    _iface, c, dock = panel(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    path = str(tmp_path / "retried.gpkg")
+    paths = iter(["", path])                          # first Save picks nothing, second succeeds
+    dock.ask_save_path = lambda: next(paths)
+    asked = []
+    dock.confirm_save = lambda text, can_cancel=True: asked.append((text, can_cancel)) or True
+    QgsProject.instance().clear()
+
+    assert asked == [(UNSAVED_BEFORE_CLOSING, False), (UNSAVED_BEFORE_CLOSING, False)]
+    assert len(load(path)[0]) == 1
+
+
 def test_removing_the_dem_offers_to_save_before_the_session_ends(tmp_path):
     _iface, c, dock = panel(tmp_path)
     c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
@@ -261,6 +284,36 @@ def test_opening_a_scenario_ends_an_edit_in_progress(tmp_path):
     dock.ask_open_path = lambda: path
     dock.open_scenario_button.click()
     assert dock.edit_tool is None                  # its feature is gone; editing on would rewrite another
+
+
+def test_the_save_and_open_dialogs_start_beside_the_current_scenario(tmp_path, monkeypatch):
+    from qgis.PyQt.QtWidgets import QFileDialog
+    _iface, c, dock = panel(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    path = str(tmp_path / "current.gpkg")
+    c.save_scenario(path)
+
+    save_dirs, open_dirs = [], []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: save_dirs.append(a[2]) or ("", "")))
+    monkeypatch.setattr(QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: open_dirs.append(a[2]) or ("", "")))
+
+    dock._save_dialog()
+    dock._open_dialog()
+    assert save_dirs == [str(tmp_path)]
+    assert open_dirs == [str(tmp_path)]
+
+
+def test_the_save_dialog_starts_at_the_project_home_without_a_scenario_yet(tmp_path, monkeypatch):
+    from qgis.PyQt.QtWidgets import QFileDialog
+    _iface, _c, dock = panel(tmp_path)
+    save_dirs = []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: save_dirs.append(a[2]) or ("", "")))
+
+    dock._save_dialog()
+    assert save_dirs == [QgsProject.instance().homePath()]
 
 
 def test_every_scenario_button_shows_an_icon_and_says_what_it_does(tmp_path):

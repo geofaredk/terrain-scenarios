@@ -157,6 +157,7 @@ class MainDock(QgsDockWidget):
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_overlay_transform)
         controller.featuresChanged.connect(self._refresh_highlight)
         controller.featuresChanged.connect(self._drop_missing_brush_target)
+        controller.featuresChanged.connect(self._sync_selection_page)
         controller.sessionChanged.connect(self._session_changed)
         controller.message.connect(self._show_message)
         controller.previewUpdated.connect(self._preview_updated)
@@ -390,6 +391,17 @@ class MainDock(QgsDockWidget):
             result.transform(QgsCoordinateTransform(self.controller.dem_crs, canvas_crs, QgsProject.instance()))
         return result
 
+    def _sync_selection_page(self) -> None:
+        """The list model resets on every change, which can clear the Qt selection without
+        emitting `selectionChanged` (a clear that leaves nothing selected is a no-op) — so a
+        deleted feature can be left showing on the Properties page with stale figures. Make the
+        dock behave as if the user had deselected whenever that happens."""
+        if self.pages.currentIndex() != PAGE_PROPERTIES:
+            return
+        fid = self.feature_view.selected_id()
+        if fid is None or fid not in {f.id for f in self.controller.features}:
+            self._selection_changed()
+
     def _refresh_highlight(self) -> None:
         self._update_highlight(self.feature_view.selected_id())
 
@@ -445,11 +457,13 @@ class MainDock(QgsDockWidget):
     def _offer_save_before_discard(self) -> None:
         """The controller is about to drop a session with unsaved changes — the project is closing,
         the DEM was removed or the plugin is unloading. None of those can be cancelled from here,
-        so the question is only Save or Discard."""
+        so the question is only Save or Discard — but choosing Save and then cancelling the file
+        dialog, or a save that fails, must not drop the session silently: the question repeats
+        until a save succeeds or the user chooses Discard."""
         if self._asked_about_unsaved:
             return
-        if self.confirm_save(UNSAVED_BEFORE_CLOSING, can_cancel=False):
-            self._save_scenario()
+        while self.confirm_save(UNSAVED_BEFORE_CLOSING, can_cancel=False) and not self._save_scenario():
+            pass
 
     def _keep_unsaved_work(self) -> bool:
         """Ask before discarding unsaved features. True means the user backed out."""
@@ -530,8 +544,14 @@ class MainDock(QgsDockWidget):
     def _confirm_dialog(self, text: str) -> bool:
         return QMessageBox.question(self, self.tr("Terrain Sketch"), text) == QMessageBox.StandardButton.Yes
 
+    def _dialog_start_dir(self) -> str:
+        """Where a scenario file dialog should open: beside the current scenario file, or the
+        project's home folder — empty, same as today, when the project has none either."""
+        path = self.controller.scenario_path
+        return os.path.dirname(path) if path else QgsProject.instance().homePath()
+
     def _save_dialog(self) -> str:
-        path, _ = QFileDialog.getSaveFileName(self, self.tr("Save scenario"), "",
+        path, _ = QFileDialog.getSaveFileName(self, self.tr("Save scenario"), self._dialog_start_dir(),
                                               self.tr("Terrain Sketch scenario (*.gpkg)"))
         if path and not path.lower().endswith(".gpkg"):
             path += ".gpkg"
@@ -542,7 +562,7 @@ class MainDock(QgsDockWidget):
         return path
 
     def _open_dialog(self) -> str:
-        path, _ = QFileDialog.getOpenFileName(self, self.tr("Open scenario"), "",
+        path, _ = QFileDialog.getOpenFileName(self, self.tr("Open scenario"), self._dialog_start_dir(),
                                               self.tr("Terrain Sketch scenario (*.gpkg)"))
         return path
 

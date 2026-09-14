@@ -807,18 +807,18 @@ class PropertiesPage(QWidget):
         self.width = _spin(0.1, 500.0, 0.5, " m", 2)
         self.width.setToolTip(self.tr("Width of the crest (raise tools) or the bottom (lower tools) of the path."))
         self.slope = _spin(0.0, 50.0, 0.5, "", 1)
-        self.slope.setPrefix("1 : ")
         self.slope.setToolTip(self.tr("Horizontal metres per metre of height: 1 : 3 goes 3 m outwards for every "
                                       "1 m. 0 means no side slopes."))
+        self.slope.setPrefix("1 : ")
         self.reach = _spin(0.0, 500.0, 1.0, " m", 1)
         self.reach.setToolTip(self.tr("Side slopes stop this far from the edge, even if they have not met the "
                                       "ground yet."))
         self.slope_position = QComboBox()
         self.slope_position.addItem(self.tr("Outside the outline"), False)
         self.slope_position.addItem(self.tr("Inside the outline"), True)
+        self.pixel_mode = QComboBox()
         self.slope_position.setToolTip(self.tr("Inside: the outline is the top edge (e.g. a pond). Outside: the "
                                                "outline is the flat part (e.g. a raised pad)."))
-        self.pixel_mode = QComboBox()
         for mode in PixelMode:
             self.pixel_mode.addItem(PIXEL_MODE_LABELS[mode], mode.value)
             self.pixel_mode.setItemData(self.pixel_mode.count() - 1, PIXEL_MODE_TIPS[mode], Qt.ItemDataRole.ToolTipRole)
@@ -1386,7 +1386,11 @@ def test_the_diagram_is_hidden_for_a_tool_that_has_no_slopes(tmp_path):
 
 def test_every_numeric_field_quotes_a_real_measurement_in_its_tooltip(tmp_path):
     c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     page = PropertiesPage(c)
+    # check AFTER a feature is shown: that is the only state in which these fields are visible,
+    # and show_feature rewrites the amount tooltip, so checking before it proves nothing
+    page.show_feature(dike.id)
     for widget in (page.amount, page.width, page.slope, page.reach):
         tip = widget.toolTip()
         assert len(tip) > 40, tip
@@ -1556,8 +1560,10 @@ TOOL_DESCRIPTIONS = {
 }
 
 FIELD_TIPS = {
-    "amount": ("How far the feature rises or cuts. For a 1.5 m embankment, set 1.5 — the crest "
-               "ends up 1.5 m above the grade between the path's ends."),
+    "amount": ("How far the feature rises (height) or cuts (depth): above or below the straight "
+               "grade between the path's ends, the highest or lowest point of the path or "
+               "outline, or the terrain itself for Add and Subtract. For a 1.5 m embankment, "
+               "set 1.5."),
     "width": ("How wide the flat part is — the crest of a dike, or the bottom of a ditch. A farm "
               "track is about 3 m; a footpath about 1.5 m."),
     "slope_n": ("How far the side slope runs out for every metre of height. 1:3 means 3 m "
@@ -1804,25 +1810,24 @@ class PropertiesPage(QWidget):
         self.summary.setWordWrap(True)
         self.amount_label = QLabel()
         self.amount = _spin(0.0, 100.0, 0.1, " m", 2)
-        self._amount_tip = self.tr("How far the feature rises (height) or cuts (depth): above or below the "
-                                   "straight grade between the path's ends, the highest or lowest point of "
-                                   "the path or outline, or the terrain itself for Add and Subtract.")
-        self.amount.setToolTip(self._amount_tip)
+        # one source of truth: show_feature swaps between this and AMOUNT_IS_CUSTOM, so the
+        # concrete example has to live here or it is lost the moment a feature is selected
+        self._amount_tip = FIELD_TIPS["amount"]
         self.width = _spin(0.1, 500.0, 0.5, " m", 2)
         self.width.setToolTip(self.tr("Width of the crest (raise tools) or the bottom (lower tools) of the path."))
         self.slope = _spin(0.0, 50.0, 0.5, "", 1)
-        self.slope.setPrefix("1 : ")
         self.slope.setToolTip(self.tr("Horizontal metres per metre of height: 1 : 3 goes 3 m outwards for every "
                                       "1 m. 0 means no side slopes."))
+        self.slope.setPrefix("1 : ")
         self.reach = _spin(0.0, 500.0, 1.0, " m", 1)
         self.reach.setToolTip(self.tr("Side slopes stop this far from the edge, even if they have not met the "
                                       "ground yet."))
         self.slope_position = QComboBox()
         self.slope_position.addItem(self.tr("Outside the outline"), False)
         self.slope_position.addItem(self.tr("Inside the outline"), True)
+        self.pixel_mode = QComboBox()
         self.slope_position.setToolTip(self.tr("Inside: the outline is the top edge (e.g. a pond). Outside: the "
                                                "outline is the flat part (e.g. a raised pad)."))
-        self.pixel_mode = QComboBox()
         for mode in PixelMode:
             self.pixel_mode.addItem(PIXEL_MODE_LABELS[mode], mode.value)
             self.pixel_mode.setItemData(self.pixel_mode.count() - 1, PIXEL_MODE_TIPS[mode], Qt.ItemDataRole.ToolTipRole)
@@ -3087,8 +3092,10 @@ TOOL_DESCRIPTIONS = {
 }
 
 FIELD_TIPS = {
-    "amount": ("How far the feature rises or cuts. For a 1.5 m embankment, set 1.5 — the crest "
-               "ends up 1.5 m above the grade between the path's ends."),
+    "amount": ("How far the feature rises (height) or cuts (depth): above or below the straight "
+               "grade between the path's ends, the highest or lowest point of the path or "
+               "outline, or the terrain itself for Add and Subtract. For a 1.5 m embankment, "
+               "set 1.5."),
     "width": ("How wide the flat part is — the crest of a dike, or the bottom of a ditch. A farm "
               "track is about 3 m; a footpath about 1.5 m."),
     "slope_n": ("How far the side slope runs out for every metre of height. 1:3 means 3 m "

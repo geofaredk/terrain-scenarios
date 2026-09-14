@@ -4086,3 +4086,37 @@ The suite cannot see these; they need a real QGIS window.
 | From Plan 2: Duplicate/Rename in the list's context menu (spec §7.2); the Properties title not following a rename; the export "add to project" option and integer-DEM note; cleanup of a partially built layer group; `FeatureListModel.data()` rebuilding a dict per call | Still open. |
 | From Plan 5: the pixel-mode picture in the combobox tooltip; tool-specific H/D labels; dock geometry under `terrain_sketch/`; `QgsCollapsibleGroupBox` state; illustration polish | See the Plan 5 addendum. |
 | From Plans 3-4: `reach` rounding to 0.0 on a hard terminus drag; the arrow-key nudge committing per keypress; the unreachable left side of a cross profile; the real area section line; the end-cap asymmetry | See those addenda. |
+
+## Addendum: final-review fixes (2026-09-14)
+
+The five tasks landed byte-identical to the blocks above, each approved by its task review. The final whole-branch review then found no Critical issues but eight Important ones, all in this plan's own text rather than in the transcription. They were fixed in one wave (71e11c7..62a5600). A residual crash path introduced by that wave was fixed on the user's decision (6f970c6). **Where the code on `main` differs from the task blocks above, the code and its tests are authoritative.** 366 tests.
+
+| # | What changed | Why |
+|---|---|---|
+| I1 | The closing question (project clear, DEM removal, unload) repeats until a save succeeds or the user chooses Discard | Choosing Save and then cancelling the file dialog, or a save that failed, dropped the session silently. |
+| I2 | `build_zip.sh` resolves the output directory to an absolute path before staging, and also excludes `*~`, `*.swp`, `.pytest_cache` | `scripts/build_zip.sh .` printed a ZIP path and exited 0, but the ZIP had been written inside the staging folder the trap deletes. |
+| I3 | `FeatureStack` keeps running cut/fill totals, adjusted over the changed window in `update()`; `SketchController.totals()` returns them; `_refresh_volumes` is guarded | `totals()` scanned the whole DEM on every commit (0.11 s at 10 M px, 0.70 s and about 1.5 GB of temporary arrays at 50 M px), from an unguarded slot. |
+| I4 | Fill, cut and storage labels word-wrap | The storage text pushed the page from 215 px to 481 px wide whenever a pond was selected. |
+| I5 | The dock leaves the Properties page when the feature it shows no longer exists | After Delete, the page kept showing the deleted feature with stale totals. |
+| I6 | The "failed open changes nothing" test saves to `mine` and opens `theirs` | As written, it could not detect a path retargeted to the file that failed to open. |
+| I7 | `save()` refuses when `<target>-wal` or `-shm` exists | Replacing a GeoPackage another program holds open in WAL mode can pair the new file with a stale WAL, which SQLite documents as a corruption path. |
+| I8 | `save()` refuses to replace an existing file that is not a Terrain Sketch scenario (no `terrain_sketch_meta` table) | Save could replace a GeoPackage holding the DEM or other layers, destroying every layer in it. |
+| R | The replace check runs inside `save()`'s `try` | A GDAL error while checking (e.g. "database is locked") escaped the Save slot and aborted QGIS; the fix wave's own test reproduced the abort. |
+| — | Smaller: the second-save test checks what was written; a no-op assertion was removed; the Save/Open dialogs start in the scenario's folder or the project home; a test docstring now matches its one-directional check; the two new refusal messages live in `scenario.py`, since `qgis_io` may not import `gui` | Each confirmed by review. |
+
+### Additions to the manual check
+9. Change a feature, **File ▸ New Project**, choose Save, then cancel the file dialog. The question should come back; Discard should let the project close.
+10. Quit QGIS (Cmd+Q) with unsaved work. Terrain Sketch should ask after QGIS's own save-project question, and nothing should hang.
+11. Close or float the Terrain Sketch panel, then close the project. The question should still appear in a sensible place.
+12. Disable the plugin with unsaved work. The question appears after both panels have gone; check that this is understandable.
+13. Remove the DEM with a never-saved scenario and choose Save. The file dialog opens while QGIS is still removing the layer; check that it behaves.
+14. Save a scenario while its `.gpkg` is loaded as a layer. Expect a refusal asking you to remove the layer first.
+15. Select a pond. The dock should not get wider than with a dike selected.
+
+### Deferred to Plan 7 (in addition to the table above)
+| Item | Why not here |
+|---|---|
+| Saving right after opening a scenario made on a different DEM rewrites its metadata with this DEM's | A decision (Save as first? keep the session dirty?), not a defect. |
+| Tests never disconnect `SketchController` from the `QgsProject` singleton | Controllers accumulate across the run. It forced one extra stub reset now that the closing question repeats. |
+| `_check_replaceable` is check-then-replace | Another program could open the file between the check and `os.replace`; accepted as ruled. |
+| Deferred minors: `cubic_metres` hint should be `float \| None`; `scenario.py` relies on siblings calling `ogr.UseExceptions()`; `load`/`load_meta` repeat one skeleton; `differences()` tested for 2 of 4 labels; no save prompt after deleting every feature of a saved scenario; a `_mark_scenario` helper; `created` kept by string path comparison; no `command -v zip` check | Triaged by the final review as Plan 7. |

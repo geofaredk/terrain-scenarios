@@ -2031,6 +2031,19 @@ def test_restoring_something_never_saved_reports_failure_rather_than_raising():
     assert not settings.restore_state("probe_absent", QSplitter())
 
 
+def test_a_deleted_widget_does_not_raise():
+    """These run from Qt callbacks: a PyQt wrapper whose C++ object is gone raises RuntimeError,
+    and an exception in a callback aborts the interpreter."""
+    from qgis.PyQt import sip
+    splitter = QSplitter()
+    splitter.addWidget(QPushButton())
+    splitter.addWidget(QPushButton())
+    settings.save_state("probe_dead", splitter)
+    sip.delete(splitter)
+    settings.save_state("probe_dead", splitter)              # must not raise
+    assert not settings.restore_state("probe_dead", splitter)
+
+
 def test_a_corrupt_stored_value_does_not_raise():
     settings.save("probe_bad/state", "not a byte array")
     assert not settings.restore_state("probe_bad", QSplitter())
@@ -2082,30 +2095,39 @@ def save_state(name: str, widget) -> None:
     QWidget has `saveGeometry`, so probing for it would silently store the wrong thing for a
     QSplitter, whose layout lives in `saveState`.
     """
-    save(f"{name}/state", widget.saveState())
+    _save_from(f"{name}/state", widget, "saveState")
 
 
 def restore_state(name: str, widget) -> bool:
     """Put a splitter's or window's layout back; False when there is nothing usable stored."""
-    return _restore(load(f"{name}/state"), widget.restoreState)
+    return _restore(load(f"{name}/state"), widget, "restoreState")
 
 
 def save_geometry(name: str, widget) -> None:
     """Persist a top-level widget's position and size."""
-    save(f"{name}/geometry", widget.saveGeometry())
+    _save_from(f"{name}/geometry", widget, "saveGeometry")
 
 
 def restore_geometry(name: str, widget) -> bool:
     """Put a widget's position and size back; False when there is nothing usable stored."""
-    return _restore(load(f"{name}/geometry"), widget.restoreGeometry)
+    return _restore(load(f"{name}/geometry"), widget, "restoreGeometry")
 
 
-def _restore(stored, restorer) -> bool:
+def _save_from(key: str, widget, method: str) -> None:
+    """Ask the widget for its layout and store it. The widget call is inside the guard because a
+    PyQt wrapper whose C++ object is gone raises RuntimeError, and these run from Qt callbacks."""
+    try:
+        save(key, getattr(widget, method)())
+    except Exception:  # noqa: BLE001 — persistence is a convenience, never a failure path
+        pass
+
+
+def _restore(stored, widget, method: str) -> bool:
     if not stored:
         return False
     try:
-        return bool(restorer(stored))
-    except (TypeError, ValueError):
+        return bool(getattr(widget, method)(stored))
+    except Exception:  # noqa: BLE001 — a corrupt blob or a deleted widget must not reach Qt
         return False
 ```
 **File:** `scripts/test.sh`
@@ -2145,6 +2167,8 @@ import os
 import pytest
 from qgis.core import QgsApplication, QgsProject, QgsSettings
 
+from terrain_sketch.gui import settings as plugin_settings
+
 QgsApplication.setPrefixPath(os.environ.get("QGIS_PREFIX_PATH", "/Applications/QGIS-final-4_2_2.app"), True)
 QGIS_APP = QgsApplication([], True)
 QGIS_APP.initQgis()
@@ -2162,7 +2186,7 @@ def clean_project():
 def _clear_plugin_settings() -> None:
     """Drop everything under the plugin's settings group so tests cannot inherit each other's."""
     settings = QgsSettings()
-    settings.beginGroup("terrain_sketch")
+    settings.beginGroup(plugin_settings.GROUP)
     settings.remove("")
     settings.endGroup()
 ```
@@ -2333,8 +2357,8 @@ class ProfileDock(QgsDockWidget):
 ```
 - [ ] **Step 4: Run the tests**
 
-Run: `scripts/test.sh tests/qgis/test_settings.py` → Expected: `6 passed`
-Run: `scripts/test.sh` → Expected: `261 passed`
+Run: `scripts/test.sh tests/qgis/test_settings.py` → Expected: `7 passed`
+Run: `scripts/test.sh` → Expected: `262 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -3977,7 +4001,7 @@ class SketchController(QObject):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_help_messages.py` → Expected: `4 passed`
-Run: `scripts/test.sh` → Expected: `265 passed`
+Run: `scripts/test.sh` → Expected: `266 passed`
 
 - [ ] **Step 5: Commit**
 

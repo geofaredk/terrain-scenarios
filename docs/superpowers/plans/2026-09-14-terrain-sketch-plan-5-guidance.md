@@ -4043,3 +4043,66 @@ From the Plan 3 and Plan 4 addenda: `tr()` on non-literals; `NO_FEATURES_IN_LAYE
 | Milestone | Builds on Plan 5 via |
 |---|---|
 | Scenario GeoPackage, volumes in the UI, undo/redo, the 3D view, error flags, and a packaging script that builds the plugin ZIP | `settings.py` for panel state, `help_texts.py` for every new string, `illustrations/` for any new picture, and the deferred profile-editor items above |
+
+---
+
+## Addendum: final-review fixes
+
+The task blocks above are the plan as written. Five tasks landed on `feat/guidance`, each reviewed as
+it landed, followed by a whole-branch review and one fix wave. **Every one of the five needed a fix
+round** — the highest rate of any plan in this project. **Where this addendum and the task blocks
+disagree, the code is authoritative.**
+
+### Changed after the task blocks
+
+| # | What changed | Why |
+|---|---|---|
+| I1 | `TOOL_DESCRIPTIONS` for both flat tools, and `TOOL_EXAMPLES[RAISE_FLAT]`, now say "the highest/lowest point **on the line or outline you draw**" | They said "the highest point it covers". `operations.py` samples `polygon_rings(part)[0]` — the exterior ring — and `rule_profile` samples only the drawn vertices. The interior is never read. Draw a pad around a knoll, believe the tooltip, and the knoll pokes through; there is no undo. `TOOL_SUMMARIES`, displayed twenty pixels above, already said it correctly. |
+| I2 | `TOOL_EXAMPLES[INTERPOLATE]` now describes a culvert captured as a solid bank | It described creating a ditch the survey had missed. Interpolate grades between the edge elevations: it cannot create a ditch, and would erase one that exists. The tool's own summary and illustration both already said the right thing. |
+| I3 | `tool_add.svg`'s band follows the terrain | Its surface sat at offsets of 7.2 / 11.7 / 9.2 px from the ground where `tool_subtract.svg`'s are 7.8 / 7.3 / 7.8 — the picture flattened the terrain its own caption says it preserves. Now 7.2 / 7.7 / 7.2, with a test asserting both bands stay parallel. |
+| I4 | `_run_reproject` is wrapped, and captures the layer when the message is built | It was the one new Qt-callback path, unguarded and untested — and this branch's previous commit existed only because a `NameError` had been sitting on that exact line. |
+| I5 | An unknown `highlight` key is treated as `None` | It dimmed the entire diagram instead. The test named `..._leaves_every_part_visible` asserted the opposite and passed. |
+| 6 | The splitter round-trip test sets sizes first, then asserts them | An earlier ruling refused this because an unshown splitter reports `[0, 0]`. True of the test as written, wrong as a conclusion: set sizes and it reports them, and the assertion becomes mutation-detecting. The bytes assertion proves storage; this proves restoration. |
+| 7 | The four construction-time `setToolTip` calls are removed | They are `self.tr("literal")`, so `pylupdate` extracts four strings the user can never see while the strings actually shown are unextractable by design — Task 1's own problem, re-created one directory over. |
+| — | Smaller: four dead strings deleted; the slope tip no longer calls 1:3 a "maximum" when larger *n* is flatter; the `LOWER_FLAT` example now says to set Slopes to *Inside the outline*, without which the basin grows outward; a tautological assertion, a dead test helper and two unused imports removed; the theme test no longer calls `refresh_icons()` by hand, so it proves the wiring | Each confirmed by review. |
+
+### Corrections to this plan's own text
+
+- **The plan shipped a `NameError`.** The prototype patch prepended `REPROJECT_UNAVAILABLE` to a
+  `from .help_texts import` line in `main_dock.py` that did not exist, so the edit silently did
+  nothing and the name was used unimported — on the path that runs when Processing is disabled, which
+  no test covers. Task 5's implementer found it unprompted.
+- **Two spec §7.2 items were dropped without a decision being recorded**: the pixel-mode combobox's
+  tooltip containing the three-panel picture, and the tool-specific Height/Depth label
+  ("Height above the highest point…"), which `amount_label()` still renders as a bare "Height". They
+  are now in the deferred table below. Had the second been built, the I1 error above would have been
+  hard to write.
+
+### Process notes, recorded because they cost real time
+
+- **A fix that changes a file a *later* task also emits must re-extract that task's brief.** Task 5's
+  `help_texts` slice is the whole file; after fixing the amount tooltip in Task 3 only the earlier
+  briefs were regenerated, so Task 5 faithfully wrote the old wording back. The suite stayed green —
+  the test asserts the tooltip contains a digit, and the wrong text does too. Byte-comparing the
+  branch against the plan's slices is what caught it.
+- **The dry run must check out `main` after cloning.** Once the feature branch existed, the script was
+  cloning the branch and "verifying" tasks against content they had already produced.
+- **Per-task slices work.** This was the first plan whose dry run passed on the first attempt, and the
+  Plan 4 defect they were introduced to prevent — a task shipping strings only a later task uses — was
+  confirmed absent on the file three tasks write.
+
+### Deferred to Plan 6
+
+| Item | Why not here |
+|---|---|
+| The pixel-mode picture inside the combobox tooltip, and tool-specific H/D labels (spec §7.2) | Dropped by this plan without a recorded decision; the H/D label is the structural fix for the I1 class of error. |
+| Dock geometry under `terrain_sketch/` (spec §7.1) | Only the splitter landed. `save_geometry`/`restore_geometry` exist and are unused, waiting for it. |
+| `QgsCollapsibleGroupBox` collapse state | It writes under its own key, not the plugin's group, and the test that collapses the About box leaves it collapsed in the shared test profile. |
+| Illustration polish | The centre-dot hidden under the outline in `pixels_centre.svg`; the reach bar overrunning the toe in `parameters.svg`; sliver gaps where four straight-based bands meet the wavy terrain; and the four path/flat icons being hard to tell apart at 60×32. |
+| Carried from earlier plans | `reach` rounding to 0.0 on a hard terminus drag; the arrow-key nudge committing per keypress; the unreachable left side of a cross profile; the real area section line; the end-cap asymmetry. |
+
+## Manual check in QGIS (for the human, after merge)
+
+The plan's own manual-check list stands, with one correction: **step 4's expectation was wrong** and is
+fixed above — unticking Symmetric stops break points mirroring, but width, side slope and reach are
+single values that always apply to both sides.

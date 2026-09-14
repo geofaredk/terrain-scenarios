@@ -216,6 +216,22 @@ def test_every_load_gives_the_features_new_ids(tmp_path):
     assert not first & second and not first & saved_ids
 
 
+def test_a_replace_check_that_raises_is_reported_as_a_scenario_error_not_crashed(tmp_path):
+    """`_is_scenario_file` guards only `ogr.Open` — `ExecuteSQL` and friends can still raise
+    RuntimeError (e.g. "database is locked"). That must become ScenarioError, not escape raw:
+    an exception escaping the Save button's Qt slot aborts QGIS."""
+    c = start_session(tmp_path)
+    path = str(tmp_path / "locked.gpkg")
+    save(path, c.features, dem_meta(c.info, c.stack.original))
+    before = (tmp_path / "locked.gpkg").read_bytes()
+
+    with mock.patch.object(scenario, "_is_scenario_file", side_effect=RuntimeError("database is locked")):
+        with pytest.raises(ScenarioError):
+            save(path, c.features, dem_meta(c.info, c.stack.original))
+    assert (tmp_path / "locked.gpkg").read_bytes() == before
+    assert not [n for n in os.listdir(tmp_path) if ".saving-" in n]
+
+
 def test_a_dem_on_a_crs_without_an_epsg_code_is_described_and_written_with_its_crs(tmp_path):
     c = SketchController(QgsProject.instance())
     c.set_dem(dem_layer(tmp_path, crs=LOCAL_GRID))

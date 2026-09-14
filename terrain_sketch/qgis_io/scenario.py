@@ -89,11 +89,11 @@ def save(path: str, features, meta: ScenarioMeta, crs_wkt: str = "") -> Scenario
     driver = ogr.GetDriverByName("GPKG")
     if driver is None:
         raise ScenarioError("This QGIS has no GeoPackage driver, so scenarios cannot be saved.")
-    _check_replaceable(path)
     folder, name = os.path.split(os.path.abspath(path))
     partial = os.path.join(folder, f"{os.path.splitext(name)[0]}.saving-{uuid.uuid4().hex[:8]}.gpkg")
     source = None
     try:
+        _check_replaceable(path)
         source = driver.CreateDataSource(partial)
         if source is None:
             raise ScenarioError(f"Terrain Sketch could not create {path}.")

@@ -328,6 +328,28 @@ def test_every_scenario_button_shows_an_icon_and_says_what_it_does(tmp_path):
     assert icons[0] != icons[1]                    # Save as… and Export DEM… no longer look the same
 
 
+def test_a_replace_check_that_raises_is_shown_as_a_warning_not_crashed(tmp_path):
+    """A RuntimeError out of the replace check (e.g. "database is locked") must reach the user
+    as a message-bar warning, exactly like any other save failure — not escape the Save button's
+    Qt slot, which would abort QGIS."""
+    from unittest import mock
+
+    from terrain_sketch.qgis_io import scenario
+
+    _iface, c, dock = panel(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    path = str(tmp_path / "locked.gpkg")
+    c.save_scenario(path)
+    c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
+    dock.ask_save_path = lambda: path
+
+    with mock.patch.object(scenario, "_is_scenario_file", side_effect=RuntimeError("database is locked")):
+        dock.save_scenario_button.click()
+
+    assert any("database is locked" in text for text in messages(_iface))
+    assert c.is_dirty
+
+
 @pytest.mark.parametrize("typed, replaced", [("flood", True), ("flood.gpkg", False)])
 def test_a_name_typed_without_gpkg_asks_before_replacing_that_scenario(tmp_path, monkeypatch, typed, replaced):
     """The file dialog checks for overwriting before `.gpkg` is added, so an existing flood.gpkg

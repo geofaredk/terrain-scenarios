@@ -1,7 +1,11 @@
-"""Undo and redo for the feature list (spec §7.4)."""
+"""Undo and redo for the feature list, and the keys that reach them (spec §7.4)."""
 from __future__ import annotations
 
-from qgis.PyQt.QtGui import QUndoCommand
+import traceback
+
+from qgis.core import Qgis, QgsMessageLog
+from qgis.PyQt.QtCore import QEvent, QObject
+from qgis.PyQt.QtGui import QKeySequence, QUndoCommand
 
 MERGE_ID = 1  # every mergeable change shares one id; `key` decides whether two actually merge
 
@@ -44,3 +48,36 @@ class FeatureListChange(QUndoCommand):
         self.after = other.after
         self.setObsolete(self.after == self.before)   # stepped back to where it started: no step at all
         return True
+
+
+class UndoKeys(QObject):
+    """Ctrl+Z and Ctrl+Shift+Z for Terrain Sketch while the panel, or the map with a Terrain
+    Sketch tool active, has focus — and QGIS's own undo everywhere else.
+
+    Installed as an event filter. QGIS binds the same keys to layer-editing undo in its main
+    window, and two shortcuts for one key cancel each other out, so this claims the key during
+    `ShortcutOverride` (which Qt sends before resolving shortcuts) and acts on the key press that
+    follows. `applies` decides per event whether the keys are ours; it must not raise."""
+
+    def __init__(self, stack, applies=lambda: True, parent=None):
+        super().__init__(parent)
+        self.stack = stack
+        self.applies = applies
+
+    def eventFilter(self, _watched, event) -> bool:  # noqa: N802 — Qt override
+        kind = event.type()
+        if kind not in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress):
+            return False
+        try:
+            undo = event.matches(QKeySequence.StandardKey.Undo)
+            redo = not undo and event.matches(QKeySequence.StandardKey.Redo)
+            if not (undo or redo) or not self.applies():
+                return False
+            if kind == QEvent.Type.ShortcutOverride:
+                event.accept()
+                return True
+            (self.stack.undo if undo else self.stack.redo)()
+            return True
+        except Exception:  # noqa: BLE001 — an event filter must never raise into Qt
+            QgsMessageLog.logMessage(traceback.format_exc(), "Terrain Sketch", Qgis.MessageLevel.Critical)
+            return False

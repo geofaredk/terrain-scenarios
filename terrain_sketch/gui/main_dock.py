@@ -8,7 +8,7 @@ from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsRubb
 from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
-                                 QStackedWidget, QToolButton, QVBoxLayout, QWidget)
+                                 QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from ..core.tools import Mode
 from ..qgis_io.raster_io import DemError, GeographicDemError
@@ -16,6 +16,7 @@ from ..qgis_io.scenario import ScenarioError
 from .feature_list import FeatureListModel, FeatureListView
 from .help_texts import (EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_REPLACE,
                          SCENARIO_SAVED, SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES)
+from .map_tools.base import SketchTool
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
@@ -25,6 +26,7 @@ from .overlay import PreviewOverlay
 from .properties_page import PropertiesPage
 from .selection import BRUSH_EXTEND_HINT, EDIT_HINT, EDIT_ICON, METHOD_HINTS, Method
 from .tool_gallery import ToolGallery
+from .undo import UndoKeys
 
 PAGE_START, PAGE_GALLERY, PAGE_PROPERTIES = range(3)
 
@@ -36,6 +38,16 @@ def _file_button(icon: str, text: str, tip: str) -> QToolButton:
     button.setIcon(QgsApplication.getThemeIcon(icon))
     button.setText(text)
     button.setToolTip(f"{text}\n{tip}")
+    button.setAutoRaise(True)
+    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+    return button
+
+
+def _action_button(action) -> QToolButton:
+    """An icon-only, auto-raised button for `action`: it follows the action's enabled state and
+    text, so its tooltip always says what will happen ("Undo Add Raise path 1")."""
+    button = QToolButton()
+    button.setDefaultAction(action)
     button.setAutoRaise(True)
     button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
     return button
@@ -77,9 +89,14 @@ class MainDock(QgsDockWidget):
         self.start_button = QPushButton(self.tr("Start"))
         self.start_button.setToolTip(self.tr("Start sketching on this DEM. The DEM itself is never changed."))
         dem_row.addWidget(self.start_button)
+        self.hillshade_box = QCheckBox(self.tr("Hillshade"))
+        dem_row.addWidget(self.hillshade_box)
         layout.addLayout(dem_row)
 
-        tools_row = QHBoxLayout()
+        # A toolbar, like QGIS's own panels: when the panel is narrower than its buttons, the ones
+        # that do not fit move behind the » button instead of forcing the whole panel wider.
+        self.toolbar = QToolBar()
+        self.toolbar.setIconSize(iface.iconSize(True))
         self.new_scenario_button = _file_button(
             "/mActionFileNew.svg", self.tr("New scenario"),
             self.tr("Start again with no features. The DEM stays as it is."))
@@ -95,17 +112,24 @@ class MainDock(QgsDockWidget):
         self.scenario_buttons = (self.new_scenario_button, self.open_scenario_button,
                                  self.save_scenario_button, self.save_as_scenario_button)
         for button in self.scenario_buttons:
-            tools_row.addWidget(button)
+            self.toolbar.addWidget(button)
+        self.undo_action = controller.undo_stack.createUndoAction(self, self.tr("Undo"))
+        self.undo_action.setIcon(QgsApplication.getThemeIcon("/mActionUndo.svg"))
+        self.redo_action = controller.undo_stack.createRedoAction(self, self.tr("Redo"))
+        self.redo_action.setIcon(QgsApplication.getThemeIcon("/mActionRedo.svg"))
+        self.undo_button = _action_button(self.undo_action)
+        self.redo_button = _action_button(self.redo_action)
+        self.toolbar.addSeparator()
+        self.toolbar.addWidget(self.undo_button)
+        self.toolbar.addWidget(self.redo_button)
+        self.toolbar.addSeparator()
         self.export_button = QToolButton()
         self.export_button.setIcon(QgsApplication.getThemeIcon("/mActionSharingExport.svg"))
         self.export_button.setText(self.tr("Export DEM…"))
         self.export_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.export_button.setToolTip(self.tr("Write the modified DEM to a new GeoTIFF, e.g. for a flood simulation."))
-        self.hillshade_box = QCheckBox(self.tr("Hillshade"))
-        tools_row.addWidget(self.export_button)
-        tools_row.addWidget(self.hillshade_box)
-        tools_row.addStretch(1)
-        layout.addLayout(tools_row)
+        self.toolbar.addWidget(self.export_button)
+        layout.addWidget(self.toolbar)
 
         self.model = FeatureListModel(controller, self)
         self.feature_view = FeatureListView(self.model)
@@ -162,6 +186,14 @@ class MainDock(QgsDockWidget):
         controller.message.connect(self._show_message)
         controller.previewUpdated.connect(self._preview_updated)
         controller.previewCleared.connect(lambda: self.overlay.clear())
+        controller.featuresRestored.connect(self._history_restored)
+        # Ctrl+Z / Ctrl+Shift+Z: in the panel always, on the map only while a Terrain Sketch tool is active
+        self.undo_keys = UndoKeys(controller.undo_stack, parent=self)
+        self.installEventFilter(self.undo_keys)
+        if profiles is not None:
+            profiles.installEventFilter(self.undo_keys)   # the Profiles panel is Terrain Sketch too
+        self.canvas_undo_keys = UndoKeys(controller.undo_stack, applies=self._sketch_tool_active, parent=self)
+        iface.mapCanvas().installEventFilter(self.canvas_undo_keys)
         self._session_changed()
 
     def end_drawing(self) -> None:
@@ -189,6 +221,7 @@ class MainDock(QgsDockWidget):
         self.overlay.dispose()
         self.highlight.reset(Qgis.GeometryType.Line)
         self.iface.mapCanvas().scene().removeItem(self.highlight)
+        self.iface.mapCanvas().removeEventFilter(self.canvas_undo_keys)
 
     def _release_tool(self, tool) -> None:
         if tool is not None:
@@ -412,6 +445,21 @@ class MainDock(QgsDockWidget):
         fid = self.feature_view.selected_id()
         if fid is None or fid not in {f.id for f in self.controller.features}:
             self._selection_changed()
+
+    def _sketch_tool_active(self) -> bool:
+        return isinstance(self.iface.mapCanvas().mapTool(), SketchTool)
+
+    def _history_restored(self) -> None:
+        """Undo or redo replaced the feature list underneath whatever the panel shows. A vertex
+        edit or a brush stroke that extends a feature holds that feature's old outline and would
+        put it straight back, so both stop; drawing a new feature does not depend on the list and
+        carries on. The Properties page reloads its fields, which otherwise keep the undone values."""
+        self.stop_editing()
+        if self._brush_fid is not None:
+            self.end_drawing()
+        fid = self.feature_view.selected_id()
+        if self.pages.currentIndex() == PAGE_PROPERTIES and fid is not None and self.controller.find(fid) is not None:
+            self.properties.show_feature(fid)
 
     def _refresh_highlight(self) -> None:
         self._update_highlight(self.feature_view.selected_id())

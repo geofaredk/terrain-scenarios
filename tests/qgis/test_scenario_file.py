@@ -1,0 +1,182 @@
+"""The scenario GeoPackage on its own: what goes into the file and what comes back out."""
+import os
+from unittest import mock
+
+import pytest
+from osgeo import ogr
+from qgis.core import QgsProject
+
+from qgis_helpers import UTM, dem_layer, line_through, square, start_session
+from terrain_sketch.core.tools import Mode, PixelMode, Tool
+from terrain_sketch.gui.controller import SketchController
+from terrain_sketch.qgis_io import scenario
+from terrain_sketch.qgis_io.scenario import (FEATURES_LAYER, META_TABLE, ScenarioError, ScenarioMeta,
+                                             dem_meta, load, load_meta, save)
+
+# A projected CRS with no EPSG code, like a local survey grid. GDAL cannot identify it.
+LOCAL_GRID = ('PROJCS["Local survey grid",GEOGCS["ETRS89",DATUM["ETRS89",SPHEROID["GRS 1980",6378137,'
+              '298.257222101]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],'
+              'PROJECTION["Transverse_Mercator"],PARAMETER["latitude_of_origin",0],'
+              'PARAMETER["central_meridian",9.5],PARAMETER["scale_factor",0.9996],'
+              'PARAMETER["false_easting",500000],PARAMETER["false_northing",0],UNIT["metre",1]]')
+
+
+def two_features(c):
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
+    c.update_feature(dike.id, amount=1.8, width=4.5, slope_n=2.5, reach=12.0,
+                     cross_right=((3.0, -0.6),), long_profile=((0.0, 12.0), (29.0, 13.0)))
+    c.update_feature(pond.id, pixel_mode=PixelMode.ALL_TOUCHED, slopes_inside=True, enabled=False)
+    return c.features
+
+
+def test_a_scenario_round_trips_every_field(tmp_path):
+    c = start_session(tmp_path)
+    saved = two_features(c)
+    path = str(tmp_path / "scenario.gpkg")
+    save(path, saved, dem_meta(c.info, c.stack.original))
+    loaded, _meta = load(path)
+    assert len(loaded) == len(saved)
+    for before, after in zip(saved, loaded):
+        assert after.name == before.name and after.tool is before.tool
+        assert after.mode is before.mode and after.enabled == before.enabled
+        assert after.pixel_mode is before.pixel_mode
+        assert after.amount == before.amount and after.width == before.width
+        assert after.slope_n == before.slope_n and after.reach == before.reach
+        assert after.slopes_inside == before.slopes_inside
+        assert after.cross_left == before.cross_left and after.cross_right == before.cross_right
+        assert after.long_profile == before.long_profile
+        assert after.geometry_wkb == before.geometry_wkb
+
+
+def test_the_saved_order_is_the_order_that_comes_back(tmp_path):
+    c = start_session(tmp_path)
+    saved = two_features(c)
+    path = str(tmp_path / "order.gpkg")
+    save(path, saved, dem_meta(c.info, c.stack.original))
+    assert [f.name for f in load(path)[0]] == [f.name for f in saved]
+
+
+def test_the_file_is_a_readable_geopackage_with_the_documented_layer(tmp_path):
+    c = start_session(tmp_path)
+    path = str(tmp_path / "plain.gpkg")
+    save(path, two_features(c), dem_meta(c.info, c.stack.original))
+    source = ogr.Open(path)                      # opened as a plain GeoPackage, no plugin involved
+    assert source.GetLayerByName(FEATURES_LAYER) is not None
+    layer = source.GetLayerByName(FEATURES_LAYER)
+    names = {layer.GetLayerDefn().GetFieldDefn(i).GetName()
+             for i in range(layer.GetLayerDefn().GetFieldCount())}
+    assert {"order", "name", "tool", "mode", "enabled", "pixel_mode", "params",
+            "cross_profile", "long_profile", "section_line"} <= names
+    assert layer.GetFeatureCount() == 2
+    assert layer.GetNextFeature().GetGeometryRef() is not None    # real geometry, not a blob
+    rows = source.ExecuteSQL(f'SELECT key, value FROM "{META_TABLE}"')
+    keys = {row.GetField("key") for row in rows}
+    source.ReleaseResultSet(rows)
+    assert keys == {"plugin_version", "dem_source", "dem_crs", "dem_extent", "dem_size",
+                    "dem_pixel_size", "created", "modified"}           # spec §8.4, exactly
+
+
+def test_the_metadata_records_the_dem_it_was_built_on(tmp_path):
+    c = start_session(tmp_path)
+    path = str(tmp_path / "meta.gpkg")
+    save(path, c.features, dem_meta(c.info, c.stack.original, version="9.9"))
+    _features, meta = load(path)
+    assert meta.dem_size == f"{c.stack.original.cols}x{c.stack.original.rows}"
+    assert meta.dem_crs.startswith("EPSG:") and meta.plugin_version == "9.9"
+    assert meta.created and meta.modified
+
+
+def test_a_different_dem_is_reported_as_specific_differences():
+    same = ScenarioMeta(dem_crs="EPSG:25832", dem_size="40x40", dem_pixel_size="1.0,1.0")
+    assert same.differences(same) == []
+    other = ScenarioMeta(dem_crs="EPSG:4326", dem_size="80x80", dem_pixel_size="1.0,1.0")
+    assert set(same.differences(other)) == {"coordinate system", "size in pixels"}
+
+
+def test_metadata_a_file_does_not_carry_is_not_reported_as_a_difference():
+    known = ScenarioMeta(dem_crs="EPSG:25832", dem_size="40x40")
+    assert known.differences(ScenarioMeta()) == []      # an older file with no metadata
+
+
+def test_opening_something_that_is_not_a_scenario_is_reported(tmp_path):
+    plain = tmp_path / "notes.txt"
+    plain.write_text("not a geopackage")
+    with pytest.raises(ScenarioError):
+        load(str(plain))
+
+
+def test_opening_something_that_is_not_a_scenario_is_reported_before_loading(tmp_path):
+    path = tmp_path / "notes.gpkg"
+    path.write_text("not a geopackage")
+    with pytest.raises(ScenarioError):
+        load_meta(str(path))
+
+
+def test_saving_where_it_cannot_be_written_is_reported(tmp_path):
+    c = start_session(tmp_path)
+    with pytest.raises(ScenarioError):
+        save(str(tmp_path / "no-such-dir" / "x.gpkg"), c.features, dem_meta(c.info, c.stack.original))
+
+
+def test_a_geopackage_without_the_features_layer_is_not_taken_for_a_scenario(tmp_path):
+    path = str(tmp_path / "other.gpkg")
+    source = ogr.GetDriverByName("GPKG").CreateDataSource(path)
+    source.CreateLayer("roads", None, ogr.wkbLineString)
+    source.Close()
+    with pytest.raises(ScenarioError, match="not a Terrain Sketch scenario"):
+        load(path)
+    with pytest.raises(ScenarioError, match="not a Terrain Sketch scenario"):
+        load_meta(path)
+
+
+def test_a_save_that_fails_half_way_leaves_the_previous_file_readable(tmp_path):
+    c = start_session(tmp_path)
+    features = two_features(c)
+    path = str(tmp_path / "precious.gpkg")
+    save(path, features, dem_meta(c.info, c.stack.original))
+    one_more = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 5, 34, 5), UTM)
+
+    with mock.patch.object(scenario, "_write_meta", side_effect=RuntimeError("disk full")):
+        with pytest.raises(ScenarioError):
+            save(path, c.features, dem_meta(c.info, c.stack.original))
+    assert len(c.features) == 3 and one_more is not None
+    assert len(load(path)[0]) == 2                                  # the last good save survives
+    assert not [n for n in os.listdir(tmp_path) if ".saving-" in n]  # and nothing half-written is left
+
+
+def test_saving_returns_the_dates_it_wrote(tmp_path):
+    c = start_session(tmp_path)
+    path = str(tmp_path / "dates.gpkg")
+    first = save(path, two_features(c), dem_meta(c.info, c.stack.original))
+    assert first.created and first.modified and load_meta(path) == first
+    again = save(path, c.features, dem_meta(c.info, c.stack.original, created="2020-01-01T00:00:00+00:00"))
+    assert again.created == "2020-01-01T00:00:00+00:00"            # a known creation date is kept
+
+
+def test_every_load_gives_the_features_new_ids(tmp_path):
+    """Two scenario files both have a first row. Ids taken from the row would let a panel that
+    is still showing feature 1 of the old scenario silently edit feature 1 of the new one."""
+    c = start_session(tmp_path)
+    saved_ids = {f.id for f in two_features(c)}
+    path = str(tmp_path / "ids.gpkg")
+    save(path, c.features, dem_meta(c.info, c.stack.original))
+    first = {f.id for f in load(path)[0]}
+    second = {f.id for f in load(path)[0]}
+    assert len(first) == len(second) == 2
+    assert not first & second and not first & saved_ids
+
+
+def test_a_dem_on_a_crs_without_an_epsg_code_is_described_and_written_with_its_crs(tmp_path):
+    c = SketchController(QgsProject.instance())
+    c.set_dem(dem_layer(tmp_path, crs=LOCAL_GRID))
+    meta = dem_meta(c.info, c.stack.original)                     # raised "Unsupported SRS" before
+    assert meta.dem_crs == "Local survey grid"
+    path = str(tmp_path / "local.gpkg")
+    save(path, [], meta, crs_wkt=c.info.crs_wkt)
+
+    source = ogr.Open(path)                        # held: a layer dies with its datasource
+    srs = source.GetLayerByName(FEATURES_LAYER).GetSpatialRef()
+    assert srs is not None                         # QGIS draws the outlines in the right place
+    assert srs.GetName() == "Local survey grid"
+    source = None

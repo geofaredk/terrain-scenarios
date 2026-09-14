@@ -134,8 +134,10 @@ TOOL_DESCRIPTIONS = {
 }
 
 FIELD_TIPS = {
-    "amount": ("How far the feature rises or cuts. For a 1.5 m embankment, set 1.5 — the crest "
-               "ends up 1.5 m above the grade between the path's ends."),
+    "amount": ("How far the feature rises (height) or cuts (depth): above or below the straight "
+               "grade between the path's ends, the highest or lowest point of the path or "
+               "outline, or the terrain itself for Add and Subtract. For a 1.5 m embankment, "
+               "set 1.5."),
     "width": ("How wide the flat part is — the crest of a dike, or the bottom of a ditch. A farm "
               "track is about 3 m; a footpath about 1.5 m."),
     "slope_n": ("How far the side slope runs out for every metre of height. 1:3 means 3 m "

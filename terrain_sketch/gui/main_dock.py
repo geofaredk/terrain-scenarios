@@ -279,8 +279,8 @@ class MainDock(QgsDockWidget):
     def _drawing_hint(self, method) -> str:
         """The instruction text for `method`, naming the feature when the brush extends one."""
         if self._brush_fid is not None:
-            return self.tr(BRUSH_EXTEND_HINT).format(self.controller.feature(self._brush_fid).name)
-        return self.tr(METHOD_HINTS[method])
+            return BRUSH_EXTEND_HINT.format(self.controller.feature(self._brush_fid).name)
+        return METHOD_HINTS[method]
 
     def _brush_target(self, tool, mode) -> str | None:
         """The selected feature the brush should extend, if it fits the chosen tool and shape."""
@@ -322,7 +322,7 @@ class MainDock(QgsDockWidget):
         self.edit_tool.cancelled.connect(self.stop_editing)
         self._previous_tool = canvas.mapTool()
         canvas.setMapTool(self.edit_tool)
-        self.hint.setText(self.tr(EDIT_HINT))
+        self.hint.setText(EDIT_HINT)
         self.hint.show()
 
     def _edited(self, fid, geometry) -> None:

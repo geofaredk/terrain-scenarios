@@ -1,4 +1,11 @@
-"""User-facing names, descriptions and messages in one place (extended in Plan 5)."""
+"""Every description, example, tooltip and message the user reads, in one place.
+
+Translation: these are plain strings, not `tr()` calls, and nothing wraps them at the point of
+use either — `tr()` on a variable cannot be extracted by pylupdate, so wrapping them there would
+look like translation support without providing any. The plugin is English-only for v1 (spec
+§7.1); when translations arrive, this module is the single place to mark them, and the widgets
+that already call `self.tr("...")` on literal captions keep working unchanged.
+"""
 from __future__ import annotations
 
 from ..core.operations import FLAG_BAD_GEOMETRY, FLAG_NO_PIXELS, FLAG_NODATA_REFERENCE, FLAG_OUTSIDE

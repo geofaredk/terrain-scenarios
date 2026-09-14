@@ -130,17 +130,66 @@ def test_a_geopackage_without_the_features_layer_is_not_taken_for_a_scenario(tmp
         load_meta(path)
 
 
+def test_saving_over_a_file_open_as_a_wal_layer_is_refused(tmp_path):
+    """`os.replace` over a GeoPackage another program holds open in WAL mode (QGIS showing the
+    scenario as a layer) leaves that program's `-wal`/`-shm` beside the new file — SQLite
+    documents that pairing as a corruption path."""
+    c = start_session(tmp_path)
+    path = str(tmp_path / "open-elsewhere.gpkg")
+    save(path, c.features, dem_meta(c.info, c.stack.original))
+    before = (tmp_path / "open-elsewhere.gpkg").read_bytes()
+    (tmp_path / "open-elsewhere.gpkg-wal").write_bytes(b"")
+
+    with pytest.raises(ScenarioError):
+        save(path, c.features, dem_meta(c.info, c.stack.original))
+    assert (tmp_path / "open-elsewhere.gpkg").read_bytes() == before
+
+
+def test_saving_over_a_geopackage_that_is_not_a_scenario_is_refused(tmp_path):
+    """`os.replace` destroys every layer in the file it replaces — so a GeoPackage that holds
+    the DEM or a user's other layers, not a scenario, must never be chosen as a save target."""
+    c = start_session(tmp_path)
+    path = str(tmp_path / "other.gpkg")
+    source = ogr.GetDriverByName("GPKG").CreateDataSource(path)
+    source.CreateLayer("roads", None, ogr.wkbLineString)
+    source.Close()
+    before = (tmp_path / "other.gpkg").read_bytes()
+
+    with pytest.raises(ScenarioError, match="not a Terrain Sketch scenario"):
+        save(path, c.features, dem_meta(c.info, c.stack.original))
+    assert (tmp_path / "other.gpkg").read_bytes() == before
+
+
+def test_saving_over_a_non_geopackage_file_is_refused(tmp_path):
+    c = start_session(tmp_path)
+    path = tmp_path / "notes.gpkg"
+    path.write_text("not a geopackage")
+    before = path.read_bytes()
+
+    with pytest.raises(ScenarioError, match="not a Terrain Sketch scenario"):
+        save(str(path), c.features, dem_meta(c.info, c.stack.original))
+    assert path.read_bytes() == before
+
+
+def test_replacing_an_existing_scenario_still_works(tmp_path):
+    c = start_session(tmp_path)
+    path = str(tmp_path / "existing.gpkg")
+    save(path, c.features, dem_meta(c.info, c.stack.original))
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    save(path, c.features, dem_meta(c.info, c.stack.original))
+    assert len(load(path)[0]) == 1
+
+
 def test_a_save_that_fails_half_way_leaves_the_previous_file_readable(tmp_path):
     c = start_session(tmp_path)
     features = two_features(c)
     path = str(tmp_path / "precious.gpkg")
     save(path, features, dem_meta(c.info, c.stack.original))
-    one_more = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 5, 34, 5), UTM)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 5, 34, 5), UTM)
 
     with mock.patch.object(scenario, "_write_meta", side_effect=RuntimeError("disk full")):
         with pytest.raises(ScenarioError):
             save(path, c.features, dem_meta(c.info, c.stack.original))
-    assert len(c.features) == 3 and one_more is not None
     assert len(load(path)[0]) == 2                                  # the last good save survives
     assert not [n for n in os.listdir(tmp_path) if ".saving-" in n]  # and nothing half-written is left
 

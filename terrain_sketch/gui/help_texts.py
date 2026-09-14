@@ -207,5 +207,9 @@ SCENARIO_DEM_DIFFERS = ("This scenario was made on a DEM with a different {}.\n\
                         "for and press Start before opening it.")
 SCENARIO_NOT_APPLIED = ("The scenario could not be applied to this DEM, so it was not opened. "
                         "Your current features are unchanged.")
+SCENARIO_FILE_IN_USE = ("{} is open in another program (such as a layer in QGIS), so it was not saved. "
+                        "Remove that layer or close the program, then try again.")
+SCENARIO_WOULD_REPLACE_OTHER_FILE = ("{} is not a Terrain Sketch scenario, so saving would replace it "
+                                     "entirely. Choose another name.")
 UNSAVED_BEFORE_CLOSING = ("Terrain Sketch is closing this scenario, and it has changes that are not "
                           "saved. Save them now?")

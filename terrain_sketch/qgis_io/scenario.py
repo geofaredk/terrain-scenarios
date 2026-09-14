@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from osgeo import ogr, osr
 
 from ..core.tools import Mode, PixelMode, Tool
+from ..gui.help_texts import SCENARIO_FILE_IN_USE, SCENARIO_WOULD_REPLACE_OTHER_FILE
 from ..model.feature import TerrainFeature
 
 FEATURES_LAYER = "features"
@@ -81,6 +82,7 @@ def save(path: str, features, meta: ScenarioMeta, crs_wkt: str = "") -> Scenario
     driver = ogr.GetDriverByName("GPKG")
     if driver is None:
         raise ScenarioError("This QGIS has no GeoPackage driver, so scenarios cannot be saved.")
+    _check_replaceable(path)
     folder, name = os.path.split(os.path.abspath(path))
     partial = os.path.join(folder, f"{os.path.splitext(name)[0]}.saving-{uuid.uuid4().hex[:8]}.gpkg")
     source = None
@@ -107,6 +109,42 @@ def save(path: str, features, meta: ScenarioMeta, crs_wkt: str = "") -> Scenario
     except Exception as error:  # noqa: BLE001 — GDAL raises many types; the user gets one message
         _discard_partial(source, partial)
         raise ScenarioError(f"Terrain Sketch could not save the scenario: {error}") from error
+
+
+def _check_replaceable(path: str) -> None:
+    """Refuse to let `save` replace `path` whole when that would be unsafe. `os.replace` destroys
+    every layer already in the file, so the target must already be a Terrain Sketch scenario —
+    and even then, not one another program currently has open."""
+    if os.path.exists(path + "-wal") or os.path.exists(path + "-shm"):
+        # SQLite documents leaving WAL/SHM siblings orphaned beside a file swapped in under a
+        # program that still has the original open (as QGIS does for a scenario shown as a
+        # layer) as a corruption path.
+        raise ScenarioError(SCENARIO_FILE_IN_USE.format(path))
+    if os.path.exists(path) and not _is_scenario_file(path):
+        raise ScenarioError(SCENARIO_WOULD_REPLACE_OTHER_FILE.format(path))
+
+
+def _is_scenario_file(path: str) -> bool:
+    """Whether `path` already holds a Terrain Sketch scenario. Checked on the GeoPackage's own
+    SQLite catalogue rather than through `_open`/`FEATURES_LAYER`: an empty scenario (no features
+    yet) still has `META_TABLE`, and that table was written with a plain `CREATE TABLE`, not
+    through OGR's own layer-creation API, so it never appears via `GetLayerByName` either way."""
+    try:
+        source = ogr.Open(path)
+    except RuntimeError:                           # the plugin runs GDAL with exceptions on
+        return False
+    if source is None:
+        return False
+    try:
+        result = source.ExecuteSQL(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{META_TABLE}'")
+        if result is None:
+            return False
+        try:
+            return result.GetFeatureCount() > 0
+        finally:
+            source.ReleaseResultSet(result)
+    finally:
+        source.Close()
 
 
 def _discard_partial(source, partial: str) -> None:

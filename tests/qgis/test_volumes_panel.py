@@ -48,6 +48,36 @@ def test_storage_is_hidden_for_a_tool_that_cannot_hold_water(tmp_path):
     assert page.volume_form.isRowVisible(page.storage_value)   # and it comes back
 
 
+def test_the_storage_line_wraps_instead_of_widening_the_page(tmp_path):
+    """The Storage value (`≈ 128 m³ below the lowest rim point (static, no inflow routing)`) is
+    long prose, not a number to keep on one line — without word wrap it forces the whole page
+    much wider whenever a pond (which shows Storage) is selected instead of a dike (which does
+    not)."""
+    c = start_session(tmp_path)
+    # The dike sits away from the pond (row 5 vs. the pond's rows 10-25): overlapping them would
+    # raise the ground the pond is dug into and leave it without a rim, so Storage would read
+    # "—" instead of the long line this is about.
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 5, 34, 5), UTM)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
+    c.update_feature(pond.id, amount=1.5)
+    assert c.stats(pond.id).storage is not None      # otherwise this is not exercising the long line
+
+    def width_for(fid) -> int:
+        # A fresh page per feature: reusing one and switching `show_feature` mid-test leaves a
+        # once-activated Qt layout that does not widen back out for a later, wider selection in
+        # this offscreen test platform — unlike a real docked panel, which reflows on every resize.
+        page = PropertiesPage(c)
+        page.show()
+        page.show_feature(fid)
+        page.layout().invalidate()
+        page.layout().activate()
+        return page.minimumSizeHint().width()
+
+    dike_width = width_for(dike.id)
+    pond_width = width_for(pond.id)
+    assert pond_width <= dike_width + 40, (dike_width, pond_width)
+
+
 def test_selecting_another_feature_shows_its_own_problems(tmp_path):
     """The Volumes group must not take the place of the problem check when a feature is shown."""
     c = start_session(tmp_path)
@@ -79,8 +109,10 @@ def test_interpolate_shows_storage_for_an_area_but_not_along_a_path(tmp_path):
 
 def test_the_panel_and_the_engine_agree_on_which_features_have_storage(tmp_path):
     """The row is shown by `reports_storage`; the figure is computed by the engine. A feature the
-    engine gives storage to must never have its row hidden, and a hidden row must mean the
-    engine computed none — otherwise the panel hides a number or shows one that is not there."""
+    engine gives storage to must never have its row hidden — otherwise the panel computes a
+    number nobody sees while showing `NO_VOLUME_YET` in its place. `reports_storage` is allowed
+    to show the row for a feature the engine happens to give no storage (a pond with no rim, say);
+    this only checks the direction that would otherwise hide a real figure."""
     c = start_session(tmp_path, np.pad(np.full((20, 20), 5.0, np.float32), 10, constant_values=10.0))
     shapes = {Mode.PATH: line_through(5, 20, 34, 20), Mode.AREA: square(12, 12, 27, 27)}
     for tool, info in TOOL_INFO.items():
@@ -134,6 +166,30 @@ def test_a_disabled_feature_leaves_nothing_in_the_totals(tmp_path):
     c.update_feature(dike.id, enabled=False)
     assert c.totals() == (0.0, 0.0)
     assert page.totals_value.text() == SCENARIO_TOTALS.format(fill=cubic_metres(0.0), cut=cubic_metres(0.0))
+
+
+def test_a_refresh_volumes_failure_is_logged_not_raised(tmp_path, monkeypatch):
+    """`_refresh_volumes` runs from `featuresChanged`, a Qt signal — an exception escaping it
+    takes QGIS down, the same rule the engine and the file/layer writes in `_set` already
+    follow."""
+    import terrain_sketch.gui.properties_page as properties_page_module
+
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    page = PropertiesPage(c)
+    page.show_feature(dike.id)
+
+    log = []
+    monkeypatch.setattr(properties_page_module.QgsMessageLog, "logMessage",
+                        staticmethod(lambda text, *a, **kw: log.append(text)))
+
+    def boom():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(c, "totals", boom)
+    page._refresh_volumes()          # must not raise
+
+    assert log and "RuntimeError" in log[-1]
 
 
 @pytest.mark.parametrize("value, expected", [

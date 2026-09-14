@@ -1,6 +1,9 @@
 """Values of the selected feature; every change is applied to the terrain immediately."""
 from __future__ import annotations
 
+import traceback
+
+from qgis.core import Qgis, QgsMessageLog
 from qgis.gui import QgsCollapsibleGroupBox, QgsDoubleSpinBox
 from qgis.PyQt.QtCore import QEvent, QSize, Qt
 from qgis.PyQt.QtWidgets import QComboBox, QFormLayout, QLabel, QVBoxLayout, QWidget
@@ -8,6 +11,7 @@ from qgis.PyQt.QtWidgets import QComboBox, QFormLayout, QLabel, QVBoxLayout, QWi
 from ..core.sections import supports_long_profile
 from ..core.tools import TOOL_INFO, Mode, PixelMode, reports_storage
 from . import illustrations
+from .controller import LOG_TAG
 from .help_texts import (AMOUNT_IS_CUSTOM, FIELD_TIPS, FLAG_TEXTS, NO_VOLUME_YET, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS,
                          SCENARIO_TOTALS, TOOL_DESCRIPTIONS, TOOL_EXAMPLES, TOOL_LABELS, TOOL_SUMMARIES,
                          VOLUME_CUT_TIP, VOLUME_FILL_TIP, VOLUME_STORAGE_NOTE, VOLUME_STORAGE_TIP, amount_label,
@@ -82,10 +86,13 @@ class PropertiesPage(QWidget):
         self.volumes = QgsCollapsibleGroupBox(self.tr("Volumes"))
         self.volumes.setObjectName("TerrainSketchVolumes")
         self.fill_value = QLabel()
+        self.fill_value.setWordWrap(True)
         self.fill_value.setToolTip(VOLUME_FILL_TIP)
         self.cut_value = QLabel()
+        self.cut_value.setWordWrap(True)
         self.cut_value.setToolTip(VOLUME_CUT_TIP)
         self.storage_value = QLabel()
+        self.storage_value.setWordWrap(True)
         self.storage_value.setToolTip(VOLUME_STORAGE_TIP)
         self.totals_value = QLabel()
         self.totals_value.setWordWrap(True)
@@ -191,21 +198,27 @@ class PropertiesPage(QWidget):
 
     def _refresh_volumes(self) -> None:
         """Per-feature cut, fill and (for the tools that hold water) storage, plus the scenario
-        totals. Storage is hidden rather than shown as zero for a tool that cannot hold water."""
-        feature = self.controller.find(self._fid) if self._fid is not None else None
-        if feature is None:
-            return
-        stats = self.controller.stats(self._fid)
-        self.fill_value.setText(cubic_metres(stats.fill))
-        self.cut_value.setText(cubic_metres(stats.cut))
-        shows_storage = reports_storage(feature.tool, feature.mode)
-        self.volume_form.setRowVisible(self.storage_value, shows_storage)
-        if shows_storage:
-            self.storage_value.setText(
-                f"≈ {cubic_metres(stats.storage)} {VOLUME_STORAGE_NOTE}"
-                if stats.storage is not None else NO_VOLUME_YET)
-        cut, fill = self.controller.totals()
-        self.totals_value.setText(SCENARIO_TOTALS.format(fill=cubic_metres(fill), cut=cubic_metres(cut)))
+        totals. Storage is hidden rather than shown as zero for a tool that cannot hold water.
+
+        Runs from `featuresChanged`, a Qt signal — an exception escaping it aborts QGIS, so any
+        failure here is logged instead of raised, the same rule the controller itself follows."""
+        try:
+            feature = self.controller.find(self._fid) if self._fid is not None else None
+            if feature is None:
+                return
+            stats = self.controller.stats(self._fid)
+            self.fill_value.setText(cubic_metres(stats.fill))
+            self.cut_value.setText(cubic_metres(stats.cut))
+            shows_storage = reports_storage(feature.tool, feature.mode)
+            self.volume_form.setRowVisible(self.storage_value, shows_storage)
+            if shows_storage:
+                self.storage_value.setText(
+                    f"≈ {cubic_metres(stats.storage)} {VOLUME_STORAGE_NOTE}"
+                    if stats.storage is not None else NO_VOLUME_YET)
+            cut, fill = self.controller.totals()
+            self.totals_value.setText(SCENARIO_TOTALS.format(fill=cubic_metres(fill), cut=cubic_metres(cut)))
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _changed(self, field: str, value) -> None:
         if self._fid is not None and not self._loading:

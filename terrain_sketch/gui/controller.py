@@ -16,7 +16,6 @@ from ..core.engine import FeatureStack
 from ..core.operations import FeatureStats
 from ..core.sections import long_section, rescale_long_profile
 from ..core.tools import Mode, Tool
-from ..core.volumes import total_cut_fill
 from ..model.feature import TerrainFeature, new_feature
 from ..qgis_io import scenario
 from ..qgis_io.convert import from_wkb, to_dem_wkb
@@ -289,10 +288,11 @@ class SketchController(QObject):
         self._run_preview()
 
     def totals(self) -> tuple[float, float]:
-        """(cut, fill) for the whole scenario, in cubic metres."""
+        """(cut, fill) for the whole scenario, in cubic metres. `FeatureStack` keeps this running
+        incrementally, so reading it does not rescan the whole grid on every commit."""
         if not self.has_dem:
             return (0.0, 0.0)
-        return total_cut_fill(self.stack.original, self.stack.working)
+        return self.stack.totals
 
     @property
     def is_dirty(self) -> bool:

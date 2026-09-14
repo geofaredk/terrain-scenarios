@@ -10,6 +10,7 @@ from terrain_sketch.core.geometry import line_wkb, polygon_wkb
 from terrain_sketch.core.grid import DemGrid
 from terrain_sketch.core.operations import FLAG_OUTSIDE, apply_feature
 from terrain_sketch.core.tools import TOOL_INFO, Mode, PixelMode, Tool
+from terrain_sketch.core.volumes import total_cut_fill
 
 
 def square(x0, y0, x1, y1):
@@ -156,6 +157,52 @@ def test_windowed_updates_match_full_replay(seed):
         stack.update(features)
         np.testing.assert_allclose(stack.working.data, oracle(stack.original, features), atol=1e-4,
                                    err_msg=f"seed {seed} step {step}")
+
+
+def _assert_totals_match(stack, label=None):
+    """`stack.totals` is maintained incrementally by `update()`; it must always agree with a
+    from-scratch `total_cut_fill` over the whole grid, not just the windows `update()` touched."""
+    expected_cut, expected_fill = total_cut_fill(stack.original, stack.working)
+    cut, fill = stack.totals
+    for actual, expected in ((cut, expected_cut), (fill, expected_fill)):
+        assert actual >= 0.0, label                     # clamped: never a negative running total
+        if expected == 0.0:
+            assert actual == pytest.approx(0.0, abs=1e-6), label
+        else:
+            assert actual == pytest.approx(expected, rel=1e-6), label
+
+
+def test_a_new_stack_has_zero_running_totals():
+    stack = FeatureStack(make_grid(flat(10)))
+    assert stack.totals == (0.0, 0.0)
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_running_totals_match_a_full_recompute_through_adds_edits_disables_reorders_and_deletes(seed):
+    rng = np.random.default_rng(seed)
+    size = 60
+    stack = FeatureStack(make_grid(lambda X, Y: 10 + 0.05 * X + 2 * np.sin(X / 7) * np.cos(Y / 5),
+                                   rows=size, cols=size))
+    features = [random_feature(rng, i, size) for i in range(int(rng.integers(1, 9)))]
+    stack.update(features)
+    _assert_totals_match(stack, (seed, "initial"))
+    for step in range(8):
+        action = int(rng.integers(5))
+        if action == 0 and features:                    # edit
+            k = int(rng.integers(len(features)))
+            features[k] = replace(features[k], amount=float(rng.uniform(0.2, 3)))
+        elif action == 1 and features:                   # disable/enable
+            k = int(rng.integers(len(features)))
+            features[k] = replace(features[k], enabled=not features[k].enabled)
+        elif action == 2 and len(features) > 1:           # reorder
+            i, j = rng.choice(len(features), 2, replace=False)
+            features[i], features[j] = features[j], features[i]
+        elif action == 3 and features:                    # delete
+            features.pop(int(rng.integers(len(features))))
+        else:                                              # add
+            features.append(random_feature(rng, 100 + step, size))
+        stack.update(features)
+        _assert_totals_match(stack, (seed, step))
 
 
 _X0, _Y0, _CELL, _N = 612345.6, 6178901.2, 0.4, 60

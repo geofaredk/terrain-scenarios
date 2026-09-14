@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from osgeo import ogr, osr
 
 from ..core.tools import Mode, PixelMode, Tool
-from ..gui.help_texts import SCENARIO_FILE_IN_USE, SCENARIO_WOULD_REPLACE_OTHER_FILE
 from ..model.feature import TerrainFeature
 
 FEATURES_LAYER = "features"
@@ -28,6 +27,14 @@ FIELDS = (("order", ogr.OFTInteger), ("name", ogr.OFTString), ("tool", ogr.OFTSt
           ("long_profile", ogr.OFTString), ("section_line", ogr.OFTString))
 # section_line is written as null: no feature carries a custom area section line yet, and the
 # field is kept so a file written now still has the documented layout when one does (spec §8.4).
+
+# qgis_io/scenario.py cannot import gui/help_texts.py (Global Constraints: "qgis_io/scenario.py
+# uses ogr/osr only"), so these messages live beside the rest of this module's own ScenarioError
+# text (e.g. "Terrain Sketch could not create {path}." below) rather than there.
+SCENARIO_FILE_IN_USE = ("{} is open in another program (such as a layer in QGIS), so it was not saved. "
+                        "Remove that layer or close the program, then try again.")
+SCENARIO_WOULD_REPLACE_OTHER_FILE = ("{} is not a Terrain Sketch scenario, so saving would replace it "
+                                     "entirely. Choose another name.")
 
 
 class ScenarioError(Exception):

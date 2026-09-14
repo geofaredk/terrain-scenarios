@@ -83,7 +83,11 @@ def test_the_diagram_is_hidden_for_a_tool_that_has_no_slopes(tmp_path):
 
 def test_every_numeric_field_quotes_a_real_measurement_in_its_tooltip(tmp_path):
     c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     page = PropertiesPage(c)
+    # check AFTER a feature is shown: that is the only state in which these fields are visible,
+    # and show_feature rewrites the amount tooltip, so checking before it proves nothing
+    page.show_feature(dike.id)
     for widget in (page.amount, page.width, page.slope, page.reach):
         tip = widget.toolTip()
         assert len(tip) > 40, tip

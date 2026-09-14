@@ -216,11 +216,20 @@ class SketchController(QObject):
         return True
 
     def update_feature(self, fid: str, **changes) -> None:
+        self._update(fid, changes, _describe)
+
+    def update_profile(self, fid: str, **changes) -> None:
+        """A change made in the Profiles panel: one undo step per drag or reset, never merged, and
+        named as a profile change — even though a cross-profile drag also moves the width, slope
+        and reach, which on their own would count as settings."""
+        self._update(fid, changes, lambda feature, _changes: (UNDO_PROFILE.format(feature.name), None))
+
+    def _update(self, fid: str, changes: dict, describe) -> None:
         self.cancel_preview()  # the committed result replaces whatever the overlay was showing
         feature = self.find(fid)
         if feature is None:
             return
-        text, key = _describe(feature, changes)
+        text, key = describe(feature, changes)
         self._commit([replace(f, **changes) if f.id == fid else f for f in self._features], text, key)
 
     def set_enabled(self, fid: str, enabled: bool) -> None:
@@ -311,9 +320,10 @@ class SketchController(QObject):
 
     @property
     def is_dirty(self) -> bool:
-        """Whether the features differ from the last save or load of a scenario. Follows undo:
-        undoing back to the saved state makes the scenario clean again."""
-        return not self.undo_stack.isClean()
+        """Whether there is work a save would keep: the features differ from the last save or load.
+        Follows undo — undoing back to the saved state makes the scenario clean again — and a
+        scenario that was never saved and has been emptied again has nothing to keep."""
+        return not self.undo_stack.isClean() and bool(self._features or self._scenario_path)
 
     @property
     def scenario_path(self) -> str | None:
@@ -410,6 +420,7 @@ class SketchController(QObject):
         was records nothing, so it neither costs an undo step nor marks the scenario unsaved."""
         before, after = tuple(self._features), tuple(features)
         if after == before:
+            self.featuresChanged.emit()   # a view showing values the change normalised away re-syncs
             return True
         if not self._set(after):
             return False
@@ -418,10 +429,13 @@ class SketchController(QObject):
 
     def _restore(self, features) -> None:
         """Undo or redo. Runs inside QUndoStack from a button or a key, so it never raises: `_set`
-        already turns an engine failure into a message."""
+        already turns an engine failure into a message. The stack moves its index even when the
+        engine refuses the list, so the saved state is forgotten then: an unchanged list that
+        happened to land on the saved step must not be reported as saved."""
         self.cancel_preview()
         if self.stack is not None:
-            self._set(features)
+            if not self._set(features):
+                self.undo_stack.resetClean()
             self.featuresRestored.emit()
 
     def _outline_items(self) -> list:

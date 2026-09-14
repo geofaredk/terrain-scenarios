@@ -138,17 +138,17 @@ class ProfileDock(QgsDockWidget):
 
     def _apply(self, changes: dict, commit: bool) -> None:
         if commit:
-            self.controller.update_feature(self._fid, **changes)
+            self.controller.update_profile(self._fid, **changes)
         else:
             self.controller.preview(self._fid, **changes)
 
     def _reset_cross(self) -> None:
         if self._fid is not None:
-            self.controller.update_feature(self._fid, cross_left=(), cross_right=())
+            self.controller.update_profile(self._fid, cross_left=(), cross_right=())
 
     def _reset_long(self) -> None:
         if self._fid is not None:
-            self.controller.update_feature(self._fid, long_profile=None)
+            self.controller.update_profile(self._fid, long_profile=None)
 
     def _session_changed(self) -> None:
         if not self.controller.has_dem:

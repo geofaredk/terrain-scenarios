@@ -8,6 +8,7 @@ from terrain_sketch.core.engine import FeatureStack
 from terrain_sketch.core.tools import Mode, PixelMode, Tool
 from terrain_sketch.gui.help_texts import (UNDO_ADD, UNDO_DELETE, UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER,
                                            UNDO_SETTINGS, UNDO_SHAPE, UNDO_TURN_OFF, UNDO_TURN_ON)
+from terrain_sketch.gui.profile_dock import ProfileDock
 
 
 def terrain(c):
@@ -208,3 +209,83 @@ def test_a_long_run_of_undo_and_redo_keeps_the_terrain_exact(tmp_path):
     while c.undo_stack.canRedo():
         c.undo_stack.redo()
         assert np.array_equal(terrain(c), replayed(c))
+
+
+def test_each_drag_in_the_profiles_panel_is_its_own_profile_step(tmp_path):
+    """The panel's cross-profile drags also move width, slope and reach, which alone count as
+    settings; they must still be one named profile step each, never merged."""
+    c = start_session(tmp_path)
+    dike, pond = dike_and_pond(c)
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    start = c.undo_stack.index()
+    dock._cross_edited([(0.0, 0.0), (2.0, 0.0), (6.0, -1.0)], True)
+    after_first = c.find(dike.id)
+    dock._cross_edited([(0.0, 0.0), (2.5, 0.0), (7.0, -1.2)], True)
+    assert c.undo_stack.index() == start + 2
+    assert c.undo_stack.undoText() == UNDO_PROFILE.format(dike.name)
+    c.undo_stack.undo()
+    assert c.find(dike.id) == after_first               # one drag back, not both
+
+    dock.show_feature(pond.id)                          # an area drag sends only slope and reach
+    dock._cross_edited([(0.0, 0.0), (0.5, 0.0), (4.0, 1.0)], True)
+    assert c.undo_stack.undoText() == UNDO_PROFILE.format(pond.name)
+
+
+def test_the_profile_reset_buttons_are_profile_steps(tmp_path):
+    c = start_session(tmp_path)
+    dike, _pond = dike_and_pond(c)
+    c.update_feature(dike.id, cross_right=((3.0, -0.6),), long_profile=((0.0, 12.0), (29.0, 13.0)))
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    start = c.undo_stack.index()
+    dock._reset_cross()
+    assert c.undo_stack.undoText() == UNDO_PROFILE.format(dike.name)
+    dock._reset_long()
+    assert c.undo_stack.index() == start + 2 and c.undo_stack.undoText() == UNDO_PROFILE.format(dike.name)
+
+
+def test_an_undo_the_engine_refuses_leaves_the_scenario_unsaved(tmp_path):
+    from unittest import mock
+    c = start_session(tmp_path)
+    dike, _pond = dike_and_pond(c)
+    c.save_scenario(str(tmp_path / "saved.gpkg"))
+    c.update_feature(dike.id, amount=2.0)
+    with mock.patch.object(c.stack, "update", side_effect=MemoryError("no room")):
+        c.undo_stack.undo()                             # lands on the saved step, list unchanged
+    assert c.find(dike.id).amount == 2.0
+    assert c.is_dirty                                   # still the unsaved change on screen
+
+
+def test_an_emptied_scenario_that_was_never_saved_has_nothing_to_keep(tmp_path):
+    c = start_session(tmp_path)
+    dike, pond = dike_and_pond(c)
+    c.delete_feature(dike.id)
+    c.delete_feature(pond.id)
+    assert not c.is_dirty and c.undo_stack.canUndo()
+
+
+def test_a_change_that_changes_nothing_still_refreshes_the_views(tmp_path):
+    c = start_session(tmp_path)
+    dike, _pond = dike_and_pond(c)
+    heard = []
+    c.featuresChanged.connect(lambda: heard.append(True))
+    c.update_feature(dike.id, amount=dike.amount)
+    assert heard == [True]
+
+
+def test_an_add_the_engine_refuses_returns_nothing_and_leaves_no_work(tmp_path):
+    from unittest import mock
+    c = start_session(tmp_path)
+    with mock.patch.object(c.stack, "update", side_effect=RuntimeError("refused")):
+        assert c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM) is None
+    assert c.features == () and not c.is_dirty and not c.undo_stack.canUndo()
+
+
+def test_stepping_a_setting_back_after_a_save_is_clean_again(tmp_path):
+    c = start_session(tmp_path)
+    dike, _pond = dike_and_pond(c)
+    c.save_scenario(str(tmp_path / "saved.gpkg"))
+    c.update_feature(dike.id, amount=2.0)
+    c.update_feature(dike.id, amount=1.0)
+    assert not c.is_dirty

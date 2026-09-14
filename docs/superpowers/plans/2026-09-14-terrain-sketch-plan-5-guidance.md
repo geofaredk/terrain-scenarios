@@ -3169,6 +3169,7 @@ from qgis.PyQt.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QM
 from ..core.tools import Mode
 from ..qgis_io.raster_io import DemError, GeographicDemError
 from .feature_list import FeatureListModel, FeatureListView
+from .help_texts import REPROJECT_UNAVAILABLE
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool

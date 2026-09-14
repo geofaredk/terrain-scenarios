@@ -12,6 +12,7 @@ from typing import NamedTuple
 
 from qgis.core import Qgis, QgsCoordinateReferenceSystem, QgsCsException, QgsGeometry, QgsMessageLog, QgsProject
 from qgis.PyQt.QtCore import QObject, QTimer, pyqtSignal
+from qgis.PyQt.QtGui import QUndoStack
 
 from ..core.engine import FeatureStack
 from ..core.operations import FeatureStats
@@ -24,7 +25,10 @@ from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import DemError, WorkingFiles, export_dem, read_dem
 from ..qgis_io.scenario import ScenarioError
 from .help_texts import (DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, EMPTY_LAYER, NO_FEATURES_SELECTED, NO_SESSION,
-                         RESULT_LAYER_REMOVED, SCENARIO_NOT_APPLIED, SESSION_ENDED_DEM_REMOVED, TOOL_LABELS)
+                         RESULT_LAYER_REMOVED, SCENARIO_NOT_APPLIED, SESSION_ENDED_DEM_REMOVED, TOOL_LABELS,
+                         UNDO_ADD, UNDO_DELETE, UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER, UNDO_SETTINGS, UNDO_SHAPE,
+                         UNDO_TURN_OFF, UNDO_TURN_ON)
+from .undo import FeatureListChange
 
 LOG_TAG = "Terrain Sketch"
 
@@ -60,6 +64,7 @@ class SketchController(QObject):
     previewUpdated = pyqtSignal(str, object)  # (feature id, PreviewImage) while dragging
     previewCleared = pyqtSignal()
     message = pyqtSignal(object, str)  # (Qgis.MessageLevel, text for the message bar)
+    featuresRestored = pyqtSignal()    # undo or redo replaced the feature list
 
     def __init__(self, project: QgsProject, parent=None):
         super().__init__(parent)
@@ -73,7 +78,7 @@ class SketchController(QObject):
         self._features: list[TerrainFeature] = []
         self._closing = False
         self._pending = None
-        self._dirty = False
+        self.undo_stack = QUndoStack(self)
         self._scenario_path = None
         self._created = ""
         # Called, if set, just before a session with unsaved changes is dropped — the project
@@ -169,7 +174,8 @@ class SketchController(QObject):
             return None
         feature = new_feature(tool, mode, wkb, self.stack.original.cell_size,
                               name=self._unique(name) if name else self._unique_name(tool))
-        self._set([*self._features, feature])
+        if not self._commit([*self._features, feature], UNDO_ADD.format(feature.name)):
+            return None
         return feature
 
     def add_from_layer(self, tool: Tool, mode: Mode, layer, selected_only: bool = False) -> TerrainFeature | None:
@@ -211,19 +217,25 @@ class SketchController(QObject):
 
     def update_feature(self, fid: str, **changes) -> None:
         self.cancel_preview()  # the committed result replaces whatever the overlay was showing
-        self._set([replace(f, **changes) if f.id == fid else f for f in self._features])
+        feature = self.find(fid)
+        if feature is None:
+            return
+        text, key = _describe(feature, changes)
+        self._commit([replace(f, **changes) if f.id == fid else f for f in self._features], text, key)
 
     def set_enabled(self, fid: str, enabled: bool) -> None:
         self.update_feature(fid, enabled=bool(enabled))
 
     def delete_feature(self, fid: str) -> None:
-        self._set([f for f in self._features if f.id != fid])
+        feature = self.find(fid)
+        if feature is not None:
+            self._commit([f for f in self._features if f.id != fid], UNDO_DELETE.format(feature.name))
 
     def reorder(self, ids) -> None:
         by_id = {f.id: f for f in self._features}
         if sorted(ids) != sorted(by_id):
             raise ValueError("reorder() needs every feature id exactly once")
-        self._set([by_id[i] for i in ids])
+        self._commit([by_id[i] for i in ids], UNDO_REORDER)
 
     def preview(self, fid: str, **changes) -> None:
         """Show what `changes` would do, without committing them.
@@ -299,8 +311,9 @@ class SketchController(QObject):
 
     @property
     def is_dirty(self) -> bool:
-        """Whether anything has changed since the last save or load of a scenario."""
-        return self._dirty
+        """Whether the features differ from the last save or load of a scenario. Follows undo:
+        undoing back to the saved state makes the scenario clean again."""
+        return not self.undo_stack.isClean()
 
     @property
     def scenario_path(self) -> str | None:
@@ -322,7 +335,7 @@ class SketchController(QObject):
         written = scenario.save(path, self._features, meta, crs_wkt=getattr(self.info, "crs_wkt", ""))
         self._scenario_path = path
         self._created = written.created
-        self._dirty = False
+        self.undo_stack.setClean()
         self.sessionChanged.emit()
 
     def scenario_differences(self, path: str) -> list[str]:
@@ -344,13 +357,13 @@ class SketchController(QObject):
             raise ScenarioError(SCENARIO_NOT_APPLIED)
         self._scenario_path = path
         self._created = meta.created
-        self._dirty = False
+        self.undo_stack.clear()   # the history belonged to the features that were just replaced
         self.sessionChanged.emit()
 
     def _forget_scenario(self) -> None:
         self._scenario_path = None
         self._created = ""
-        self._dirty = False
+        self.undo_stack.clear()
 
     def export_dem(self, path: str) -> None:
         """Write the modified DEM to `path`; raises RuntimeError without a session, or if `path`
@@ -389,9 +402,27 @@ class SketchController(QObject):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
             self.message.emit(Qgis.MessageLevel.Critical, "Terrain Sketch could not update the terrain; "
                                                           "see the 'Terrain Sketch' log tab for details.")
-        self._dirty = True
         self.featuresChanged.emit()
         return True
+
+    def _commit(self, features, text: str, key=None) -> bool:
+        """Apply a change the user made and record it for undo. A change that leaves the list as it
+        was records nothing, so it neither costs an undo step nor marks the scenario unsaved."""
+        before, after = tuple(self._features), tuple(features)
+        if after == before:
+            return True
+        if not self._set(after):
+            return False
+        self.undo_stack.push(FeatureListChange(self._restore, before, after, text, key))
+        return True
+
+    def _restore(self, features) -> None:
+        """Undo or redo. Runs inside QUndoStack from a button or a key, so it never raises: `_set`
+        already turns an engine failure into a message."""
+        self.cancel_preview()
+        if self.stack is not None:
+            self._set(features)
+            self.featuresRestored.emit()
 
     def _outline_items(self) -> list:
         items = []
@@ -441,7 +472,7 @@ class SketchController(QObject):
             self.featuresChanged.emit()
 
     def _offer_save_before_discard(self) -> None:
-        if self.before_discard is None or self.stack is None or not self._dirty or not self._features:
+        if self.before_discard is None or self.stack is None or not self.is_dirty:
             return
         try:
             self.before_discard()
@@ -459,3 +490,22 @@ class SketchController(QObject):
             self.message.emit(Qgis.MessageLevel.Warning, SESSION_ENDED_DEM_REMOVED)
         elif ids & set(self.layers.layer_ids):
             self.message.emit(Qgis.MessageLevel.Info, RESULT_LAYER_REMOVED)
+
+
+PROFILE_FIELDS = frozenset({"cross_left", "cross_right", "long_profile"})
+
+
+def _describe(feature, changes) -> tuple[str, object]:
+    """The undo text for `changes` to `feature`, and the merge key — set only for settings, so the
+    steps of one spin box become one undo step while a rename, a toggle, a reshaped outline or a
+    dragged profile each stay their own."""
+    fields = frozenset(changes)
+    if fields == {"name"}:
+        return UNDO_RENAME.format(feature.name), None
+    if fields == {"enabled"}:
+        return (UNDO_TURN_ON if changes["enabled"] else UNDO_TURN_OFF).format(feature.name), None
+    if "geometry_wkb" in fields:
+        return UNDO_SHAPE.format(feature.name), None
+    if fields <= PROFILE_FIELDS:
+        return UNDO_PROFILE.format(feature.name), None
+    return UNDO_SETTINGS.format(feature.name), (feature.id, fields)

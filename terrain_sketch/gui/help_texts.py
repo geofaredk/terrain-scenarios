@@ -77,6 +77,17 @@ SHAPE_NOT_TRANSFORMED = ("This feature's shape cannot be shown in the map's coor
                          "try again.")
 EXPORT_REPLACE = "{} already exists. Replace it?"
 
+# What Undo and Redo will do, shown as "Undo Add Dike 1" in their buttons' tooltips.
+UNDO_ADD = "Add {}"
+UNDO_DELETE = "Delete {}"
+UNDO_RENAME = "Rename {}"
+UNDO_TURN_ON = "Turn on {}"
+UNDO_TURN_OFF = "Turn off {}"
+UNDO_REORDER = "Reorder features"
+UNDO_SHAPE = "Edit the shape of {}"
+UNDO_PROFILE = "Change the profile of {}"
+UNDO_SETTINGS = "Change the settings of {}"
+
 
 def amount_label(tool: Tool) -> str | None:
     """Label of the amount field, or None when the tool has no amount."""

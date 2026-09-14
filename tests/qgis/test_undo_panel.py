@@ -152,3 +152,15 @@ def test_the_panel_header_does_not_make_the_panel_wider(tmp_path):
     dock.show()
     assert dock.toolbar.minimumSizeHint().width() < 100
     assert dock.widget().minimumSizeHint().width() < 360
+
+
+def test_ctrl_z_in_a_text_field_of_the_panel_is_left_to_that_field(tmp_path):
+    """A spin box or line edit keeps Ctrl+Z for its own text, as everywhere in Qt: pressing it
+    there must neither undo a Terrain Sketch change nor reach QGIS's own undo."""
+    iface, c, dock = panel(tmp_path)
+    _window, qgis_undo = in_a_window(iface, dock)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.select_id(dike.id)
+    assert dock.pages.currentIndex() == PAGE_PROPERTIES
+    press(dock.properties.amount, QKeySequence.StandardKey.Undo)
+    assert len(c.features) == 1 and qgis_undo == []

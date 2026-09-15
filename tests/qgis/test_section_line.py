@@ -134,3 +134,17 @@ def test_finishing_a_section_line_for_an_area_that_was_undone_adds_nothing(tmp_p
     c.undo_stack.undo()                                          # the pond goes while the line is drawn
     tool.finished.emit(line_through(20, 5, 20, 35))
     assert c.features == () and dock.draw_tool is None
+
+
+def test_selecting_another_feature_ends_the_section_line_drawing(tmp_path):
+    """The line being drawn belongs to the area it was started for; the panel and the map now show another."""
+    iface, c, _profiles, dock = panels(tmp_path)
+    first = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(2, 2, 12, 12), UTM)
+    second = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(20, 20, 35, 35), UTM)
+    dock.feature_view.select_id(first.id)
+    _profiles.draw_section.click()
+    tool = dock.draw_tool
+    dock.feature_view.select_id(second.id)
+    assert dock.draw_tool is None and iface.mapCanvas().mapTool() is not tool
+    tool.finished.emit(line_through(20, 28, 35, 28))                # a click that was already on its way
+    assert c.find(first.id).section_line is None and c.find(second.id).section_line is None

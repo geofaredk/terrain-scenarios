@@ -94,6 +94,7 @@ class MainDock(QgsDockWidget):
         self.edit_tool = None
         self._brush_fid = None
         self._brush_extends = False       # set with _brush_fid, but kept when that feature goes
+        self._section_fid = None          # the area whose section line is being drawn
         self.highlight = QgsRubberBand(iface.mapCanvas(), Qgis.GeometryType.Line)
         self.highlight.setStrokeColor(QgsMapToolEdit.digitizingStrokeColor())
         self.highlight.setFillColor(Qt.GlobalColor.transparent)
@@ -235,6 +236,7 @@ class MainDock(QgsDockWidget):
     def end_drawing(self) -> None:
         """Stop a drawing in progress and give the canvas its previous map tool back."""
         tool, self.draw_tool, self._brush_fid, self._brush_extends = self.draw_tool, None, None, False
+        self._section_fid = None
         self._release_tool(tool)
 
     def stop_editing(self) -> None:
@@ -391,6 +393,8 @@ class MainDock(QgsDockWidget):
     def _selection_changed(self, *_args) -> None:
         fid = self.feature_view.selected_id()
         self.stop_editing()
+        if self._section_fid is not None and fid != self._section_fid:
+            self.end_drawing()          # the line being drawn is the other area's, which the panel no longer shows
         if self.profiles is not None:
             self.profiles.show_feature(fid)
         self.edit_button.setEnabled(fid is not None)
@@ -437,11 +441,14 @@ class MainDock(QgsDockWidget):
         if self.controller.find(fid) is None:
             return
         self.stop_tools()
+        self._section_fid = fid
         self.draw_tool = DrawLineTool(self.iface.mapCanvas())
         self.draw_tool.finished.connect(lambda geometry, f=fid: self._section_drawn(f, geometry))
         self._activate_drawing(SECTION_LINE_HINT)
 
     def _section_drawn(self, fid: str, geometry) -> None:
+        if fid != self._section_fid:
+            return                      # the drawing already ended: the selection moved to another feature
         crs = self.iface.mapCanvas().mapSettings().destinationCrs()
         self.end_drawing()
         self.controller.set_section_line(fid, geometry, crs)

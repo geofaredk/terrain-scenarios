@@ -1,5 +1,7 @@
 """The 3D view (spec §8.5): the modified DEM as the project's terrain, a new 3D view, and the
 terrain the user had put back afterwards."""
+from unittest import mock
+
 from qgis.core import QgsFlatTerrainProvider, QgsProject, QgsRasterDemTerrainProvider
 from qgis.PyQt.QtGui import QAction
 
@@ -153,6 +155,13 @@ def test_when_no_3d_view_can_be_opened_the_user_is_told_how(tmp_path):
     dock.view_3d_button.click()                    # a slot: the error must not escape
     assert VIEW_3D_NOT_OPENED in messages(iface)
     assert isinstance(terrain(), QgsRasterDemTerrainProvider)   # the terrain is still set for later
+
+
+def test_an_unexpected_error_opening_the_3d_view_becomes_the_message(tmp_path):
+    iface, c, dock = panel(tmp_path)
+    c.show_in_3d = mock.Mock(side_effect=RuntimeError("anything at all"))
+    dock.view_3d_button.click()                    # a slot: the error must not escape
+    assert VIEW_3D_NOT_OPENED in messages(iface)
 
 
 def test_the_3d_button_waits_for_a_session():

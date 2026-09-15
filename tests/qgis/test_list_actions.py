@@ -1,7 +1,10 @@
 """The feature list's context menu (spec §7.2): Rename, Duplicate, Zoom to, Delete."""
+from unittest import mock
+
 import numpy as np
 from qgis.core import QgsProject
-from qgis.PyQt.QtWidgets import QAbstractItemView
+from qgis.PyQt.QtCore import QCoreApplication, QEvent
+from qgis.PyQt.QtWidgets import QAbstractItemView, QMenu
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_through, square, start_session
 from terrain_sketch.core.tools import Mode, Tool
@@ -105,3 +108,16 @@ def test_rename_after_the_list_changed_under_the_open_menu_does_not_take_qgis_do
     c.delete_feature(pond.id)                      # e.g. a layer signal while the menu is open
     rename.trigger()                               # the stale row used to abort QGIS
     assert dock.feature_view.state() != QAbstractItemView.State.EditingState
+
+
+def test_a_context_menu_is_deleted_once_it_has_closed(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.show()
+    position = dock.feature_view.visualRect(dock.model.index(0)).center()
+    menus = len(dock.findChildren(QMenu))                           # the toolbar has one of its own
+    with mock.patch.object(QMenu, "exec", return_value=None):      # the user closes it at once
+        for _ in range(3):
+            dock._context_menu(position)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert len(dock.findChildren(QMenu)) == menus

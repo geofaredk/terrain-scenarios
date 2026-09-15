@@ -613,23 +613,27 @@ class MainDock(QgsDockWidget):
         """The modified DEM as the project's terrain, then a new 3D view (spec §8.5): through the
         interface when this QGIS offers it, otherwise through QGIS's own New 3D Map View action,
         otherwise a message saying how to open one by hand."""
-        if not self.controller.show_in_3d():
-            return
         try:
-            if self.iface.createNewMapCanvas3D(self.tr("Terrain Sketch 3D")) is not None:
+            if not self.controller.show_in_3d():
                 return
-        except Exception:  # noqa: BLE001 — a QGIS built without 3D; this runs in a slot
-            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Warning)
-        action = self.iface.mainWindow().findChild(QAction, "mActionNew3DMapCanvas")
-        if action is not None and action.isEnabled():
-            action.trigger()
-            return
+            try:
+                if self.iface.createNewMapCanvas3D(self.tr("Terrain Sketch 3D")) is not None:
+                    return
+            except Exception:  # noqa: BLE001 — a QGIS built without 3D; the menu action may still work
+                QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Warning)
+            action = self.iface.mainWindow().findChild(QAction, "mActionNew3DMapCanvas")
+            if action is not None and action.isEnabled():
+                action.trigger()
+                return
+        except Exception:  # noqa: BLE001 — this runs in a click slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
         self._show_message(Qgis.MessageLevel.Warning, VIEW_3D_NOT_OPENED)
 
     def _context_menu(self, position) -> None:
         menu = self.feature_menu(self.feature_view.indexAt(position))
         if menu is not None:
             menu.exec(self.feature_view.viewport().mapToGlobal(position))
+            menu.deleteLater()   # parented to the dock, it and its actions would otherwise stay for good
 
     def feature_menu(self, index) -> QMenu | None:
         """The list's context menu for the row at `index` (spec §7.2), or None off the rows."""

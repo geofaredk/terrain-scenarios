@@ -1,14 +1,41 @@
-"""The feature list: on/off checkbox, editable name and warning icon; drag rows to reorder."""
+"""The feature list: on/off checkbox, editable name, muted subtitle and warning icon; drag rows to
+reorder. Each row shows the tool's picture and opens the feature's page when clicked."""
 from __future__ import annotations
 
-from qgis.core import QgsApplication
-from qgis.PyQt.QtCore import QAbstractListModel, QItemSelectionModel, QMimeData, QModelIndex, Qt
-from qgis.PyQt.QtWidgets import QAbstractItemView, QListView
+import traceback
 
-from .help_texts import FLAG_TEXTS, TOOL_LABELS
+from qgis.core import Qgis, QgsApplication, QgsMessageLog
+from qgis.PyQt.QtCore import QAbstractListModel, QItemSelectionModel, QMimeData, QModelIndex, QRect, QSize, Qt, pyqtSignal
+from qgis.PyQt.QtGui import QPalette
+from qgis.PyQt.QtWidgets import (QAbstractItemView, QApplication, QListView, QStyle, QStyleOptionButton,
+                                 QStyleOptionViewItem, QStyledItemDelegate)
+
+from . import illustrations
+from .help_texts import FLAG_TEXTS, TOOL_LABELS, cubic_metres
+from .muted import muted_colour
+
+LOG_TAG = "Terrain Sketch"
 
 ID_ROLE = Qt.ItemDataRole.UserRole
+SUBTITLE_ROLE = Qt.ItemDataRole.UserRole + 1
+PICTURE_ROLE = Qt.ItemDataRole.UserRole + 2
+FLAGGED_ROLE = Qt.ItemDataRole.UserRole + 3
 MIME_TYPE = "application/x-terrain-sketch-feature-ids"
+
+
+def feature_subtitle(controller, fid: str) -> str:
+    """What the feature is, plus the volume(s) it moves — nothing extra for a feature that, being
+    turned off or otherwise inert, moves no volume at all."""
+    feature = controller.find(fid)
+    if feature is None:
+        return ""
+    stats = controller.stats(fid)
+    parts = [TOOL_LABELS[feature.tool]]
+    if stats.fill:
+        parts.append(f"fill {cubic_metres(stats.fill)}")
+    if stats.cut:
+        parts.append(f"cut {cubic_metres(stats.cut)}")
+    return " · ".join(parts)
 
 
 class FeatureListModel(QAbstractListModel):
@@ -55,9 +82,13 @@ class FeatureListModel(QAbstractListModel):
             return Qt.CheckState.Checked if feature.enabled else Qt.CheckState.Unchecked
         if role == ID_ROLE:
             return feature.id
+        if role == SUBTITLE_ROLE:
+            return feature_subtitle(self.controller, feature.id)
+        if role == PICTURE_ROLE:
+            return f"tool_{feature.tool.value}"
         flags = self.controller.stats(feature.id).flags
-        if role == Qt.ItemDataRole.DecorationRole and flags:
-            return QgsApplication.getThemeIcon("/mIconWarning.svg")
+        if role == FLAGGED_ROLE:
+            return bool(flags)
         if role == Qt.ItemDataRole.ToolTipRole:
             return "\n".join([TOOL_LABELS[feature.tool]] + [FLAG_TEXTS[flag] for flag in flags])
         return None
@@ -106,8 +137,127 @@ class FeatureListModel(QAbstractListModel):
         return False  # the model already reordered itself; the view must not remove the dragged rows
 
 
+PADDING = 6
+SPACING = 8
+PICTURE_SIZE = QSize(40, 20)
+WARNING_SIZE = 16
+CHEVRON_WIDTH = 12
+
+
+class FeatureRowDelegate(QStyledItemDelegate):
+    """Paints a row: the check indicator, the tool's picture, its name and muted subtitle, an
+    optional warning icon, and a chevron — everything but the check indicator in the palette's
+    (or muted) colours, so the row follows a QGIS theme switch."""
+
+    @staticmethod
+    def checkbox_rect(row_rect) -> QRect:
+        """Where the check indicator sits within a row's rect — the one hit-test both the
+        delegate's paint and the view's mouseReleaseEvent use, so they can never disagree."""
+        style = QApplication.style()
+        width = style.pixelMetric(QStyle.PixelMetric.PM_IndicatorWidth)
+        height = style.pixelMetric(QStyle.PixelMetric.PM_IndicatorHeight)
+        x = row_rect.left() + PADDING
+        y = row_rect.top() + (row_rect.height() - height) // 2
+        return QRect(x, y, width, height)
+
+    def sizeHint(self, option, index):  # noqa: N802 — Qt override
+        option = QStyleOptionViewItem(option)
+        self.initStyleOption(option, index)
+        line_height = option.fontMetrics.height()
+        text_height = 2 * line_height + PADDING
+        width = option.rect.width() or 250
+        return QSize(width, max(text_height, PICTURE_SIZE.height()) + 2 * PADDING)
+
+    def editorEvent(self, event, model, option, index):  # noqa: N802 — Qt override
+        """The view's mouseReleaseEvent is the one place that toggles the checkbox (see
+        checkbox_rect); disable Qt's own click-to-toggle so a click cannot flip it twice."""
+        return False
+
+    def paint(self, painter, option, index):  # noqa: N802 — Qt override
+        try:
+            self._paint(painter, option, index)
+        except Exception:  # noqa: BLE001 — an exception escaping a Qt paint callback aborts QGIS
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _paint(self, painter, option, index) -> None:
+        style = option.widget.style() if option.widget is not None else QApplication.style()
+        painter.save()
+        try:
+            if option.state & QStyle.StateFlag.State_Selected:
+                painter.fillRect(option.rect, option.palette.color(QPalette.ColorRole.Highlight))
+                text_colour = option.palette.color(QPalette.ColorRole.HighlightedText)
+            else:
+                text_colour = option.palette.color(QPalette.ColorRole.Text)
+            muted = muted_colour(option.palette)
+
+            checkbox_rect = self.checkbox_rect(option.rect)
+            checkbox_option = QStyleOptionButton()
+            checkbox_option.rect = checkbox_rect
+            checked = index.data(Qt.ItemDataRole.CheckStateRole) == Qt.CheckState.Checked
+            checkbox_option.state = QStyle.StateFlag.State_Enabled | (
+                QStyle.StateFlag.State_On if checked else QStyle.StateFlag.State_Off)
+            style.drawPrimitive(QStyle.PrimitiveElement.PE_IndicatorCheckBox, checkbox_option, painter,
+                                option.widget)
+
+            picture_rect = QRect(checkbox_rect.right() + SPACING,
+                                 option.rect.top() + (option.rect.height() - PICTURE_SIZE.height()) // 2,
+                                 PICTURE_SIZE.width(), PICTURE_SIZE.height())
+            picture_name = index.data(PICTURE_ROLE)
+            if picture_name:
+                painter.drawPixmap(picture_rect, illustrations.pixmap(picture_name, PICTURE_SIZE, option.palette))
+
+            right = option.rect.right() - PADDING
+            chevron_rect = QRect(right - CHEVRON_WIDTH, option.rect.top(), CHEVRON_WIDTH, option.rect.height())
+            right = chevron_rect.left() - SPACING
+
+            warning_rect = None
+            if index.data(FLAGGED_ROLE):
+                warning_rect = QRect(right - WARNING_SIZE,
+                                     option.rect.top() + (option.rect.height() - WARNING_SIZE) // 2,
+                                     WARNING_SIZE, WARNING_SIZE)
+                right = warning_rect.left() - SPACING
+
+            text_left = picture_rect.right() + SPACING
+            text_rect = QRect(text_left, option.rect.top() + PADDING // 2, max(right - text_left, 0),
+                              option.rect.height() - PADDING)
+            line_height = option.fontMetrics.height()
+            title_rect = QRect(text_rect.left(), text_rect.top(), text_rect.width(), line_height)
+            subtitle_rect = QRect(text_rect.left(), title_rect.bottom(), text_rect.width(), line_height)
+
+            painter.setPen(text_colour)
+            title = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+            painter.drawText(title_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                             option.fontMetrics.elidedText(title, Qt.TextElideMode.ElideRight, title_rect.width()))
+
+            painter.setPen(muted)
+            subtitle = str(index.data(SUBTITLE_ROLE) or "")
+            painter.drawText(subtitle_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                             option.fontMetrics.elidedText(subtitle, Qt.TextElideMode.ElideRight,
+                                                          subtitle_rect.width()))
+
+            if warning_rect is not None:
+                icon = QgsApplication.getThemeIcon("/mIconWarning.svg")
+                if not icon.isNull():
+                    icon.paint(painter, warning_rect)
+
+            arrow_option = QStyleOptionViewItem(option)
+            arrow_option.rect = chevron_rect
+            arrow_palette = QPalette(option.palette)
+            for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
+                arrow_palette.setColor(role, muted)
+            arrow_option.palette = arrow_palette
+            style.drawPrimitive(QStyle.PrimitiveElement.PE_IndicatorArrowRight, arrow_option, painter, option.widget)
+        finally:
+            painter.restore()
+
+
 class FeatureListView(QListView):
-    """List view with drag-to-reorder that keeps the selected feature across model resets."""
+    """List view with drag-to-reorder that keeps the selected feature across model resets.
+
+    A click outside the checkbox opens the feature's page (`rowOpened`); a click on the checkbox,
+    or Enter/Return with a row current, toggles it or opens it respectively."""
+
+    rowOpened = pyqtSignal(str)
 
     def __init__(self, model: FeatureListModel, parent=None):
         super().__init__(parent)
@@ -132,6 +282,30 @@ class FeatureListView(QListView):
             return
         self.selectionModel().setCurrentIndex(self.model().index(row),
                                               QItemSelectionModel.SelectionFlag.ClearAndSelect)
+
+    def mouseReleaseEvent(self, event):  # noqa: N802 — Qt override
+        index = self.indexAt(event.pos())
+        super().mouseReleaseEvent(event)
+        if not index.isValid() or event.button() != Qt.MouseButton.LeftButton:
+            return
+        rect = self.visualRect(index)
+        if FeatureRowDelegate.checkbox_rect(rect).contains(event.pos()):
+            checked = index.data(Qt.ItemDataRole.CheckStateRole) == Qt.CheckState.Checked
+            new_state = Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked
+            self.model().setData(index, new_state.value, Qt.ItemDataRole.CheckStateRole)
+            return
+        fid = index.data(ID_ROLE)
+        if fid is not None:
+            self.rowOpened.emit(fid)
+
+    def keyPressEvent(self, event):  # noqa: N802 — Qt override
+        if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and self.state() != QAbstractItemView.State.EditingState):
+            fid = self.currentIndex().data(ID_ROLE)
+            if fid is not None:
+                self.rowOpened.emit(fid)
+                return
+        super().keyPressEvent(event)
 
     def _remember(self) -> None:
         self._remembered = self.selected_id()

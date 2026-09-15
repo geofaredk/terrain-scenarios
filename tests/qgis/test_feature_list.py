@@ -1,9 +1,12 @@
 from qgis.core import QgsGeometry, QgsPointXY
 from qgis.PyQt.QtCore import QModelIndex, Qt
+from qgis.PyQt.QtTest import QTest
+from qgis.PyQt.QtWidgets import QStyleOptionViewItem
 
 from qgis_helpers import UTM, line_through, start_session
 from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.feature_list import ID_ROLE, FeatureListModel, FeatureListView
+from terrain_sketch.gui.feature_list import (FLAGGED_ROLE, ID_ROLE, SUBTITLE_ROLE, FeatureListModel,
+                                             FeatureListView, FeatureRowDelegate)
 
 
 def test_feature_list_edits_go_through_the_controller(tmp_path):
@@ -26,7 +29,37 @@ def test_flagged_features_show_a_warning(tmp_path):
     c.add_drawn(Tool.ADD, Mode.PATH, far, UTM)
     model = FeatureListModel(c)
     assert "outside the DEM" in model.data(model.index(0), Qt.ItemDataRole.ToolTipRole)
-    assert model.data(model.index(0), Qt.ItemDataRole.DecorationRole) is not None
+    assert model.data(model.index(0), FLAGGED_ROLE) is True                    # the delegate paints the warning
+    delegate = FeatureRowDelegate()
+    size = delegate.sizeHint(QStyleOptionViewItem(), model.index(0))
+    assert size.height() > 0 and size.width() >= 0                            # does not raise, gives a real size
+
+
+def test_a_row_says_what_the_feature_is_and_what_it_moves(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    model = FeatureListModel(c)
+    subtitle = model.index(0).data(SUBTITLE_ROLE)
+    assert subtitle.startswith("Raise path") and "fill" in subtitle and "m³" in subtitle
+    assert "cut" not in subtitle                      # a raise tool only fills
+    c.set_enabled(dike.id, False)                     # a feature that changes nothing says only what it is
+    assert model.index(0).data(SUBTITLE_ROLE) == "Raise path"
+
+
+def test_clicking_a_row_opens_it_but_clicking_its_checkbox_only_toggles_it(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    view = FeatureListView(FeatureListModel(c))
+    view.setItemDelegate(FeatureRowDelegate(view))
+    view.resize(300, 120)
+    opened = []
+    view.rowOpened.connect(opened.append)
+    rect = view.visualRect(view.model().index(0))
+    QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())      # the row body
+    assert opened == [dike.id]
+    box = FeatureRowDelegate.checkbox_rect(rect)
+    QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=box.center())       # the checkbox
+    assert opened == [dike.id] and not c.feature(dike.id).enabled
 
 
 def test_selection_survives_edits_and_list_changes(tmp_path):

@@ -1,6 +1,7 @@
 """The Terrain Sketch panel: DEM, feature list, tool gallery and feature properties."""
 from __future__ import annotations
 
+import html
 import importlib
 import os
 import traceback
@@ -9,7 +10,7 @@ from qgis.core import (Qgis, QgsApplication, QgsCoordinateTransform, QgsCsExcept
                        QgsProject, QgsRasterLayer)
 from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsPanelWidget, QgsPanelWidgetStack, QgsRubberBand
 from qgis.PyQt import sip
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import QEvent, QSize, Qt
 from qgis.PyQt.QtGui import QAction
 from qgis.PyQt.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
                                  QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
@@ -24,6 +25,7 @@ from .help_texts import (CHANGE_DEM_LINK, DEM_NOT_READABLE, EXPORT_ADD_FAILED, E
                          SCENARIO_OTHER_DEM, SCENARIO_REPLACE, SCENARIO_SAVED, SECTION_LINE_HINT, SHAPE_NOT_TRANSFORMED,
                          SKETCHING_ON, START_HEADING, START_INTRO, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES,
                          PROFILES_TIP, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
+from . import illustrations
 from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
 from .map_tools.base import SketchTool
@@ -72,16 +74,40 @@ def _scenario_action(menu: QMenu, icon: str, text: str, tip: str) -> QAction:
     return action
 
 
+class _IllustrationLabel(QLabel):
+    """A themed illustration (spec §4's welcome-view picture) that redraws itself on a theme switch,
+    the same way every other illustration and `MutedLabel` follow `QEvent.Type.PaletteChange`."""
+
+    def __init__(self, name: str, size: QSize, parent=None):
+        super().__init__(parent)
+        self._name = name
+        self._size = size
+        self.setFixedSize(size)
+        self._apply()
+
+    def changeEvent(self, event):  # noqa: N802 — Qt override
+        if event.type() == QEvent.Type.PaletteChange:
+            self._apply()
+        super().changeEvent(event)
+
+    def _apply(self) -> None:
+        self.setPixmap(illustrations.pixmap(self._name, self._size, self.palette()))
+
+
 class _PagePanel(QgsPanelWidget):
     """Hosts an existing widget as one page of the panel stack, built fresh each time it is opened.
 
     A temporary wrapper: Task 4 turns `ToolGallery` and Task 5 turns `PropertiesPage` into
     `QgsPanelWidget`s of their own, at which point `open_page` targets them directly and this
     class goes away. `content` keeps its identity — it is only reparented — so `dock.gallery` and
-    `dock.properties` stay the same objects other code already reaches for. A fresh wrapper every
-    open (rather than one reused instance) matches how `QgsPanelWidgetStack` is meant to be used:
-    reopening the very same panel object after it has already been closed once (verified by probe,
-    even with `autoDelete` turned off) corrupts the stack's own bookkeeping and segfaults."""
+    `dock.properties` stay the same objects other code already reaches for.
+
+    `QgsPanelWidgetStack` defaults `autoDelete` to True and `acceptPanel()` schedules the panel for
+    deletion: left alone, that `deleteLater()` takes `content` down with it, since `addWidget`
+    reparented it into this wrapper's layout. `release_content()` — called from `close_page` before
+    `acceptPanel()` — takes `content` back out first, so it survives; a fresh wrapper is then built
+    the next time the same content is opened again, so the (now-empty) old wrapper is still cleaned
+    up normally instead of leaking one shell widget per open."""
 
     def __init__(self, title: str, content: QWidget, parent=None):
         super().__init__(parent)
@@ -90,6 +116,17 @@ class _PagePanel(QgsPanelWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(content)
+
+    def release_content(self, parent) -> None:
+        """Take the wrapped content out and reparent it to `parent`, hidden, before this wrapper is
+        destroyed. A no-op if it has already been taken (e.g. moved straight into a new wrapper for
+        the same content, as opening the same page again for a different feature does)."""
+        layout = self.layout()
+        item = layout.takeAt(0) if layout.count() else None
+        content = item.widget() if item is not None else None
+        if content is not None:
+            content.setParent(parent)
+            content.hide()
 
 
 def _3d_types_loaded() -> bool:
@@ -133,6 +170,8 @@ class MainDock(QgsDockWidget):
         self.choose_dem = self._dem_choice_dialog
         self._asked_about_unsaved = False
         self._dem_name = ""                 # set by _start_session before its sessionChanged fires
+        self._dem_layer = None              # tracked only to keep the status line's name in sync with a rename
+        self._session_has_dem = False       # _session_changed's own memory of has_dem, to spot a real transition
         controller.before_discard = self._offer_save_before_discard
         self.edit_tool = None
         self._brush_fid = None
@@ -147,11 +186,20 @@ class MainDock(QgsDockWidget):
         self.section_band.setWidth(QgsMapToolEdit.digitizingStrokeWidth())
         self.section_band.setLineStyle(Qt.PenStyle.DashLine)
 
-        # Welcome view (no session): a heading and intro, centred, then the DEM picker and Start —
-        # the same row and behaviour as before, just no longer sharing the panel with a session.
+        # Welcome view (no session): the raise_path illustration, a heading and intro, centred, then
+        # the DEM picker and Start — the same row and behaviour as before, just no longer sharing
+        # the panel with a session. "Keep sketching" is shown only while a session is still running
+        # underneath (reached through the status line's Change… link), to get back to it without
+        # pressing Start and discarding every feature.
         welcome_view = QWidget()
         welcome_layout = QVBoxLayout(welcome_view)
         welcome_layout.addStretch(1)
+        self.welcome_illustration = _IllustrationLabel("tool_raise_path", QSize(160, 80))
+        illustration_row = QHBoxLayout()
+        illustration_row.addStretch(1)
+        illustration_row.addWidget(self.welcome_illustration)
+        illustration_row.addStretch(1)
+        welcome_layout.addLayout(illustration_row)
         heading = QLabel(START_HEADING)
         heading_font = heading.font()
         heading_font.setBold(True)
@@ -172,6 +220,11 @@ class MainDock(QgsDockWidget):
         self.start_button.setToolTip(self.tr("Start sketching on this DEM. The DEM itself is never changed."))
         dem_row.addWidget(self.start_button)
         welcome_layout.addLayout(dem_row)
+        self.keep_sketching_button = QPushButton(self.tr("Keep sketching"))
+        self.keep_sketching_button.setToolTip(
+            self.tr("Go back to the session that is still running, without starting a new one."))
+        self.keep_sketching_button.hide()   # shown by _session_changed only while a session is live
+        welcome_layout.addWidget(self.keep_sketching_button)
         welcome_layout.addStretch(1)
 
         # The session view: a toolbar, like QGIS's own panels (when the panel is narrower than its
@@ -243,9 +296,11 @@ class MainDock(QgsDockWidget):
         self.hint.hide()
         self.delete_button = QPushButton(QgsApplication.getThemeIcon("/mActionDeleteSelected.svg"),
                                          self.tr("Delete"), self)
+        self.delete_button.hide()
         self.edit_button = QPushButton(QgsApplication.getThemeIcon(EDIT_ICON), self.tr("Edit shape"), self)
         self.edit_button.setCheckable(True)
         self.edit_button.setToolTip(self.tr("Move, add or remove the points of the selected feature."))
+        self.edit_button.hide()
 
         self.status_label = MutedLabel()
         self.status_label.setOpenExternalLinks(False)
@@ -296,6 +351,7 @@ class MainDock(QgsDockWidget):
         self.gallery.layerRequested.connect(self._use_layer)
         self.edit_button.toggled.connect(self._toggle_edit)
         self.status_label.linkActivated.connect(self._show_welcome_view)
+        self.keep_sketching_button.clicked.connect(self._keep_sketching)
         self.iface.mapCanvas().mapToolSet.connect(self._map_tool_set)
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_radius_units)
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_overlay_transform)
@@ -392,15 +448,23 @@ class MainDock(QgsDockWidget):
         for action in self.scenario_actions:
             action.setEnabled(has_dem)
         self.scenario_button.setEnabled(has_dem)
+        self.keep_sketching_button.setVisible(has_dem)
         if self.controller.layers is not None:
             project = self.controller.project
             self.dem_combo.setExceptedLayerList([project.mapLayer(i) for i in self.controller.layers.layer_ids])
         else:
             self.dem_combo.setExceptedLayerList([])
-        self.close_page()   # any open page belonged to the session that just started or ended
         if has_dem:
-            self.status_label.setText(SKETCHING_ON.format(self._dem_name) + CHANGE_DEM_LINK)
-        self.views.setCurrentIndex(VIEW_SESSION if has_dem else VIEW_WELCOME)
+            self.status_label.setText(SKETCHING_ON.format(html.escape(self._dem_name)) + CHANGE_DEM_LINK)
+        # new_scenario/save_scenario/open_scenario also emit sessionChanged while the same session
+        # keeps running (has_dem unchanged): only a real transition closes the open page and moves
+        # the view — a stale page over a scenario that was just replaced is featuresChanged's job
+        # (_sync_selection_page), not this signal's.
+        if has_dem != self._session_has_dem:
+            self.close_page()
+            self.views.setCurrentIndex(VIEW_SESSION if has_dem else VIEW_WELCOME)
+            self._disconnect_dem_name()
+        self._session_has_dem = has_dem
         self._update_radius_units()
         self._update_overlay_transform()
 
@@ -415,16 +479,31 @@ class MainDock(QgsDockWidget):
         """Accept the open page, if there is one, returning the stack to the main list."""
         current = self.stack.currentPanel()
         if current is not None and current is not self.main_panel:
+            if isinstance(current, _PagePanel):
+                current.release_content(self)   # save gallery/properties from the delete below
             current.acceptPanel()
 
     def _show_welcome_view(self, _link: str = "") -> None:
         """The status line's Change… link: back to the welcome view, asking about unsaved work
-        first — the session itself keeps running until a new DEM is started, as pressing Start does."""
+        first — the session itself keeps running until a new DEM is started, as pressing Start does.
+        Stops any drawing or edit in progress: it was running on the map behind the session view,
+        which the welcome view no longer shows, and a drawing that then finished would open a
+        feature page on top of it."""
         try:
             if self._keep_unsaved_work():
                 return
+            self.stop_tools()
             self.close_page()
             self.views.setCurrentIndex(VIEW_WELCOME)
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _keep_sketching(self) -> None:
+        """The welcome view's second button, shown only while a session is still live (spec-driven
+        fix: Change… used to be the only way back, and pressing Start there would have discarded
+        every feature just to return to the same session)."""
+        try:
+            self.views.setCurrentIndex(VIEW_SESSION)
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
@@ -478,6 +557,7 @@ class MainDock(QgsDockWidget):
         self._dem_name = layer.name()      # set before set_dem: sessionChanged fires from inside it
         try:
             self.controller.set_dem(layer)
+            self._connect_dem_name(layer)
             return True
         except DemError as error:
             if isinstance(error, GeographicDemError):
@@ -487,6 +567,29 @@ class MainDock(QgsDockWidget):
             return False
         finally:
             self._asked_about_unsaved = False
+
+    def _connect_dem_name(self, layer) -> None:
+        """Keep the status line's DEM name in sync with a rename in the Layers panel."""
+        self._disconnect_dem_name()
+        self._dem_layer = layer
+        layer.nameChanged.connect(self._dem_renamed)
+
+    def _disconnect_dem_name(self) -> None:
+        if self._dem_layer is not None and not sip.isdeleted(self._dem_layer):
+            try:
+                self._dem_layer.nameChanged.disconnect(self._dem_renamed)
+            except TypeError:   # already disconnected
+                pass
+        self._dem_layer = None
+
+    def _dem_renamed(self) -> None:
+        try:
+            if self._dem_layer is not None and not sip.isdeleted(self._dem_layer):
+                self._dem_name = self._dem_layer.name()
+                if self.controller.has_dem:
+                    self.status_label.setText(SKETCHING_ON.format(html.escape(self._dem_name)) + CHANGE_DEM_LINK)
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _start_on_file(self, source: str) -> bool:
         """Start on the DEM at `source`: the layer already in the project that reads it, or a new one."""

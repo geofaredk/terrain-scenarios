@@ -4,6 +4,7 @@ from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsPro
 from qgis_helpers import UTM, dem_layer, fake_iface, line_layer, line_through, panel, sample, square, start_session
 from terrain_sketch.core.tools import Mode, PixelMode, Tool
 from terrain_sketch.gui.controller import SketchController
+from terrain_sketch.gui.help_texts import UNSAVED_CHANGES
 from terrain_sketch.gui.main_dock import VIEW_SESSION, VIEW_WELCOME, MainDock
 from terrain_sketch.gui.properties_page import PropertiesPage
 from terrain_sketch.gui.selection import EDIT_ICON, METHOD_ICONS, Method
@@ -19,6 +20,44 @@ def test_the_panel_opens_on_a_welcome_view_and_switches_to_the_session(tmp_path)
     dock.start_button.click()
     assert dock.views.currentIndex() == VIEW_SESSION
     assert layer.name() in dock.status_label.text()
+
+
+def test_the_welcome_view_shows_the_raise_path_illustration(tmp_path):
+    """spec §4: the raise_path illustration at 160×80, themed from the palette."""
+    dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
+    pixmap = dock.welcome_illustration.pixmap()
+    assert pixmap is not None and not pixmap.isNull()
+    assert pixmap.size().width() == 160 and pixmap.size().height() == 80
+
+
+def test_the_welcome_illustration_follows_a_theme_change(tmp_path):
+    from qgis.PyQt.QtGui import QColor, QPalette
+
+    dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
+    before = dock.welcome_illustration.pixmap().toImage()
+    palette = dock.welcome_illustration.palette()
+    palette.setColor(QPalette.ColorRole.Mid, QColor("#ff00ff"))   # the terrain colour token
+    dock.welcome_illustration.setPalette(palette)
+    after = dock.welcome_illustration.pixmap().toImage()
+    assert after != before
+
+
+def test_the_dem_name_is_escaped_in_the_status_line(tmp_path):
+    """The DEM name goes into a rich-text label alongside a real `<a href>` link; an unescaped
+    ampersand (or `<`/`>`) in a layer name must not be read as markup."""
+    iface = fake_iface()
+    dock = MainDock(iface, SketchController(QgsProject.instance()))
+    layer = dem_layer(tmp_path, name="A&B")
+    dock.dem_combo.setLayer(layer)
+    dock.start_button.click()
+    assert "A&amp;B" in dock.status_label.text()
+
+
+def test_the_status_line_follows_a_dem_rename(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    layer = c.project.mapLayer(c.dem_layer_id)
+    layer.setName("Renamed DEM")
+    assert "Renamed DEM" in dock.status_label.text()
 
 
 def test_every_page_the_panel_opens_is_in_dock_mode(tmp_path):
@@ -40,19 +79,130 @@ def test_changing_the_dem_goes_back_to_the_welcome_view(tmp_path):
     assert dock.views.currentIndex() == VIEW_WELCOME and c.has_dem     # the session keeps running until Start
 
 
+def test_changing_the_dem_stops_a_drawing_in_progress(tmp_path):
+    """Change… used to leave a drawing running on the map behind a view that no longer shows it; a
+    finished drawing would then have opened the new feature's page on top of the welcome view."""
+    _iface, _c, dock = panel(tmp_path)
+    dock.new_button.click()
+    dock.gallery.select_tool(Tool.RAISE_PATH)
+    dock.gallery.select_mode(Mode.PATH)
+    dock.gallery.method_buttons[Method.CLICK].click()
+    assert dock.draw_tool is not None
+    dock.status_label.linkActivated.emit("change")
+    assert dock.draw_tool is None and dock.views.currentIndex() == VIEW_WELCOME
+
+
+def test_keep_sketching_returns_to_the_session_without_touching_it(tmp_path):
+    """Change… used to be the only way back to a live session, and the only route from the welcome
+    view was Start — which discards every feature just to return to the same session."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.status_label.linkActivated.emit("change")
+    assert dock.views.currentIndex() == VIEW_WELCOME and not dock.keep_sketching_button.isHidden()
+    dock.keep_sketching_button.click()
+    assert dock.views.currentIndex() == VIEW_SESSION
+    assert c.has_dem and [f.id for f in c.features] == [dike.id]      # untouched
+
+
+def test_keep_sketching_is_hidden_without_a_session(tmp_path):
+    dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
+    assert dock.keep_sketching_button.isHidden()
+
+
+def test_changing_the_dem_with_unsaved_work_asks_first_and_can_be_cancelled(tmp_path):
+    """The dirty branch of Change…: `_keep_unsaved_work` backing out must leave the session view
+    showing, exactly as it does when Start is refused the same way."""
+    _iface, c, dock = panel(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    asked = []
+    dock.confirm_save = lambda text, can_cancel=True: asked.append(text) or None     # cancel
+    dock.status_label.linkActivated.emit("change")
+    assert asked == [UNSAVED_CHANGES]
+    assert dock.views.currentIndex() == VIEW_SESSION and len(c.features) == 1
+
+
+def test_ending_the_session_closes_any_open_page(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.select_id(dike.id)
+    assert dock.stack.currentPanel() is dock.properties_page
+    c.close()
+    assert dock.stack.currentPanel() is dock.main_panel and dock.views.currentIndex() == VIEW_WELCOME
+
+
+def test_a_scenario_action_in_the_same_session_does_not_close_the_open_page(tmp_path):
+    """`sessionChanged` also fires from new_scenario/save_scenario/open_scenario with `has_dem`
+    still true; only a real transition (a session starting or ending) should close the open page."""
+    _iface, c, dock = panel(tmp_path)
+    dock.new_button.click()
+    assert dock.stack.currentPanel() is dock.gallery_page
+    dock.new_scenario_action.trigger()
+    assert c.has_dem and dock.stack.currentPanel() is dock.gallery_page
+    assert dock.views.currentIndex() == VIEW_SESSION
+
+
 def test_a_page_survives_being_closed_and_reopened(tmp_path):
-    """QgsPanelWidgetStack deletes a closed panel by default (verified by probe): the gallery and
-    properties pages are built once and reopened many times, so they must opt out of that, or the
-    second open is a use of a deleted C++ object."""
-    from qgis.PyQt.QtWidgets import QApplication
+    """QgsPanelWidgetStack deletes a closed panel by default (verified by probe), and `addWidget`
+    reparented `dock.properties` into it — so unless the content is taken out before the wrapper
+    dies, closing a page destroys `properties` right along with it once a real event loop (not
+    merely `processEvents`, which does not flush a deferred delete) runs. `spin_event_loop` gives
+    the deferred delete an actual chance to fire, which is what a real user's session does between
+    two clicks."""
+    from qgis_helpers import spin_event_loop
 
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.feature_view.select_id(dike.id)          # opens the properties page
     dock.feature_view.clearSelection()            # closes it
-    QApplication.processEvents()
-    dock.feature_view.select_id(dike.id)          # reopening it must not touch a deleted panel
+    spin_event_loop(50)                            # let the closed page's deferred delete actually run
+    dock.feature_view.select_id(dike.id)          # reopening must not touch a deleted `properties` widget
     assert dock.stack.currentPanel() is dock.properties_page
+    assert dock.properties.amount.value() == pytest.approx(dike.amount)   # still a live, working widget
+
+
+def test_undo_keys_on_the_properties_fields_survive_a_close_and_reopen(tmp_path):
+    """The per-spin `UndoKeys` filters (`spin_undo_keys`) are installed once, directly on the spin
+    boxes inside `dock.properties` — they must keep working after the page they sit on has been
+    closed and reopened, exactly like the widget itself."""
+    from qgis.PyQt.QtGui import QKeySequence
+    from qgis.PyQt.QtTest import QTest
+    from qgis_helpers import spin_event_loop
+
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.select_id(dike.id)
+    dock.feature_view.clearSelection()
+    spin_event_loop(50)                            # let the first close's deferred delete run
+    dock.feature_view.select_id(dike.id)
+    spin = dock.properties.amount
+    spin.setFocus()
+    spin_event_loop(10)
+    spin.selectAll()
+    QTest.keyClicks(spin, "2")                     # typed, not yet committed
+    assert spin.lineEdit().text() == "2 m"
+    QTest.keySequence(spin, QKeySequence(QKeySequence.StandardKey.Undo))
+    spin_event_loop(10)
+    assert spin.lineEdit().text() == "1.00 m"      # the field's own undo still claims Ctrl+Z
+
+
+def test_the_gallery_survives_new_feature_draw_and_new_feature_again(tmp_path):
+    """The exact sequence the reviewer's repro used: New feature (opens the gallery page), draw a
+    feature (closes it, opens the feature's properties page), New feature again (closes the
+    properties page, reopens the gallery page) — `dock.gallery` must still be a live widget, not one
+    whose wrapper's deleteLater already took it down."""
+    from qgis_helpers import spin_event_loop
+
+    _iface, c, dock = panel(tmp_path)
+    dock.new_button.click()
+    dock.gallery.select_tool(Tool.RAISE_PATH)
+    dock.gallery.select_mode(Mode.PATH)
+    dock.gallery.method_buttons[Method.CLICK].click()
+    dock.draw_tool.finished.emit(line_through(5, 20, 34, 20))
+    assert dock.stack.currentPanel() is dock.properties_page
+    spin_event_loop(50)                            # let the New feature page's deferred delete run
+    dock.new_button.click()                        # must not touch the deleted-by-then gallery page
+    assert dock.stack.currentPanel() is dock.gallery_page
+    assert dock.gallery.tool_list.count() == len(Tool)             # still a live, working widget
 
 
 def test_gallery_offers_only_the_shapes_and_methods_a_tool_supports():

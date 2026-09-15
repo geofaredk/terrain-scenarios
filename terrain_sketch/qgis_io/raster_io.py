@@ -88,7 +88,9 @@ class WorkingFiles:
     def move_to(self, folder: str) -> None:
         """Copy both files into `folder` and write there from now on. The old files are left for the caller
         to remove. Each copy is made under a temporary name and only then put in place, so a copy that fails
-        half way — a full disk — neither changes the files in use nor leaves a truncated raster in `folder`."""
+        half way — a full disk — neither changes the files in use nor leaves a truncated raster in `folder`,
+        nor the folder itself when this made it and it is empty."""
+        existed = os.path.isdir(folder)
         os.makedirs(folder, exist_ok=True)
         moves = [(source, os.path.join(folder, name)) for source, name in
                  ((self.working_path, WORKING_NAME), (self.change_path, CHANGE_NAME))]
@@ -99,6 +101,8 @@ class WorkingFiles:
             for _source, target in moves:
                 if os.path.exists(target + ".copying"):
                     os.remove(target + ".copying")
+            if not existed and not os.listdir(folder):
+                os.rmdir(folder)
             raise
         for _source, target in moves:
             os.replace(target + ".copying", target)

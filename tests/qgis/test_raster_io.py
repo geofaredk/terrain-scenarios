@@ -72,3 +72,18 @@ def test_change_raster_keeps_valid_cells_when_nodata_is_zero(tmp_path):
     files.write(Window(5, 5, 1, 1), grid.copy())
     change, _ = read_tif(files.change_path)
     assert change[5, 5] != 0.0
+
+
+def test_a_move_that_fails_leaves_no_folder_it_made(tmp_path, monkeypatch):
+    import shutil
+    grid, info = read_dem(dem_layer(tmp_path))
+    files = WorkingFiles(str(tmp_path / "session"), grid, info)
+    monkeypatch.setattr(shutil, "copyfile", lambda *_a: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(OSError):
+        files.move_to(str(tmp_path / "flood_files"))
+    assert not os.path.exists(tmp_path / "flood_files")
+    assert files.folder == str(tmp_path / "session")
+    (tmp_path / "kept").mkdir()                                          # a folder that was there stays
+    with pytest.raises(OSError):
+        files.move_to(str(tmp_path / "kept"))
+    assert os.path.isdir(tmp_path / "kept")

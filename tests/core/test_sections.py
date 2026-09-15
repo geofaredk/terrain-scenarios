@@ -286,6 +286,17 @@ def test_symmetric_keeps_both_sides_when_an_edit_moves_no_break_point():
     assert changes["reach"] == pytest.approx(11.0)
 
 
+def test_symmetric_copies_nothing_when_only_the_crest_edges_moved():
+    """Break points are stored from the crest edge, so widening the crest changes every side's stored
+    offsets while no break handle moves on the plot. That is not an edit of either side's breaks."""
+    f = dike(width=4.0, slope_n=3.0, reach=10.0, cross_left=((2.0, -0.5),), cross_right=((4.0, -1.0),))
+    points = list(whole_cross_section(f))
+    points = [(x - 1.0, z) if x == -2.0 else (x + 1.0, z) if x == 2.0 else (x, z) for x, z in points]
+    changes = set_whole_cross_section(f, points, symmetric=True)
+    assert changes["width"] == pytest.approx(6.0)
+    assert changes["cross_left"] == ((1.0, -0.5),) and changes["cross_right"] == ((3.0, -1.0),)
+
+
 def test_editing_one_side_leaves_a_side_with_breaks_past_its_reach_as_it_was():
     """A berm beyond the reach leaves that side without a slope-end handle. Reading its last berm as the
     slope's end rewrote the slope and the reach and dropped the berm while the user edited the other side."""

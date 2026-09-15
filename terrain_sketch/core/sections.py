@@ -135,8 +135,13 @@ def set_whole_cross_section(feature, points, symmetric: bool = False) -> dict:
         left, right = sides["cross_left"].get(key, current), sides["cross_right"].get(key, current)
         changes[key] = left if abs(left - current) > SAME and abs(right - current) <= SAME else right
     if symmetric:
-        right_same = _same_points(changes["cross_right"], feature.cross_right)
-        left_same = _same_points(changes["cross_left"], feature.cross_left)
+        # compared where the handles are on the plot: breaks are stored from the crest edge, so moving the
+        # edges alone changes every stored offset without moving a single break handle
+        edge, old_edge = changes["width"] / 2.0, feature.width / 2.0
+        right_same = _same_points([(edge + d, z) for d, z in changes["cross_right"]],
+                                  [(old_edge + d, z) for d, z in feature.cross_right])
+        left_same = _same_points([(edge + d, z) for d, z in changes["cross_left"]],
+                                 [(old_edge + d, z) for d, z in feature.cross_left])
         if right_same and not left_same:
             changes["cross_right"] = changes["cross_left"]
         elif not right_same:

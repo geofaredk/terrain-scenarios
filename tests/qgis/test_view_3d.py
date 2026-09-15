@@ -67,6 +67,16 @@ def test_a_terrain_the_user_chose_afterwards_is_left_alone(tmp_path):
     assert isinstance(terrain(), QgsFlatTerrainProvider) and terrain().offset() == 9.0
 
 
+def test_a_terrain_the_user_chose_between_two_presses_is_the_one_put_back(tmp_path):
+    a_flat_terrain_at(5.0)
+    c = start_session(tmp_path)
+    c.show_in_3d()
+    a_flat_terrain_at(9.0)                         # the user picked their own terrain meanwhile
+    c.show_in_3d()                                 # and then pressed 3D view again
+    c.close()
+    assert isinstance(terrain(), QgsFlatTerrainProvider) and terrain().offset() == 9.0
+
+
 def test_removing_the_modified_dem_layer_puts_the_previous_terrain_back_at_once(tmp_path):
     """The terrain would point at a layer that is gone; the session carries on without it."""
     a_flat_terrain_at(5.0)
@@ -160,6 +170,7 @@ def test_a_closed_project_does_not_hand_its_terrain_to_the_next_one(tmp_path):
     c.set_dem(dem_layer(tmp_path))
     c.show_in_3d()
     QgsProject.instance().clear()                  # a new, empty project
+    assert c._terrain_before is None               # nothing is left over for a later session to apply
     a_flat_terrain_at(4.0)                         # the terrain of the new project
     (tmp_path / "next").mkdir()
     c.set_dem(dem_layer(tmp_path / "next", name="next"))

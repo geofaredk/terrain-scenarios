@@ -405,8 +405,9 @@ class SketchController(QObject):
             self.message.emit(Qgis.MessageLevel.Warning, VIEW_3D_NO_LAYER)
             return False
         properties = self.project.elevationProperties()
-        if self._terrain_before is None:
-            self._terrain_before = properties.terrainProvider().clone()
+        current = properties.terrainProvider()
+        if self._terrain_before is None or not self._terrain_is_ours(current):
+            self._terrain_before = current.clone()   # a terrain the user chose since the last press is theirs
         provider = QgsRasterDemTerrainProvider()
         provider.setLayer(layer)
         provider.setScale(1.0)
@@ -533,6 +534,7 @@ class SketchController(QObject):
         self.cancel_preview()  # a queued frame must not fire against a session that is gone
         had_session = self.stack is not None
         self._forget_scenario()  # a Save after this must not write the next session over this file
+        self._terrain_before = None  # the project is being cleared, or close() has already put it back
         folder = self.files.folder if self.files is not None else None
         self.stack = self.info = self.files = self.layers = None
         self.dem_layer_id = None

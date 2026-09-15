@@ -621,10 +621,6 @@ class SketchController(QObject):
             raise RuntimeError(EXPORT_OVER_SOURCE)
         export_dem(path, self.stack.working, self.info)
 
-    def set_hillshade_visible(self, visible: bool) -> None:
-        if self.layers is not None:
-            self.layers.set_hillshade_visible(visible)
-
     def _set(self, features) -> bool:
         """Apply `features`; False, with the previous list kept, when the engine refuses them."""
         features = list(features)

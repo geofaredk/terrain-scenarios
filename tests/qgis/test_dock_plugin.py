@@ -87,20 +87,6 @@ def test_hiding_the_panel_stops_a_drawing_and_leaves_no_rubber_band(tmp_path):
     assert len(iface.mapCanvas().scene().items()) == n0
 
 
-def test_a_new_session_applies_the_hillshade_checkbox(tmp_path):
-    iface = fake_iface()
-    dem = dem_layer(tmp_path)
-    controller = SketchController(QgsProject.instance())
-    dock = MainDock(iface, controller)
-    dock.dem_combo.setLayer(dem)
-    dock.start_button.click()
-    dock.hillshade_box.setChecked(True)
-    dock.confirm = lambda text: True
-    dock.start_button.click()
-    node = QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME).findLayer(controller.layers.hillshade_id)
-    assert node.itemVisibilityChecked()
-
-
 def test_plugin_adds_and_removes_its_button_menu_and_panel(tmp_path):
     flat = QgsFlatTerrainProvider()
     flat.setOffset(5.0)

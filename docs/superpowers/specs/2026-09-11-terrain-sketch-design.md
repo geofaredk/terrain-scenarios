@@ -20,7 +20,7 @@ The core values are **intuitive** (usable by non-GIS experts), **explained** (ev
 - Side slopes with a 1:n ratio and maximum reach. Area slopes can go inside or outside the outline (§5.3).
 - An editable **cross profile** and **long profile**, with draggable points, in a bottom dock (§7.3).
 - A non-destructive **feature list**: every feature stays editable, can be toggled and reordered, and changes can be undone.
-- Live preview, a working DEM layer, an optional hillshade, and a **difference layer** (new − original).
+- Live preview, a working DEM layer, and a **difference layer** (new − original). (The optional hillshade was removed on 2026-09-15.)
 - **Cut/fill volumes** per feature and in total, and **pond storage volume** for depressions.
 - **Scenario save/load** to a GeoPackage, **Export** of the final DEM as a GeoTIFF, and a **3D preview**.
 - Contextual help: descriptions, usage examples, and theme-aware SVG illustrations.
@@ -92,7 +92,7 @@ terrain_sketch/
     scenario.py          GeoPackage save/load (uses ogr, no qgis)
   qgis_io/
     raster_io.py         read DEM band into DemGrid; create/update working + difference GeoTIFFs by window
-    layers.py            "Terrain Sketch" layer group: Modified DEM, Change, Hillshade, Sketch outlines; refresh; 3D view
+    layers.py            "Terrain Sketch" layer group: Modified DEM, Change, Sketch outlines; refresh; 3D view
     convert.py           QgsGeometry ↔ core geometry, CRS transforms, makeValid
   gui/
     main_dock.py         right dock: DEM picker, scenario actions, feature list, stacked pages
@@ -234,7 +234,6 @@ These apply to the polygon, or to the corridor polygon for paths. Side slopes ar
 1. **Header row:**
    - The DEM picker (`QgsMapLayerComboBox`, raster only).
    - Scenario actions (icon buttons with tooltips): New, Open…, Save, Save as…, Export DEM…, 3D view.
-   - A **Hillshade** checkbox.
 2. **Feature list** (`feature_list.py`):
    - Each row has a checkbox (enabled), a tool icon, a name, and a warning icon when flagged.
    - Drag to reorder.
@@ -293,7 +292,6 @@ These apply to the polygon, or to the corridor polygon for paths. Side slopes ar
 4. Add the layer group **Terrain Sketch**:
    - **Modified DEM**, with the renderer copied from the source layer.
    - **Change (new − original)**, with a diverging ramp: blue for cut, orange for fill, transparent at 0.
-   - **Hillshade** (off by default), with `QgsHillshadeRenderer` on the working file.
    - **Sketch outlines**, a memory vector layer showing feature outlines and labels (read-only mirror).
 
 ### 8.3 Recompute on change
@@ -357,7 +355,7 @@ These apply to the polygon, or to the corridor polygon for paths. Side slopes ar
 ## 11. Milestones (for the implementation plan)
 
 1. **Core engine:** grid, geometry, mask, stations, profiles, slopes, operations, volumes, engine, plus the full `tests/core`.
-2. **Plugin shell and first flow:** the plugin, the docks, DEM loading, the working, difference and hillshade layers, draw line and draw area, the feature list, recompute and write, and export.
+2. **Plugin shell and first flow:** the plugin, the docks, DEM loading, the working and difference layers, draw line and draw area, the feature list, recompute and write, and export.
 3. **All selection methods:** freehand, brush, from layer, vertex editing, pixel modes in the UI, and the Line/Area toggle.
 4. **Profile dock:** `ProfileWidget` in cross and long modes, dragging with live overlay preview, and reset buttons.
 5. **Guidance:** the tool gallery with illustrations, the About-this-tool texts, tooltips, the parameter diagrams, and the pixel-mode pictures.

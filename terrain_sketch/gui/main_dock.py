@@ -10,8 +10,8 @@ from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsRubb
 from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QAction
-from qgis.PyQt.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
-                                 QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
+from qgis.PyQt.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QStackedWidget,
+                                 QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from ..core.tools import Mode
 from ..qgis_io.convert import from_wkb
@@ -114,8 +114,6 @@ class MainDock(QgsDockWidget):
         self.start_button = QPushButton(self.tr("Start"))
         self.start_button.setToolTip(self.tr("Start sketching on this DEM. The DEM itself is never changed."))
         dem_row.addWidget(self.start_button)
-        self.hillshade_box = QCheckBox(self.tr("Hillshade"))
-        dem_row.addWidget(self.hillshade_box)
         layout.addLayout(dem_row)
 
         # A toolbar, like QGIS's own panels: when the panel is narrower than its buttons, the ones
@@ -194,7 +192,6 @@ class MainDock(QgsDockWidget):
         self.open_scenario_button.clicked.connect(self._open_scenario)
         self.save_scenario_button.clicked.connect(lambda: self._save_scenario())
         self.save_as_scenario_button.clicked.connect(lambda: self._save_scenario(save_as=True))
-        self.hillshade_box.toggled.connect(controller.set_hillshade_visible)
         self.new_button.clicked.connect(self._new_feature)
         self.delete_button.clicked.connect(self._delete_selected)
         self.feature_view.selectionModel().selectionChanged.connect(self._selection_changed)
@@ -286,13 +283,12 @@ class MainDock(QgsDockWidget):
         if not has_dem:
             self.stop_tools()  # a drawing or edit cannot outlive its session
             self._update_highlight(None)
-        for widget in (self.export_button, self.hillshade_box, self.new_button, self.delete_button,
+        for widget in (self.export_button, self.new_button, self.delete_button,
                        self.edit_button, self.feature_view, self.view_3d_button, *self.scenario_buttons):
             widget.setEnabled(has_dem)
         if self.controller.layers is not None:
             project = self.controller.project
             self.dem_combo.setExceptedLayerList([project.mapLayer(i) for i in self.controller.layers.layer_ids])
-            self.controller.set_hillshade_visible(self.hillshade_box.isChecked())
         else:
             self.dem_combo.setExceptedLayerList([])
         self.pages.setCurrentIndex(PAGE_GALLERY if has_dem else PAGE_START)

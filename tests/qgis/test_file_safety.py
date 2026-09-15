@@ -125,15 +125,15 @@ def test_working_files_that_cannot_be_written_leave_no_folder_behind(tmp_path, m
 
 def test_a_layer_group_that_fails_half_way_is_removed_again(tmp_path):
     """The group is in the layer tree before its layers are wired up; a failure there (here the
-    hillshade node cannot be found, so hiding it raises) must not leave a half-built group."""
+    tree refuses a layer) must not leave a half-built group."""
     from qgis.core import QgsLayerTreeGroup
     c = SketchController(QgsProject.instance())
     dem = dem_layer(tmp_path)
-    with mock.patch.object(QgsLayerTreeGroup, "findLayer", return_value=None) as find:
+    with mock.patch.object(QgsLayerTreeGroup, "addLayer", side_effect=RuntimeError("tree refused")) as add:
         with pytest.raises(DemError):
             c.set_dem(dem)
     project = QgsProject.instance()
-    assert find.called                                  # it really failed after the group existed
+    assert add.called                                   # it really failed after the group existed
     assert project.layerTreeRoot().findGroup(GROUP_NAME) is None
     assert not project.mapLayersByName("Sketch outlines") and not project.mapLayersByName("Modified DEM")
     assert project.mapLayer(dem.id()) is not None       # the user's DEM is untouched

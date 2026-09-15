@@ -18,6 +18,7 @@ HANDLE_RADIUS = 4
 NUDGE, NUDGE_FINE = 0.1, 0.01
 NUDGE_KEYS = (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right)
 MIN_HALF_WIDTH = 0.05   # the narrowest corridor a path takes is 0.1 m
+SAME_HANDLE = 0.005     # a reloaded handle this close is the one that was selected (values come back rounded)
 
 
 class Kind(Enum):
@@ -72,11 +73,14 @@ class ProfileWidget(QWidget):
         the default "select a feature". The widget knows nothing about features: the dock, which
         does, sets both.
 
-        The selected handle stays selected when the new profile has as many points: every drag and
-        nudge commits, and the commit reloads the plot, so the next arrow key must still find it.
+        The selected handle stays selected when the new profile still has it where it was: every drag
+        and nudge commits, and the commit reloads the plot, so the next arrow key must still find it. An
+        undo can bring back as many points in another shape, where the same index is another handle.
         """
         points = [(float(x), float(z)) for x, z in points]
-        if len(points) != len(self.points):
+        kept = 0 <= self.selected < len(points) == len(self.points) and all(
+            abs(new - old) <= SAME_HANDLE for new, old in zip(points[self.selected], self.points[self.selected]))
+        if not kept:
             self.selected = -1
         self.points = points
         self.terrain = [(float(x), float(z)) for x, z in terrain]

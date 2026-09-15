@@ -320,3 +320,16 @@ def test_the_crest_edges_cannot_be_removed_and_nothing_is_added_on_the_crest():
     slope = w._to_screen(7.0, -1.5)
     press(w, slope.x(), slope.y(), kind=QEvent.Type.MouseButtonDblClick)
     assert len(w.points) == 5 and len(committed) == 1              # a berm on a slope is fine
+
+
+def test_a_reload_keeps_the_selected_handle_only_where_it_still_is():
+    """A commit reloads the plot with the handle where the user left it, and the next arrow key must find
+    it. An undo can reload a profile with as many points but another shape, where the same index is
+    another handle."""
+    w = widget_with([(0.0, 0.0), (2.0, 0.0), (6.0, -1.0), (12.0, -3.0)])
+    select(w, 6.0, -1.0)
+    key(w, Qt.Key.Key_Right)
+    w.set_profile([(0.0, 0.0), (2.0, 0.0), (6.1, -1.0), (12.0, -3.0)])     # the commit's reload
+    assert w.selected == 2
+    w.set_profile([(0.0, 0.0), (2.0, 0.0), (3.0, -0.2), (12.0, -3.0)])     # an undo to another shape
+    assert w.selected == -1

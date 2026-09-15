@@ -75,12 +75,13 @@ def _restore(stored, widget, method: str) -> bool:
         return False
 
 
-def remember_collapsed(name: str, box) -> None:
-    """Keep a QgsCollapsibleGroupBox's collapsed state under the plugin's group. Left to itself the box
-    saves under its own `QgsCollapsibleGroupBox/…` key, where the plugin can neither find nor clear it."""
+def remember_collapsed(name: str, box, collapsed: bool = False) -> None:
+    """Keep a QgsCollapsibleGroupBox's collapsed state under the plugin's group, starting `collapsed` until
+    the user changes it. Left to itself the box saves under its own `QgsCollapsibleGroupBox/…` key, where the
+    plugin can neither find nor clear it."""
     try:
         box.setSaveCollapsedState(False)
-        box.setCollapsed(bool(load(f"{name}/collapsed", False, bool)))
+        box.setCollapsed(bool(load(f"{name}/collapsed", collapsed, bool)))
         box.collapsedStateChanged.connect(lambda collapsed: save(f"{name}/collapsed", bool(collapsed)))
     except Exception:  # noqa: BLE001 — persistence is a convenience, never a failure path
         pass

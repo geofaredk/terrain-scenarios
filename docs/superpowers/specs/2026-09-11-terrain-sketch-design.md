@@ -240,7 +240,7 @@ These apply to the polygon, or to the corridor polygon for paths. Side slopes ar
    - Drag to reorder.
    - Context menu: Rename, Duplicate, Zoom to, Delete.
    - Selecting a row selects the feature on the map and loads its profiles.
-   - **+ New feature** and **Delete** buttons sit below the list.
+   - **New feature**, **Delete** and **Edit shape** buttons sit above the list (moved there 2026-09-15). A handle below the list changes its height; the split is remembered.
 3. **Stacked page area:**
    - **Gallery page:**
      - "What do you want to build?" is an icon grid of the 7 tools. Each item shows a side-view illustration and the tool name; its tooltip gives the one-line description and a usage example.
@@ -256,7 +256,7 @@ These apply to the polygon, or to the corridor polygon for paths. Side slopes ar
        - Slope position (Inside/Outside, area only).
        - Brush radius (brush only).
      - *Pixels to change*: a combobox with an illustrated icon per mode, plus a tooltip containing the three-panel picture.
-     - *Volumes*: fill, cut and (when applicable) storage for this feature, plus the scenario totals.
+     - *Volumes*: a collapsible group, collapsed until opened, with fill, cut and (when applicable) storage for this feature, plus the scenario totals.
 4. Every parameter has a tooltip with its meaning and an example, and the field labels use plain language. All texts live in `help_texts.py`.
 
 ### 7.3 Bottom dock "Terrain Sketch — Profiles"

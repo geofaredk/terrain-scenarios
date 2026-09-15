@@ -393,3 +393,36 @@ def test_hiding_terrain_sketch_hides_the_profiles_and_opening_it_again_does_not_
 def test_a_panel_without_a_profiles_panel_has_no_profiles_button():
     dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
     assert not dock.profiles_action.isVisible()
+
+
+def test_the_feature_buttons_sit_above_the_feature_list(tmp_path):
+    dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
+    dock.resize(360, 700)
+    dock.show()
+    QApplication.processEvents()
+    list_top = dock.feature_view.mapTo(dock, dock.feature_view.rect().topLeft()).y()
+    for button in (dock.new_button, dock.delete_button, dock.edit_button):
+        assert button.mapTo(dock, button.rect().bottomLeft()).y() < list_top, button.text()
+
+
+def test_the_feature_list_is_resized_in_height_and_keeps_its_height(tmp_path):
+    from qgis.PyQt.QtWidgets import QSplitter
+    dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
+    dock.resize(360, 900)
+    dock.show()
+    QApplication.processEvents()
+    splitter = dock.list_splitter
+    assert isinstance(splitter, QSplitter) and splitter.orientation() == Qt.Orientation.Vertical
+    assert splitter.indexOf(dock.feature_view) == 0 and splitter.indexOf(dock.pages) == -1   # pages below, in 1
+    assert dock.pages.parentWidget() is splitter.widget(1)
+    width, height = dock.feature_view.width(), dock.feature_view.height()
+    top, bottom = splitter.sizes()
+    splitter.setSizes([top - 40, bottom + 40])             # the user drags the handle up
+    splitter.splitterMoved.emit(top - 40, 1)               # as a drag of the handle reports it
+    QApplication.processEvents()
+    assert abs(dock.feature_view.height() - (height - 40)) <= 2 and dock.feature_view.width() == width
+    again = MainDock(fake_iface(), SketchController(QgsProject.instance()))
+    again.resize(360, 900)
+    again.show()
+    QApplication.processEvents()
+    assert abs(again.list_splitter.sizes()[0] - (top - 40)) <= 2

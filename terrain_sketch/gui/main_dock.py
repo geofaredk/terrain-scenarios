@@ -614,7 +614,7 @@ class MainDock(QgsDockWidget):
             return None
         fid = self.model.data(index, Qt.ItemDataRole.UserRole)
         menu = QMenu(self)
-        menu.addAction(self.tr("Rename"), lambda: self.feature_view.edit(index))
+        menu.addAction(self.tr("Rename"), lambda: self._rename(fid))
         menu.addAction(QgsApplication.getThemeIcon("/mActionDuplicateFeature.svg"), self.tr("Duplicate"),
                        lambda: self._duplicate(fid))
         menu.addAction(QgsApplication.getThemeIcon("/mActionZoomToLayer.svg"), self.tr("Zoom to feature"),
@@ -623,6 +623,13 @@ class MainDock(QgsDockWidget):
         menu.addAction(QgsApplication.getThemeIcon("/mActionDeleteSelected.svg"), self.tr("Delete"),
                        lambda: self.controller.delete_feature(fid))
         return menu
+
+    def _rename(self, fid: str) -> None:
+        """Runs from the context menu, whose own event loop lets the list change before the action
+        fires, so the row is looked up now rather than kept from when the menu was built."""
+        row = self.model.row_of(fid)
+        if row >= 0:
+            self.feature_view.edit(self.model.index(row))
 
     def _duplicate(self, fid: str) -> None:
         copy = self.controller.duplicate_feature(fid)

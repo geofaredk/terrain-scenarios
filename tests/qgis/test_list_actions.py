@@ -92,3 +92,16 @@ def test_the_properties_title_follows_a_rename_in_the_list(tmp_path):
     assert dock.pages.currentIndex() == PAGE_PROPERTIES
     dock.model.setData(dock.model.index(dock.model.row_of(dike.id)), "Sea wall")
     assert dock.properties.title.text().startswith("Sea wall")
+
+
+def test_rename_after_the_list_changed_under_the_open_menu_does_not_take_qgis_down(tmp_path):
+    """The menu runs its own event loop, so the list can change before Rename is picked. A row
+    index taken when the menu was built then points past the end of the list, or at another feature."""
+    _iface, c, dock = panel(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 8, 25, 16), UTM)
+    dock.show()
+    rename = menu_action(dock, pond.id, "Rename")
+    c.delete_feature(pond.id)                      # e.g. a layer signal while the menu is open
+    rename.trigger()                               # the stale row used to abort QGIS
+    assert dock.feature_view.state() != QAbstractItemView.State.EditingState

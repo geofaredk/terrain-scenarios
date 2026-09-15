@@ -37,11 +37,17 @@ class FeatureListModel(QAbstractListModel):
     def rowCount(self, parent=QModelIndex()):  # noqa: N802 — Qt override
         return 0 if parent.isValid() else len(self._ids)
 
+    def _id_at(self, index) -> str | None:
+        """The feature id at `index`, or None. Qt checks only that a row is not negative, so an
+        index kept across a reset (e.g. by a context menu) can point past the end of the list."""
+        return self._ids[index.row()] if index.isValid() and index.row() < len(self._ids) else None
+
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid():
+        fid = self._id_at(index)
+        if fid is None:
             return None
         features = {f.id: f for f in self.controller.features}
-        feature = features.get(self._ids[index.row()])
+        feature = features.get(fid)
         if feature is None:
             return None
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
@@ -64,9 +70,9 @@ class FeatureListModel(QAbstractListModel):
                 | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled)
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):  # noqa: N802 — Qt override
-        if not index.isValid():
+        fid = self._id_at(index)
+        if fid is None:
             return False
-        fid = self._ids[index.row()]
         if role == Qt.ItemDataRole.CheckStateRole:
             self.controller.set_enabled(fid, Qt.CheckState(value) == Qt.CheckState.Checked)
             return True
@@ -83,7 +89,8 @@ class FeatureListModel(QAbstractListModel):
 
     def mimeData(self, indexes):  # noqa: N802 — Qt override
         data = QMimeData()
-        data.setData(MIME_TYPE, "\n".join(self._ids[i.row()] for i in indexes).encode())
+        ids = (self._id_at(i) for i in indexes)
+        data.setData(MIME_TYPE, "\n".join(fid for fid in ids if fid is not None).encode())
         return data
 
     def dropMimeData(self, data, action, row, column, parent):  # noqa: N802 — Qt override

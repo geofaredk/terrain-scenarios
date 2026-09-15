@@ -259,8 +259,9 @@ def default_section_line(feature, cell_size: float) -> bytes | None:
 def section_along(line: bytes, before: DemGrid, after: DemGrid) -> dict:
     """Terrain before and after a feature along `line`: `{"stations", "before", "after"}`, stations in
     metres from the line's start. Stations where either terrain is nodata or off the grid are left out."""
-    coords = line_coords(ogr.CreateGeometryFromWkb(bytes(line)))
     empty = {"stations": (), "before": (), "after": ()}
+    lines = [line_coords(p) for p in split_parts(line) if is_line(p)]
+    coords = max(lines, key=_length, default=np.zeros((0, 2)))
     if len(coords) < 2 or _length(coords) <= 0.0:
         return empty
     stations = np.linspace(0.0, _length(coords), SAMPLES)

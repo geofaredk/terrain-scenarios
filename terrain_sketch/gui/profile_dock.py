@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from qgis.gui import QgsDockWidget
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPushButton, QSplitter, QVBoxLayout,
                                  QWidget)
 
@@ -10,13 +10,15 @@ from ..core.sections import (cross_section, set_cross_section, set_whole_cross_s
                              whole_cross_section)
 from ..core.tools import TOOL_INFO, Mode
 from .help_texts import (AREA_SECTION_EMPTY_HINT, AREA_SECTION_NOTE, CROSS_SIDES_TIP, CUSTOM_PROFILE_NOTE,
-                         MULTIPART_LONG_SECTION_NOTE, SYMMETRIC_TIP)
+                         DRAW_SECTION_TIP, MULTIPART_LONG_SECTION_NOTE, RESET_SECTION_TIP, SYMMETRIC_TIP)
 from . import settings
 from .profile_widget import Kind, ProfileWidget
 
 
 class ProfileDock(QgsDockWidget):
     """Shows the selected feature's shape and writes every edit back through the controller."""
+
+    drawSectionRequested = pyqtSignal(str)   # feature id: draw the section line of this area on the map
 
     def __init__(self, controller, parent=None):
         super().__init__(parent)
@@ -35,6 +37,10 @@ class ProfileDock(QgsDockWidget):
         self.symmetric.toggled.connect(self._symmetric_toggled)
         self.reset_cross = QPushButton(self.tr("Reset shape"))
         self.reset_long = QPushButton(self.tr("Reset to rule"))
+        self.draw_section = QPushButton(self.tr("Draw section line"))
+        self.draw_section.setToolTip(DRAW_SECTION_TIP)
+        self.reset_section = QPushButton(self.tr("Reset line"))
+        self.reset_section.setToolTip(RESET_SECTION_TIP)
         self.note = QLabel()
         self.note.setWordWrap(True)
 
@@ -43,7 +49,7 @@ class ProfileDock(QgsDockWidget):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         for title, widget, controls in (
                 (self.tr("Cross profile"), self.cross, (self.symmetric, self.reset_cross)),
-                (self.tr("Long profile"), self.long, (self.reset_long,))):
+                (self.tr("Long profile"), self.long, (self.draw_section, self.reset_section, self.reset_long))):
             panel = QWidget()
             column = QVBoxLayout(panel)
             column.setContentsMargins(0, 0, 0, 0)
@@ -70,6 +76,8 @@ class ProfileDock(QgsDockWidget):
         self.long.profileCommitted.connect(lambda points: self._long_edited(points, True))
         self.reset_cross.clicked.connect(self._reset_cross)
         self.reset_long.clicked.connect(self._reset_long)
+        self.draw_section.clicked.connect(self._draw_section)
+        self.reset_section.clicked.connect(self._reset_section)
         controller.featuresChanged.connect(self._refresh)
         controller.sessionChanged.connect(self._session_changed)
         self.show_feature(None)
@@ -122,9 +130,12 @@ class ProfileDock(QgsDockWidget):
                               terrain=tuple(zip(area["stations"], area["before"])), editable=False,
                               hint=AREA_SECTION_EMPTY_HINT)
         self.note.setText(AREA_SECTION_NOTE)
-        self.reset_long.setEnabled(False)
+        self._show_section_buttons(True)
+        self.draw_section.setEnabled(True)
+        self.reset_section.setEnabled(self.controller.find(self._fid).section_line is not None)
 
     def _show_long_section(self, feature) -> None:
+        self._show_section_buttons(False)
         section = self.controller.long_section(self._fid)
         if not supports_long_profile(feature):
             # A multi-part path: the engine follows the tool rule whatever is stored here.
@@ -174,6 +185,20 @@ class ProfileDock(QgsDockWidget):
         if self._fid is not None:
             self.controller.update_profile(self._fid, long_profile=None)
 
+    def _show_section_buttons(self, area: bool) -> None:
+        """An area's panel has a section line to draw or reset; a path's has a long profile to reset."""
+        self.draw_section.setVisible(area)
+        self.reset_section.setVisible(area)
+        self.reset_long.setVisible(not area)
+
+    def _draw_section(self) -> None:
+        if self._fid is not None:
+            self.drawSectionRequested.emit(self._fid)
+
+    def _reset_section(self) -> None:
+        if self._fid is not None:
+            self.controller.set_section_line(self._fid, None)
+
     def _symmetric_toggled(self, checked: bool) -> None:
         self.cross.symmetric = checked
 
@@ -182,7 +207,7 @@ class ProfileDock(QgsDockWidget):
             self.show_feature(None)
 
     def _set_enabled(self, enabled: bool) -> None:
-        for widget in (self.symmetric, self.reset_cross, self.reset_long):
+        for widget in (self.symmetric, self.reset_cross, self.reset_long, self.draw_section, self.reset_section):
             widget.setEnabled(enabled)
 
     def shutdown(self) -> None:

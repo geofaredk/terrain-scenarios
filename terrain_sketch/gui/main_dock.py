@@ -14,14 +14,15 @@ from qgis.PyQt.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QM
                                  QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from ..core.tools import Mode
+from ..qgis_io.convert import from_wkb
 from ..qgis_io.raster_io import DemError, GeographicDemError
 from ..qgis_io.scenario import ScenarioError
 from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
 from .help_texts import (EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED, EXPORT_REPLACE,
                          REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_REPLACE,
-                         SCENARIO_SAVED, SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES,
-                         VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
+                         SCENARIO_SAVED, SECTION_LINE_HINT, SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING,
+                         UNSAVED_CHANGES, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
 from .map_tools.base import SketchTool
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
@@ -95,6 +96,10 @@ class MainDock(QgsDockWidget):
         self.highlight.setStrokeColor(QgsMapToolEdit.digitizingStrokeColor())
         self.highlight.setFillColor(Qt.GlobalColor.transparent)
         self.highlight.setWidth(QgsMapToolEdit.digitizingStrokeWidth() + 2)
+        self.section_band = QgsRubberBand(iface.mapCanvas(), Qgis.GeometryType.Line)   # an area's section line
+        self.section_band.setStrokeColor(QgsMapToolEdit.digitizingStrokeColor())
+        self.section_band.setWidth(QgsMapToolEdit.digitizingStrokeWidth())
+        self.section_band.setLineStyle(Qt.PenStyle.DashLine)
 
         body = QWidget()
         layout = QVBoxLayout(body)
@@ -210,6 +215,7 @@ class MainDock(QgsDockWidget):
         self.installEventFilter(self.undo_keys)
         if profiles is not None:
             profiles.installEventFilter(self.undo_keys)   # the Profiles panel is Terrain Sketch too
+            profiles.drawSectionRequested.connect(self._draw_section_line)
         # A spin box claims Ctrl+Z for its own text even when it has none to undo, as after its arrows
         # committed each step; only while it has typed text to undo (or redo) is that key its own
         self.spin_undo_keys = []
@@ -248,7 +254,9 @@ class MainDock(QgsDockWidget):
         self.controller.cancel_preview()
         self.overlay.dispose()
         self.highlight.reset(Qgis.GeometryType.Line)
+        self.section_band.reset(Qgis.GeometryType.Line)
         self.iface.mapCanvas().scene().removeItem(self.highlight)
+        self.iface.mapCanvas().scene().removeItem(self.section_band)
         # The filters on the panels are this dock's children and go with it; the canvas outlives the plugin
         self.iface.mapCanvas().removeEventFilter(self.canvas_undo_keys)
 
@@ -386,11 +394,30 @@ class MainDock(QgsDockWidget):
         else:
             self.draw_tool = (DrawLineTool if mode is Mode.PATH else DrawPolygonTool)(canvas)
         self.draw_tool.finished.connect(lambda geometry, t=tool, m=mode: self._drawn(t, m, geometry))
+        self._activate_drawing(self._drawing_hint(method))
+
+    def _activate_drawing(self, hint: str) -> None:
+        """Put `draw_tool` on the map, remembering the tool it replaces, and show what to do."""
+        canvas = self.iface.mapCanvas()
         self.draw_tool.cancelled.connect(self.end_drawing)
         self._previous_tool = canvas.mapTool()
         canvas.setMapTool(self.draw_tool)
-        self.hint.setText(self._drawing_hint(method))
+        self.hint.setText(hint)
         self.hint.show()
+
+    def _draw_section_line(self, fid: str) -> None:
+        """Draw the line an area's section runs along (spec §5.4), asked for by the Profiles panel."""
+        if self.controller.find(fid) is None:
+            return
+        self.stop_tools()
+        self.draw_tool = DrawLineTool(self.iface.mapCanvas())
+        self.draw_tool.finished.connect(lambda geometry, f=fid: self._section_drawn(f, geometry))
+        self._activate_drawing(SECTION_LINE_HINT)
+
+    def _section_drawn(self, fid: str, geometry) -> None:
+        crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+        self.end_drawing()
+        self.controller.set_section_line(fid, geometry, crs)
 
     def _drawing_hint(self, method) -> str:
         """The instruction text for `method`, naming the feature when the brush extends one."""
@@ -494,7 +521,8 @@ class MainDock(QgsDockWidget):
         self._update_highlight(self.feature_view.selected_id())
 
     def _update_highlight(self, fid) -> None:
-        """Outline the selected feature on the map."""
+        """Outline the selected feature on the map, with the line its section runs along if it is an area."""
+        self._update_section_band(fid)
         if fid is None or not self.controller.has_dem or fid not in {f.id for f in self.controller.features}:
             self.highlight.reset(Qgis.GeometryType.Line)
             return
@@ -507,6 +535,16 @@ class MainDock(QgsDockWidget):
             return
         self.highlight.reset(geometry.type())
         self.highlight.setToGeometry(geometry, None)
+
+    def _update_section_band(self, fid) -> None:
+        line = self.controller.section_line(fid) if fid is not None else None
+        try:
+            geometry = self._to_canvas(from_wkb(line)) if line is not None else None
+        except QgsCsException:
+            geometry = None                    # as for the outline: no line rather than an abort
+        self.section_band.reset(Qgis.GeometryType.Line)
+        if geometry is not None:
+            self.section_band.setToGeometry(geometry, None)
 
     def _new_scenario(self) -> None:
         if self._keep_unsaved_work():

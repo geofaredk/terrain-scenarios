@@ -29,8 +29,8 @@ from ..qgis_io.scenario import ScenarioError
 from .help_texts import (COPY_NAME, DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, EMPTY_LAYER,
                          NO_FEATURES_SELECTED, NO_SESSION, RESULT_LAYER_REMOVED, SCENARIO_NOT_APPLIED,
                          SESSION_ENDED_DEM_REMOVED, TOOL_LABELS, UNDO_ADD, UNDO_DELETE, UNDO_DUPLICATE,
-                         UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER, UNDO_SETTINGS, UNDO_SHAPE, UNDO_TURN_OFF,
-                         UNDO_TURN_ON, VIEW_3D_NO_LAYER)
+                         UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER, UNDO_SECTION_LINE, UNDO_SETTINGS, UNDO_SHAPE,
+                         UNDO_TURN_OFF, UNDO_TURN_ON, VIEW_3D_NO_LAYER)
 from .undo import FeatureListChange
 
 LOG_TAG = "Terrain Sketch"
@@ -320,15 +320,11 @@ class SketchController(QObject):
         `{"stations", "before", "after", "line"}`, the line as WKB in the DEM CRS — the feature's own,
         or the default one through its middle. Reached from a slot, so a failure is logged and
         reported as an empty section, as for `long_section`."""
-        feature = self.find(fid)
-        if feature is None or not self.has_dem or feature.mode is not Mode.AREA:
+        line = self.section_line(fid)
+        if line is None:
             return EMPTY_AREA_SECTION.copy()
         try:
-            grid = self.stack.original
-            line = feature.section_line or default_section_line(feature, grid.cell_size)
-            if line is None:
-                return EMPTY_AREA_SECTION.copy()
-            around = self.stack.terrain_around(fid, _line_window(grid, line))
+            around = self.stack.terrain_around(fid, _line_window(self.stack.original, line))
             if around is None:
                 return EMPTY_AREA_SECTION.copy()
             _window, before, after = around
@@ -336,6 +332,39 @@ class SketchController(QObject):
         except Exception:  # noqa: BLE001 — a profile panel must never take QGIS down
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
             return EMPTY_AREA_SECTION.copy()
+
+    def section_line(self, fid: str) -> bytes | None:
+        """The line an area feature's section runs along, as WKB in the DEM CRS: the one the user drew,
+        or the default through the middle of the area. None for anything else. Never raises — the map
+        shows this line from selection and change signals."""
+        feature = self.find(fid)
+        if feature is None or not self.has_dem or feature.mode is not Mode.AREA:
+            return None
+        try:
+            return feature.section_line or default_section_line(feature, self.stack.original.cell_size)
+        except Exception:  # noqa: BLE001 — a geometry the section cannot use shows no line
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Warning)
+            return None
+
+    def set_section_line(self, fid: str, geometry: QgsGeometry | None, crs=None) -> bool:
+        """Make `geometry` (a line in `crs`) the line an area's section runs along, or with None go back
+        to the default line. One undo step; the terrain does not change. False, with a message when the
+        drawing cannot be used, and silently when the feature is not an area that still exists."""
+        feature = self.find(fid)
+        if not self.has_dem or feature is None or feature.mode is not Mode.AREA:
+            return False
+        wkb = None
+        if geometry is not None:
+            try:
+                wkb = to_dem_wkb(geometry, crs, self.dem_crs, Mode.PATH)
+            except ValueError as error:
+                self.message.emit(Qgis.MessageLevel.Warning, str(error))
+                return False
+            except QgsCsException:
+                self.message.emit(Qgis.MessageLevel.Warning, DRAWING_NOT_TRANSFORMED)
+                return False
+        self.update_feature(fid, section_line=wkb)
+        return True
 
     def _run_preview(self) -> None:
         if self._pending is None:
@@ -634,6 +663,8 @@ def _describe(feature, changes) -> tuple[str, object]:
         return (UNDO_TURN_ON if changes["enabled"] else UNDO_TURN_OFF).format(feature.name), None
     if "geometry_wkb" in fields:
         return UNDO_SHAPE.format(feature.name), None
+    if fields == {"section_line"}:
+        return UNDO_SECTION_LINE.format(feature.name), None
     if fields <= PROFILE_FIELDS:
         return UNDO_PROFILE.format(feature.name), None
     return UNDO_SETTINGS.format(feature.name), (feature.id, fields)

@@ -94,6 +94,7 @@ UNDO_SHAPE = "Edit the shape of {}"
 UNDO_PROFILE = "Change the profile of {}"
 UNDO_SETTINGS = "Change the settings of {}"
 UNDO_DUPLICATE = "Duplicate {}"
+UNDO_SECTION_LINE = "Move the section line of {}"
 COPY_NAME = "{} (copy)"
 
 VIEW_3D_TIP = ("Show the modified DEM in a new 3D view. It is the project's terrain, but only a temporary one, "
@@ -117,8 +118,12 @@ PROFILE_EMPTY_HINT = "Select or draw a feature to edit its shape here."
 CUSTOM_PROFILE_NOTE = ("Custom long profile: the heights are fixed and no longer follow the "
                        "terrain underneath. Use Reset to rule to go back.")
 AREA_SECTION_EMPTY_HINT = "There is no terrain to show along this feature's section line."
-AREA_SECTION_NOTE = ("A section straight through the area: dashed is the ground before this feature, solid is "
-                     "the result. Shape the sides with the cross profile on the left.")
+AREA_SECTION_NOTE = ("A section through the area along the dashed line on the map: dashed here is the ground "
+                     "before this feature, solid is the result. Shape the sides with the cross profile on the left.")
+DRAW_SECTION_TIP = "Draw the line on the map that this section runs along."
+RESET_SECTION_TIP = "Put the section line back through the middle of the area, along its longer side."
+SECTION_LINE_HINT = ("Click to draw the section line. Right-click or press Enter to finish, Backspace removes the "
+                     "last point, Esc cancels.")
 MULTIPART_LONG_SECTION_NOTE = ("This feature has more than one part, so its long profile follows "
                                "the tool rule and cannot be edited by hand. Use Height or Depth in "
                                "the panel above to drive its shape.")

@@ -460,9 +460,13 @@ class SketchController(QObject):
 
     def open_scenario(self, path: str) -> None:
         """Replace the features with the scenario at `path`. Raises ScenarioError when the file
-        cannot be read or its features cannot be applied — and then nothing has changed: the
-        current features, the file they belong to and their unsaved state all stay as they were,
-        so the next Save cannot write them over the scenario that failed to open."""
+        cannot be read or its features cannot be applied — and then the current features, the file
+        they belong to and their unsaved state stay as they were, so the next Save cannot write them
+        over the scenario that failed to open; the working rasters may have moved to a temp folder.
+
+        The rasters go beside the scenario only when it was made on this DEM. On another one they hold
+        its features on this DEM's ground, not its saved terrain, so they stay in a temp folder until
+        the next Save writes this DEM's record."""
         if not self.has_dem:
             raise ScenarioError(NO_SESSION)
         features, meta = scenario.load(path)
@@ -472,7 +476,9 @@ class SketchController(QObject):
             raise ScenarioError(SCENARIO_NOT_APPLIED)
         self.undo_stack.clear()   # the history belonged to the features that were just replaced
         self._mark_scenario(path, meta.created)
-        self._place_files()
+        if _same_file(meta.dem_source, self.info.path) \
+                and not scenario.dem_meta(self.info, self.stack.original).differences(meta):
+            self._place_files()
         self.sessionChanged.emit()
 
     def _mark_scenario(self, path: str, created: str) -> None:

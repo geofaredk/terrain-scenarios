@@ -179,3 +179,24 @@ def test_moving_the_rasters_over_older_ones_leaves_no_partial_files(tmp_path):
     c.save_scenario(str(tmp_path / "flood.gpkg"))                    # the same folder again, with nothing in it
     assert sorted(os.listdir(tmp_path / "flood_files")) == ["change.tif", "working_dem.tif"]
     assert read_tif(tmp_path / "flood_files" / "working_dem.tif")[0][19, 20] == 10.0
+
+
+def test_opening_a_scenario_on_another_dem_leaves_its_rasters_as_saved(tmp_path):
+    """The scenario's features replayed on another DEM are not its saved terrain: a QGIS project or a flood
+    model reading `flood_files/working_dem.tif` must not get the other DEM's ground."""
+    from qgis.core import QgsRasterLayer
+    from qgis_helpers import write_dem
+    c = start_session(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    path = str(tmp_path / "flood.gpkg")
+    c.save_scenario(path)
+    (tmp_path / "other").mkdir()
+    for name, shape in (("same_grid", (40, 40)), ("other_grid", (30, 50))):
+        layer = QgsRasterLayer(write_dem(tmp_path / "other" / f"{name}.tif", np.full(shape, 30.0, np.float32)), name)
+        QgsProject.instance().addMapLayer(layer)
+        c.set_dem(layer)
+        c.open_scenario(path)                                         # "Open on this DEM", or no question at all
+        assert not c.files.folder.startswith(str(tmp_path)) and len(c.features) == 1
+        c.close()                                                     # without saving
+        saved, _ = read_tif(tmp_path / "flood_files" / "working_dem.tif")
+        assert saved.shape == (40, 40) and saved[19, 20] == 11.0, name

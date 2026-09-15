@@ -124,3 +124,22 @@ def test_an_editor_swap_file_does_not_ship(tmp_path):
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
     assert not [n for n in names if n.endswith(".swp")], names
+
+
+def test_a_machine_without_zip_is_told_so(tmp_path):
+    """Everything the script needs except `zip` is on PATH; the message names what is missing
+    instead of bash's generic "command not found" from half way through."""
+    import shutil
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("bash", "dirname", "sed", "head", "mktemp", "tar", "rm"):
+        found = shutil.which(tool)
+        assert found, tool
+        (bin_dir / tool).symlink_to(found)
+    out = tmp_path / "out"
+    out.mkdir()
+    result = subprocess.run([str(bin_dir / "bash"), str(SCRIPT), str(out)], capture_output=True, text=True,
+                            env={"PATH": str(bin_dir)})
+    assert result.returncode != 0
+    assert "zip command is not installed" in result.stderr
+    assert not list(out.glob("*.zip"))

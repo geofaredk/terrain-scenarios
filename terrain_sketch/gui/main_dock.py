@@ -2,20 +2,27 @@
 from __future__ import annotations
 
 import os
+import traceback
 
-from qgis.core import Qgis, QgsApplication, QgsCoordinateTransform, QgsGeometry, QgsProject
+from qgis.core import (Qgis, QgsApplication, QgsCoordinateTransform, QgsCsException, QgsGeometry, QgsMessageLog,
+                       QgsProject, QgsRasterLayer)
 from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsRubberBand
 from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QAction
 from qgis.PyQt.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
-                                 QStackedWidget, QToolButton, QVBoxLayout, QWidget)
+                                 QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from ..core.tools import Mode
 from ..qgis_io.raster_io import DemError, GeographicDemError
 from ..qgis_io.scenario import ScenarioError
+from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
-from .help_texts import (REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_REPLACE,
-                         SCENARIO_SAVED, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES)
+from .help_texts import (EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED, EXPORT_REPLACE,
+                         REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_REPLACE,
+                         SCENARIO_SAVED, SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES,
+                         VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
+from .map_tools.base import SketchTool
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
@@ -25,6 +32,7 @@ from .overlay import PreviewOverlay
 from .properties_page import PropertiesPage
 from .selection import BRUSH_EXTEND_HINT, EDIT_HINT, EDIT_ICON, METHOD_HINTS, Method
 from .tool_gallery import ToolGallery
+from .undo import UndoKeys
 
 PAGE_START, PAGE_GALLERY, PAGE_PROPERTIES = range(3)
 
@@ -39,6 +47,21 @@ def _file_button(icon: str, text: str, tip: str) -> QToolButton:
     button.setAutoRaise(True)
     button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
     return button
+
+
+def _action_button(action) -> QToolButton:
+    """An icon-only, auto-raised button for `action`: it follows the action's enabled state and
+    text, so its tooltip always says what will happen ("Undo Add Raise path 1")."""
+    button = QToolButton()
+    button.setDefaultAction(action)
+    button.setAutoRaise(True)
+    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+    return button
+
+
+def _has_text_history(spin, redo: bool) -> bool:
+    edit = spin.lineEdit()
+    return edit.isRedoAvailable() if redo else edit.isUndoAvailable()
 
 
 class MainDock(QgsDockWidget):
@@ -62,6 +85,7 @@ class MainDock(QgsDockWidget):
         controller.before_discard = self._offer_save_before_discard
         self.edit_tool = None
         self._brush_fid = None
+        self._brush_extends = False       # set with _brush_fid, but kept when that feature goes
         self.highlight = QgsRubberBand(iface.mapCanvas(), Qgis.GeometryType.Line)
         self.highlight.setStrokeColor(QgsMapToolEdit.digitizingStrokeColor())
         self.highlight.setFillColor(Qt.GlobalColor.transparent)
@@ -77,9 +101,14 @@ class MainDock(QgsDockWidget):
         self.start_button = QPushButton(self.tr("Start"))
         self.start_button.setToolTip(self.tr("Start sketching on this DEM. The DEM itself is never changed."))
         dem_row.addWidget(self.start_button)
+        self.hillshade_box = QCheckBox(self.tr("Hillshade"))
+        dem_row.addWidget(self.hillshade_box)
         layout.addLayout(dem_row)
 
-        tools_row = QHBoxLayout()
+        # A toolbar, like QGIS's own panels: when the panel is narrower than its buttons, the ones
+        # that do not fit move behind the » button instead of forcing the whole panel wider.
+        self.toolbar = QToolBar()
+        self.toolbar.setIconSize(iface.iconSize(True))
         self.new_scenario_button = _file_button(
             "/mActionFileNew.svg", self.tr("New scenario"),
             self.tr("Start again with no features. The DEM stays as it is."))
@@ -95,17 +124,26 @@ class MainDock(QgsDockWidget):
         self.scenario_buttons = (self.new_scenario_button, self.open_scenario_button,
                                  self.save_scenario_button, self.save_as_scenario_button)
         for button in self.scenario_buttons:
-            tools_row.addWidget(button)
+            self.toolbar.addWidget(button)
+        self.undo_action = controller.undo_stack.createUndoAction(self, self.tr("Undo"))
+        self.undo_action.setIcon(QgsApplication.getThemeIcon("/mActionUndo.svg"))
+        self.redo_action = controller.undo_stack.createRedoAction(self, self.tr("Redo"))
+        self.redo_action.setIcon(QgsApplication.getThemeIcon("/mActionRedo.svg"))
+        self.undo_button = _action_button(self.undo_action)
+        self.redo_button = _action_button(self.redo_action)
+        self.toolbar.addSeparator()
+        self.toolbar.addWidget(self.undo_button)
+        self.toolbar.addWidget(self.redo_button)
+        self.toolbar.addSeparator()
         self.export_button = QToolButton()
         self.export_button.setIcon(QgsApplication.getThemeIcon("/mActionSharingExport.svg"))
         self.export_button.setText(self.tr("Export DEM…"))
         self.export_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.export_button.setToolTip(self.tr("Write the modified DEM to a new GeoTIFF, e.g. for a flood simulation."))
-        self.hillshade_box = QCheckBox(self.tr("Hillshade"))
-        tools_row.addWidget(self.export_button)
-        tools_row.addWidget(self.hillshade_box)
-        tools_row.addStretch(1)
-        layout.addLayout(tools_row)
+        self.toolbar.addWidget(self.export_button)
+        self.view_3d_button = _file_button("/3d.svg", self.tr("3D view"), VIEW_3D_TIP)
+        self.toolbar.addWidget(self.view_3d_button)
+        layout.addWidget(self.toolbar)
 
         self.model = FeatureListModel(controller, self)
         self.feature_view = FeatureListView(self.model)
@@ -140,6 +178,7 @@ class MainDock(QgsDockWidget):
 
         self.start_button.clicked.connect(self._start)
         self.export_button.clicked.connect(self._export)
+        self.view_3d_button.clicked.connect(self._open_3d_view)
         self.new_scenario_button.clicked.connect(self._new_scenario)
         self.open_scenario_button.clicked.connect(self._open_scenario)
         self.save_scenario_button.clicked.connect(lambda: self._save_scenario())
@@ -162,11 +201,29 @@ class MainDock(QgsDockWidget):
         controller.message.connect(self._show_message)
         controller.previewUpdated.connect(self._preview_updated)
         controller.previewCleared.connect(lambda: self.overlay.clear())
+        controller.featuresRestored.connect(self._history_restored)
+        # Ctrl+Z / Ctrl+Shift+Z: in the panel always, on the map only while a Terrain Sketch tool is active
+        self.undo_keys = UndoKeys(controller.undo_stack, parent=self)
+        self.installEventFilter(self.undo_keys)
+        if profiles is not None:
+            profiles.installEventFilter(self.undo_keys)   # the Profiles panel is Terrain Sketch too
+        # A spin box claims Ctrl+Z for its own text even when it has none to undo, as after its arrows
+        # committed each step; only while it has typed text to undo (or redo) is that key its own
+        self.spin_undo_keys = []
+        page = self.properties
+        for spin in (page.amount, page.width, page.slope, page.reach):
+            keys = UndoKeys(controller.undo_stack, applies=lambda redo, s=spin: not _has_text_history(s, redo),
+                            parent=self)
+            spin.installEventFilter(keys)
+            self.spin_undo_keys.append(keys)
+        self.canvas_undo_keys = UndoKeys(controller.undo_stack, applies=lambda _redo: self._sketch_tool_active(),
+                                       parent=self)
+        iface.mapCanvas().installEventFilter(self.canvas_undo_keys)
         self._session_changed()
 
     def end_drawing(self) -> None:
         """Stop a drawing in progress and give the canvas its previous map tool back."""
-        tool, self.draw_tool, self._brush_fid = self.draw_tool, None, None
+        tool, self.draw_tool, self._brush_fid, self._brush_extends = self.draw_tool, None, None, False
         self._release_tool(tool)
 
     def stop_editing(self) -> None:
@@ -189,6 +246,7 @@ class MainDock(QgsDockWidget):
         self.overlay.dispose()
         self.highlight.reset(Qgis.GeometryType.Line)
         self.iface.mapCanvas().scene().removeItem(self.highlight)
+        self.iface.mapCanvas().removeEventFilter(self.canvas_undo_keys)
 
     def _release_tool(self, tool) -> None:
         if tool is not None:
@@ -212,7 +270,7 @@ class MainDock(QgsDockWidget):
             self.stop_tools()  # a drawing or edit cannot outlive its session
             self._update_highlight(None)
         for widget in (self.export_button, self.hillshade_box, self.new_button, self.delete_button,
-                       self.edit_button, self.feature_view, *self.scenario_buttons):
+                       self.edit_button, self.feature_view, self.view_3d_button, *self.scenario_buttons):
             widget.setEnabled(has_dem)
         if self.controller.layers is not None:
             project = self.controller.project
@@ -309,7 +367,13 @@ class MainDock(QgsDockWidget):
         canvas = self.iface.mapCanvas()
         if method is Method.BRUSH:
             self._brush_fid = self._brush_target(tool, mode)
-            initial = self._to_canvas(self.controller.feature_geometry(self._brush_fid)) if self._brush_fid else None
+            self._brush_extends = self._brush_fid is not None
+            try:
+                initial = self._to_canvas(self.controller.feature_geometry(self._brush_fid)) if self._brush_fid else None
+            except QgsCsException:
+                self._brush_fid, self._brush_extends = None, False
+                self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
+                return
             self.draw_tool = BrushTool(canvas, self.gallery.brush_radius(), initial)
             self.draw_tool.radiusChanged.connect(self.gallery.set_brush_radius)
         elif method is Method.FREEHAND:
@@ -365,7 +429,13 @@ class MainDock(QgsDockWidget):
             return
         self.end_drawing()
         canvas = self.iface.mapCanvas()
-        self.edit_tool = VertexEditTool(canvas, self._to_canvas(self.controller.feature_geometry(fid)))
+        try:
+            shape = self._to_canvas(self.controller.feature_geometry(fid))
+        except QgsCsException:
+            self.edit_button.setChecked(False)
+            self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
+            return
+        self.edit_tool = VertexEditTool(canvas, shape)
         self.edit_tool.geometryChanged.connect(lambda geometry, f=fid: self._edited(f, geometry))
         self.edit_tool.cancelled.connect(self.stop_editing)
         self._previous_tool = canvas.mapTool()
@@ -402,6 +472,23 @@ class MainDock(QgsDockWidget):
         if fid is None or fid not in {f.id for f in self.controller.features}:
             self._selection_changed()
 
+    def _sketch_tool_active(self) -> bool:
+        return isinstance(self.iface.mapCanvas().mapTool(), SketchTool)
+
+    def _history_restored(self) -> None:
+        """Undo or redo replaced the feature list underneath whatever the panel shows. A vertex
+        edit or a brush stroke that extends a feature holds that feature's old outline and would
+        put it straight back, so both stop; drawing a new feature does not depend on the list and
+        carries on. The Properties page reloads its fields, which otherwise keep the undone values.
+        `_brush_extends`, not `_brush_fid`: an undo that removes the feature itself has already cleared
+        the id (featuresChanged comes first), and the brush would then add the old outline as a new feature."""
+        self.stop_editing()
+        if self._brush_extends:
+            self.end_drawing()
+        fid = self.feature_view.selected_id()
+        if self.pages.currentIndex() == PAGE_PROPERTIES and fid is not None and self.controller.find(fid) is not None:
+            self.properties.show_feature(fid)
+
     def _refresh_highlight(self) -> None:
         self._update_highlight(self.feature_view.selected_id())
 
@@ -410,7 +497,13 @@ class MainDock(QgsDockWidget):
         if fid is None or not self.controller.has_dem or fid not in {f.id for f in self.controller.features}:
             self.highlight.reset(Qgis.GeometryType.Line)
             return
-        geometry = self._to_canvas(self.controller.feature_geometry(fid))
+        try:
+            geometry = self._to_canvas(self.controller.feature_geometry(fid))
+        except QgsCsException:
+            # runs from selection and change signals, on every change: no message here, Edit shape
+            # and Zoom to feature give one when the user acts on the outline
+            self.highlight.reset(Qgis.GeometryType.Line)
+            return
         self.highlight.reset(geometry.type())
         self.highlight.setToGeometry(geometry, None)
 
@@ -485,25 +578,106 @@ class MainDock(QgsDockWidget):
         except (OSError, RuntimeError) as error:
             self._show_message(Qgis.MessageLevel.Critical, self.tr("Export failed: {}").format(error))
             return
-        self._show_message(Qgis.MessageLevel.Success, self.tr("Exported the modified DEM to {}").format(path))
+        text = EXPORT_DONE.format(path)
+        if self.controller.dem_is_integer:
+            text = f"{text}. {EXPORT_INTEGER_NOTE}"
+        self._offer_to_add_export(path, text)
+
+    def _offer_to_add_export(self, path: str, text: str) -> None:
+        """Spec §8.5's "adds the result to the project", offered after the export rather than as a
+        dialog option: the file dialog is the platform's own and cannot carry one."""
+        try:
+            bar = self.iface.messageBar()
+            widget = bar.createMessage(self.tr("Terrain Sketch"), text)
+            button = QPushButton(self.tr("Add to project"), widget)
+            button.clicked.connect(lambda _checked=False: self._add_export(path, button))
+            widget.layout().addWidget(button)
+            bar.pushWidget(widget, Qgis.MessageLevel.Success, 0)
+        except Exception:  # noqa: BLE001 — this runs in a click handler; a plain message will do
+            self._show_message(Qgis.MessageLevel.Success, text)
+
+    def _add_export(self, path: str, button=None) -> None:
+        """Add the exported GeoTIFF as a layer. Runs from the message's button, so a file that has
+        since been moved or deleted becomes a message."""
+        try:
+            layer = QgsRasterLayer(path, os.path.splitext(os.path.basename(path))[0])
+            if not layer.isValid():
+                self._show_message(Qgis.MessageLevel.Warning, EXPORT_NOT_ADDED.format(path))
+                return
+            QgsProject.instance().addMapLayer(layer)
+            if button is not None and not sip.isdeleted(button):
+                button.setEnabled(False)       # once is enough; a second click would add a duplicate
+        except Exception:  # noqa: BLE001
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+            self._show_message(Qgis.MessageLevel.Warning, EXPORT_NOT_ADDED.format(path))
+
+    def _open_3d_view(self) -> None:
+        """The modified DEM as the project's terrain, then a new 3D view (spec §8.5): through the
+        interface when this QGIS offers it, otherwise through QGIS's own New 3D Map View action,
+        otherwise a message saying how to open one by hand."""
+        try:
+            if not self.controller.show_in_3d():
+                return
+            try:
+                if self.iface.createNewMapCanvas3D(self.tr("Terrain Sketch 3D")) is not None:
+                    return
+            except Exception:  # noqa: BLE001 — a QGIS built without 3D; the menu action may still work
+                QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Warning)
+            action = self.iface.mainWindow().findChild(QAction, "mActionNew3DMapCanvas")
+            if action is not None and action.isEnabled():
+                action.trigger()
+                return
+        except Exception:  # noqa: BLE001 — this runs in a click slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+        self._show_message(Qgis.MessageLevel.Warning, VIEW_3D_NOT_OPENED)
 
     def _context_menu(self, position) -> None:
-        index = self.feature_view.indexAt(position)
+        menu = self.feature_menu(self.feature_view.indexAt(position))
+        if menu is not None:
+            menu.exec(self.feature_view.viewport().mapToGlobal(position))
+            menu.deleteLater()   # parented to the dock, it and its actions would otherwise stay for good
+
+    def feature_menu(self, index) -> QMenu | None:
+        """The list's context menu for the row at `index` (spec §7.2), or None off the rows."""
         if not index.isValid():
-            return
+            return None
         fid = self.model.data(index, Qt.ItemDataRole.UserRole)
         menu = QMenu(self)
+        menu.addAction(self.tr("Rename"), lambda: self._rename(fid))
+        menu.addAction(QgsApplication.getThemeIcon("/mActionDuplicateFeature.svg"), self.tr("Duplicate"),
+                       lambda: self._duplicate(fid))
         menu.addAction(QgsApplication.getThemeIcon("/mActionZoomToLayer.svg"), self.tr("Zoom to feature"),
                        lambda: self._zoom_to(fid))
+        menu.addSeparator()
         menu.addAction(QgsApplication.getThemeIcon("/mActionDeleteSelected.svg"), self.tr("Delete"),
                        lambda: self.controller.delete_feature(fid))
-        menu.exec(self.feature_view.viewport().mapToGlobal(position))
+        return menu
+
+    def _rename(self, fid: str) -> None:
+        """Runs from the context menu, whose own event loop lets the list change before the action
+        fires, so the row is looked up now rather than kept from when the menu was built."""
+        row = self.model.row_of(fid)
+        if row >= 0:
+            self.feature_view.edit(self.model.index(row))
+
+    def _duplicate(self, fid: str) -> None:
+        copy = self.controller.duplicate_feature(fid)
+        if copy is not None:
+            self.feature_view.select_id(copy.id)
 
     def _zoom_to(self, fid: str) -> None:
+        """Runs from the context menu, so a feature that has gone or an outline that cannot be
+        projected into the map's CRS becomes a message rather than an exception in a slot."""
+        if self.controller.find(fid) is None:
+            return
         canvas = self.iface.mapCanvas()
         transform = QgsCoordinateTransform(self.controller.dem_crs, canvas.mapSettings().destinationCrs(),
                                            QgsProject.instance())
-        extent = transform.transformBoundingBox(self.controller.feature_geometry(fid).boundingBox())
+        try:
+            extent = transform.transformBoundingBox(self.controller.feature_geometry(fid).boundingBox())
+        except QgsCsException:
+            self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
+            return
         canvas.setExtent(extent.buffered(max(extent.width(), extent.height()) * 0.25 + 1.0))
         canvas.refresh()
 
@@ -577,7 +751,12 @@ class MainDock(QgsDockWidget):
         return answer == QMessageBox.StandardButton.Save
 
     def _export_dialog(self) -> str:
-        path, _ = QFileDialog.getSaveFileName(self, self.tr("Export modified DEM"), "", self.tr("GeoTIFF (*.tif)"))
+        title = (self.tr("Export modified DEM (saved with decimals, 32-bit float)") if self.controller.dem_is_integer
+                 else self.tr("Export modified DEM"))
+        path, _ = QFileDialog.getSaveFileName(self, title, "", self.tr("GeoTIFF (*.tif)"))
         if path and not path.lower().endswith((".tif", ".tiff")):
             path += ".tif"
+            # as for scenarios: the dialog asked about replacing the name as typed, not this one
+            if os.path.exists(path) and not self.confirm(EXPORT_REPLACE.format(os.path.basename(path))):
+                return ""
         return path

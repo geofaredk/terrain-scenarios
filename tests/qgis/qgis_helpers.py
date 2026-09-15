@@ -6,7 +6,7 @@ from osgeo import gdal
 from qgis.core import (QgsCoordinateReferenceSystem, QgsFeature, QgsGeometry, QgsPointXY, QgsProject,
                        QgsRasterLayer, QgsRectangle, QgsVectorLayer)
 from qgis.gui import QgisInterface, QgsMapCanvas, QgsMessageBarItem
-from qgis.PyQt.QtCore import QEventLoop, QTimer
+from qgis.PyQt.QtCore import QEventLoop, QSize, QTimer
 from qgis.PyQt.QtWidgets import QMainWindow
 
 gdal.UseExceptions()
@@ -76,6 +76,7 @@ def fake_iface():
     canvas.setDestinationCrs(UTM)
     canvas.setExtent(QgsRectangle(X0, Y0 - 40, X0 + 40, Y0))
     iface.mapCanvas.return_value = canvas
+    iface.iconSize.return_value = QSize(16, 16)   # QGIS's default docked-toolbar icon size
     # The bar stays a Mock so tests can assert pushMessage was called, but createMessage hands
     # back a REAL item: the panel builds a button onto it, and a Mock there would let a broken
     # widget path pass unnoticed — it aborted the interpreter instead.

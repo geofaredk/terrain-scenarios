@@ -72,6 +72,35 @@ SESSION_ENDED_DEM_REMOVED = "The Terrain Sketch session ended because its DEM wa
 RESULT_LAYER_REMOVED = "A Terrain Sketch layer was removed from the project. Your features are kept and export still works."
 
 DRAWING_NOT_TRANSFORMED = "The drawing could not be converted to the DEM's coordinate system."
+SHAPE_NOT_TRANSFORMED = ("This feature's shape cannot be shown in the map's coordinate system, so it cannot "
+                         "be zoomed to or edited here. Set the project to the DEM's coordinate system and "
+                         "try again.")
+EXPORT_REPLACE = "{} already exists. Replace it?"
+EXPORT_DONE = "Exported the modified DEM to {}"
+EXPORT_INTEGER_NOTE = ("Your DEM stores whole numbers; the export keeps decimals (32-bit float), so changes "
+                       "smaller than a metre are not rounded away.")
+EXPORT_NOT_ADDED = "The exported DEM could not be added to the project: {} cannot be read as a raster."
+
+# What Undo and Redo will do, shown as "Undo Add Dike 1" in their buttons' tooltips.
+UNDO_ADD = "Add {}"
+UNDO_DELETE = "Delete {}"
+UNDO_RENAME = "Rename {}"
+UNDO_TURN_ON = "Turn on {}"
+UNDO_TURN_OFF = "Turn off {}"
+UNDO_REORDER = "Reorder features"
+UNDO_SHAPE = "Edit the shape of {}"
+UNDO_PROFILE = "Change the profile of {}"
+UNDO_SETTINGS = "Change the settings of {}"
+UNDO_DUPLICATE = "Duplicate {}"
+COPY_NAME = "{} (copy)"
+
+VIEW_3D_TIP = ("Show the modified DEM in a new 3D view. It is the project's terrain, but only a temporary one, "
+               "even if you save the project meanwhile: the terrain you had before is put back when this "
+               "session ends.")
+VIEW_3D_NOT_OPENED = ("The modified DEM is now the project's terrain, but Terrain Sketch could not open a "
+                      "3D view. Open one with View ▸ 3D Map Views ▸ New 3D Map View.")
+VIEW_3D_NO_LAYER = ("The Modified DEM layer is no longer in the project, so there is nothing to show in 3D. "
+                    "Press Start to create it again.")
 
 
 def amount_label(tool: Tool) -> str | None:
@@ -180,7 +209,7 @@ NO_VOLUME_YET = "—"
 SCENARIO_TOTALS = "{fill} fill · {cut} cut"
 
 
-def cubic_metres(value: float) -> str:
+def cubic_metres(value: float | None) -> str:
     """A volume a user can read at a glance: no decimals once it is past a hundred.
 
     Cut and fill are magnitudes, so a minus sign here can only be floating-point residue —

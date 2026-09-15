@@ -4,13 +4,17 @@ from __future__ import annotations
 import configparser
 import os
 import pathlib
+import shutil
 import tempfile
 import traceback
+import uuid
 from dataclasses import replace
 from typing import NamedTuple
 
-from qgis.core import Qgis, QgsCoordinateReferenceSystem, QgsCsException, QgsGeometry, QgsMessageLog, QgsProject
+from qgis.core import (Qgis, QgsCoordinateReferenceSystem, QgsCsException, QgsGeometry, QgsMessageLog, QgsProject,
+                       QgsRasterDemTerrainProvider)
 from qgis.PyQt.QtCore import QObject, QTimer, pyqtSignal
+from qgis.PyQt.QtGui import QUndoStack
 
 from ..core.engine import FeatureStack
 from ..core.operations import FeatureStats
@@ -22,8 +26,12 @@ from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import DemError, WorkingFiles, export_dem, read_dem
 from ..qgis_io.scenario import ScenarioError
-from .help_texts import (DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, EMPTY_LAYER, NO_FEATURES_SELECTED, NO_SESSION,
-                         RESULT_LAYER_REMOVED, SCENARIO_NOT_APPLIED, SESSION_ENDED_DEM_REMOVED, TOOL_LABELS)
+from .help_texts import (COPY_NAME, DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, EMPTY_LAYER,
+                         NO_FEATURES_SELECTED, NO_SESSION, RESULT_LAYER_REMOVED, SCENARIO_NOT_APPLIED,
+                         SESSION_ENDED_DEM_REMOVED, TOOL_LABELS, UNDO_ADD, UNDO_DELETE, UNDO_DUPLICATE,
+                         UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER, UNDO_SETTINGS, UNDO_SHAPE, UNDO_TURN_OFF,
+                         UNDO_TURN_ON, VIEW_3D_NO_LAYER)
+from .undo import FeatureListChange
 
 LOG_TAG = "Terrain Sketch"
 
@@ -59,6 +67,7 @@ class SketchController(QObject):
     previewUpdated = pyqtSignal(str, object)  # (feature id, PreviewImage) while dragging
     previewCleared = pyqtSignal()
     message = pyqtSignal(object, str)  # (Qgis.MessageLevel, text for the message bar)
+    featuresRestored = pyqtSignal()    # undo or redo replaced the feature list
 
     def __init__(self, project: QgsProject, parent=None):
         super().__init__(parent)
@@ -72,7 +81,8 @@ class SketchController(QObject):
         self._features: list[TerrainFeature] = []
         self._closing = False
         self._pending = None
-        self._dirty = False
+        self.undo_stack = QUndoStack(self)
+        self._terrain_before = None   # the project's terrain before show_in_3d replaced it
         self._scenario_path = None
         self._created = ""
         # Called, if set, just before a session with unsaved changes is dropped — the project
@@ -113,9 +123,11 @@ class SketchController(QObject):
         """Start a new session on `layer`. Raises DemError (user-facing message) before changing anything;
         if it fails after the previous session was already closed, the session is dropped cleanly."""
         grid, info = read_dem(layer)
+        folder = tempfile.mkdtemp(prefix="terrain_sketch_")
         try:
-            files = WorkingFiles(tempfile.mkdtemp(prefix="terrain_sketch_"), grid, info)
+            files = WorkingFiles(folder, grid, info)
         except (OSError, RuntimeError, MemoryError) as error:
+            shutil.rmtree(folder, ignore_errors=True)
             raise DemError(f"Terrain Sketch could not create its working files: {error}") from error
         self.close()
         self.stack = FeatureStack(grid)
@@ -135,6 +147,7 @@ class SketchController(QObject):
 
     def close(self) -> None:
         """End the session and remove its layers from the project."""
+        self._restore_terrain()   # before the layer the terrain points at goes
         self._closing = True
         try:
             if self.layers is not None:
@@ -166,7 +179,8 @@ class SketchController(QObject):
             return None
         feature = new_feature(tool, mode, wkb, self.stack.original.cell_size,
                               name=self._unique(name) if name else self._unique_name(tool))
-        self._set([*self._features, feature])
+        if not self._commit([*self._features, feature], UNDO_ADD.format(feature.name)):
+            return None
         return feature
 
     def add_from_layer(self, tool: Tool, mode: Mode, layer, selected_only: bool = False) -> TerrainFeature | None:
@@ -207,20 +221,51 @@ class SketchController(QObject):
         return True
 
     def update_feature(self, fid: str, **changes) -> None:
+        self._update(fid, changes, _describe)
+
+    def update_profile(self, fid: str, **changes) -> None:
+        """A change made in the Profiles panel: one undo step per drag or reset, never merged, and
+        named as a profile change — even though a cross-profile drag also moves the width, slope
+        and reach, which on their own would count as settings."""
+        self._update(fid, changes, lambda feature, _changes: (UNDO_PROFILE.format(feature.name), None))
+
+    def _update(self, fid: str, changes: dict, describe) -> None:
         self.cancel_preview()  # the committed result replaces whatever the overlay was showing
-        self._set([replace(f, **changes) if f.id == fid else f for f in self._features])
+        feature = self.find(fid)
+        if feature is None:
+            return
+        text, key = describe(feature, changes)
+        self._commit([replace(f, **changes) if f.id == fid else f for f in self._features], text, key)
 
     def set_enabled(self, fid: str, enabled: bool) -> None:
         self.update_feature(fid, enabled=bool(enabled))
 
     def delete_feature(self, fid: str) -> None:
-        self._set([f for f in self._features if f.id != fid])
+        feature = self.find(fid)
+        if feature is not None:
+            self._commit([f for f in self._features if f.id != fid], UNDO_DELETE.format(feature.name))
+
+    def duplicate_feature(self, fid: str) -> TerrainFeature | None:
+        """A copy of the feature, with every setting and profile, placed right after it in the list.
+        It starts turned off: most tools measure from the terrain beneath them, so an identical copy
+        on top would not be a copy at all — a raised path would come out twice as high. The user
+        moves or reshapes it, then ticks it on. None when the feature no longer exists."""
+        feature = self.find(fid)
+        if feature is None:
+            return None
+        copy = replace(feature, id=uuid.uuid4().hex, name=self._unique(COPY_NAME.format(feature.name)),
+                       enabled=False)
+        index = self._features.index(feature)
+        features = [*self._features[:index + 1], copy, *self._features[index + 1:]]
+        if not self._commit(features, UNDO_DUPLICATE.format(feature.name)):
+            return None
+        return copy
 
     def reorder(self, ids) -> None:
         by_id = {f.id: f for f in self._features}
         if sorted(ids) != sorted(by_id):
             raise ValueError("reorder() needs every feature id exactly once")
-        self._set([by_id[i] for i in ids])
+        self._commit([by_id[i] for i in ids], UNDO_REORDER)
 
     def preview(self, fid: str, **changes) -> None:
         """Show what `changes` would do, without committing them.
@@ -296,8 +341,10 @@ class SketchController(QObject):
 
     @property
     def is_dirty(self) -> bool:
-        """Whether anything has changed since the last save or load of a scenario."""
-        return self._dirty
+        """Whether there is work a save would keep: the features differ from the last save or load.
+        Follows undo — undoing back to the saved state makes the scenario clean again — and a
+        scenario that was never saved and has been emptied again has nothing to keep."""
+        return not self.undo_stack.isClean() and bool(self._features or self._scenario_path)
 
     @property
     def scenario_path(self) -> str | None:
@@ -319,7 +366,7 @@ class SketchController(QObject):
         written = scenario.save(path, self._features, meta, crs_wkt=getattr(self.info, "crs_wkt", ""))
         self._scenario_path = path
         self._created = written.created
-        self._dirty = False
+        self.undo_stack.setClean()
         self.sessionChanged.emit()
 
     def scenario_differences(self, path: str) -> list[str]:
@@ -341,13 +388,55 @@ class SketchController(QObject):
             raise ScenarioError(SCENARIO_NOT_APPLIED)
         self._scenario_path = path
         self._created = meta.created
-        self._dirty = False
+        self.undo_stack.clear()   # the history belonged to the features that were just replaced
         self.sessionChanged.emit()
 
     def _forget_scenario(self) -> None:
         self._scenario_path = None
         self._created = ""
-        self._dirty = False
+        self.undo_stack.clear()
+
+    def show_in_3d(self) -> bool:
+        """Make the modified DEM the project's terrain, at true vertical scale, so a 3D view shows
+        the sketched landscape (spec §8.5). The terrain it replaces is kept and put back when the
+        session ends. False, with a message, when there is no Modified DEM layer to show."""
+        layer = self.project.mapLayer(self.layers.working_id) if self.layers is not None else None
+        if layer is None:
+            self.message.emit(Qgis.MessageLevel.Warning, VIEW_3D_NO_LAYER)
+            return False
+        properties = self.project.elevationProperties()
+        current = properties.terrainProvider()
+        if self._terrain_before is None or not self._terrain_is_ours(current):
+            self._terrain_before = current.clone()   # a terrain the user chose since the last press is theirs
+        provider = QgsRasterDemTerrainProvider()
+        provider.setLayer(layer)
+        provider.setScale(1.0)
+        properties.setTerrainProvider(provider)
+        return True
+
+    def _restore_terrain(self) -> None:
+        """Put back the terrain show_in_3d replaced — unless the user has since chosen another one
+        themselves, which is theirs to keep."""
+        before, self._terrain_before = self._terrain_before, None
+        if before is None:
+            return
+        properties = self.project.elevationProperties()
+        if self._terrain_is_ours(properties.terrainProvider()):
+            properties.setTerrainProvider(before)
+
+    def _terrain_is_ours(self, provider) -> bool:
+        """Whether `provider` is the one show_in_3d set: a DEM terrain on the Modified DEM layer, or
+        on a layer that has gone. Only ours can have lost its layer through the session's own
+        removal, and a terrain on nothing is worth nothing to keep."""
+        if not isinstance(provider, QgsRasterDemTerrainProvider):
+            return False
+        layer = provider.layer()
+        return layer is None or (self.layers is not None and layer.id() == self.layers.working_id)
+
+    @property
+    def dem_is_integer(self) -> bool:
+        """Whether the session's DEM stores whole numbers — its export is float32 regardless."""
+        return self.info is not None and self.info.integer
 
     def export_dem(self, path: str) -> None:
         """Write the modified DEM to `path`; raises RuntimeError without a session, or if `path`
@@ -386,9 +475,31 @@ class SketchController(QObject):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
             self.message.emit(Qgis.MessageLevel.Critical, "Terrain Sketch could not update the terrain; "
                                                           "see the 'Terrain Sketch' log tab for details.")
-        self._dirty = True
         self.featuresChanged.emit()
         return True
+
+    def _commit(self, features, text: str, key=None) -> bool:
+        """Apply a change the user made and record it for undo. A change that leaves the list as it
+        was records nothing, so it neither costs an undo step nor marks the scenario unsaved."""
+        before, after = tuple(self._features), tuple(features)
+        if after == before:
+            self.featuresChanged.emit()   # a view showing values the change normalised away re-syncs
+            return True
+        if not self._set(after):
+            return False
+        self.undo_stack.push(FeatureListChange(self._restore, before, after, text, key))
+        return True
+
+    def _restore(self, features) -> None:
+        """Undo or redo. Runs inside QUndoStack from a button or a key, so it never raises: `_set`
+        already turns an engine failure into a message. The stack moves its index even when the
+        engine refuses the list, so the saved state is forgotten then: an unchanged list that
+        happened to land on the saved step must not be reported as saved."""
+        self.cancel_preview()
+        if self.stack is not None:
+            if not self._set(features):
+                self.undo_stack.resetClean()
+            self.featuresRestored.emit()
 
     def _outline_items(self) -> list:
         items = []
@@ -423,16 +534,23 @@ class SketchController(QObject):
         self.cancel_preview()  # a queued frame must not fire against a session that is gone
         had_session = self.stack is not None
         self._forget_scenario()  # a Save after this must not write the next session over this file
+        self._terrain_before = None  # the project is being cleared, or close() has already put it back
+        folder = self.files.folder if self.files is not None else None
         self.stack = self.info = self.files = self.layers = None
         self.dem_layer_id = None
         self.dem_crs = QgsCoordinateReferenceSystem()
         self._features = []
+        if folder is not None:
+            # Each session writes a DEM-sized working and change GeoTIFF. Without this every Start
+            # leaves both behind in the temp folder. Errors are ignored: on Windows a layer QGIS has
+            # not released yet keeps its file locked, and a leftover file is not worth a message.
+            shutil.rmtree(folder, ignore_errors=True)
         if had_session:
             self.sessionChanged.emit()
             self.featuresChanged.emit()
 
     def _offer_save_before_discard(self) -> None:
-        if self.before_discard is None or self.stack is None or not self._dirty or not self._features:
+        if self.before_discard is None or self.stack is None or not self.is_dirty:
             return
         try:
             self.before_discard()
@@ -440,11 +558,34 @@ class SketchController(QObject):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _on_layers_removed(self, items) -> None:
-        if self._closing or self.stack is None:
+        # `layers` is still None while set_dem builds the group, and a group that fails half way
+        # removes its own layers again — which lands here, inside a Qt signal
+        if self._closing or self.stack is None or self.layers is None:
             return
         ids = {item if isinstance(item, str) else item.id() for item in items}
+        if self.layers.working_id in ids:
+            self._restore_terrain()   # the terrain now shows nothing; checked first, as close() needs it too
         if self.dem_layer_id in ids:
             self.close()  # the removal has finished, so the remaining session layers can go too
             self.message.emit(Qgis.MessageLevel.Warning, SESSION_ENDED_DEM_REMOVED)
         elif ids & set(self.layers.layer_ids):
             self.message.emit(Qgis.MessageLevel.Info, RESULT_LAYER_REMOVED)
+
+
+PROFILE_FIELDS = frozenset({"cross_left", "cross_right", "long_profile"})
+
+
+def _describe(feature, changes) -> tuple[str, object]:
+    """The undo text for `changes` to `feature`, and the merge key — set only for settings, so the
+    steps of one spin box become one undo step while a rename, a toggle, a reshaped outline or a
+    dragged profile each stay their own."""
+    fields = frozenset(changes)
+    if fields == {"name"}:
+        return UNDO_RENAME.format(feature.name), None
+    if fields == {"enabled"}:
+        return (UNDO_TURN_ON if changes["enabled"] else UNDO_TURN_OFF).format(feature.name), None
+    if "geometry_wkb" in fields:
+        return UNDO_SHAPE.format(feature.name), None
+    if fields <= PROFILE_FIELDS:
+        return UNDO_PROFILE.format(feature.name), None
+    return UNDO_SETTINGS.format(feature.name), (feature.id, fields)

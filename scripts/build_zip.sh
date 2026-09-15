@@ -13,6 +13,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="$(cd "${1:-$ROOT}" && pwd)"
 PACKAGE="terrain_sketch"
 
+if ! command -v zip >/dev/null 2>&1; then
+  echo "build_zip.sh: the zip command is not installed" >&2
+  exit 1
+fi
+
 # metadata.txt is what QGIS reads to list the plugin; without it the ZIP installs as nothing.
 # Checked before the version is read, so a missing file reports itself rather than a sed error.
 if [ ! -f "$ROOT/$PACKAGE/metadata.txt" ]; then

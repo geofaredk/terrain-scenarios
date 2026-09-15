@@ -28,10 +28,10 @@ Every claim below about QGIS or Qt behaviour was probed headless against QGIS 4.
 
 - **Scope.** The Plan 6 backlog held about 30 items. This plan takes the rest of milestone 6 (undo, 3D view), the spec's list and export options, and every crash or file-leftover item. The profile-editor and guidance polish moves to Plan 8.
 - **Undo keeps whole lists, not diffs.** Features are frozen dataclasses, so a list before and after a change share every untouched feature. Undo hands a list back to `_set`, which runs the same windowed recompute as an edit; a test undoes and redoes a long run of every kind of change and compares the terrain with a from-scratch replay after each step.
-- **A change that changes nothing records nothing.** `_commit` compares the lists first, so an identical edit costs no undo step and no longer marks the scenario unsaved (a Plan 6 deferral).
-- **The steps of one setting merge; everything else stays its own step.** Changes to the same settings of the same feature share a merge key, so a spin box's steps undo in one go. Renames, toggles, shape edits and profile drags do not merge. Qt never merges into the step a scenario was saved at, and a merge that returns to where it started removes the step (both probed).
-- **Saved = the undo stack's clean state.** Save marks it clean; New, Open and Start clear it. Undoing back to the saved state makes the scenario clean again. Deleting every feature of a saved scenario is now unsaved work that is asked about before it is dropped (a Plan 6 deferral).
-- **An undo the engine refuses leaves the history index moved.** `_set` still turns the failure into a message and a log entry, and the list stays as it was. The engine accepted that exact list before, so this needs a bug elsewhere; it is not worth rolling the stack back for.
+- **A change that changes nothing records nothing.** `_commit` compares the lists first, so an identical edit costs no undo step and no longer marks the scenario unsaved (a Plan 6 deferral). It still emits `featuresChanged`, so a view showing values the change normalised away — a dragged profile clamped back — re-syncs.
+- **The steps of one setting merge; everything else stays its own step.** Changes to the same settings of the same feature share a merge key, so a spin box's steps undo in one go. Renames, toggles, shape edits and profile drags do not merge. The Profiles panel commits through `update_profile`, not `update_feature`: a cross-profile drag also moves width, slope and reach (and an area drag moves only slope and reach), so classifying it by its fields filed it as a merging settings change — the Task 2 review found this with the panel's real `set_cross_section` output, which the first tests never used. Qt never merges into the step a scenario was saved at, and a merge that returns to where it started removes the step (both probed).
+- **Saved = the undo stack's clean state.** Save marks it clean; New, Open and Start clear it. Undoing back to the saved state makes the scenario clean again. Deleting every feature of a saved scenario is now unsaved work that is asked about before it is dropped (a Plan 6 deferral); a scenario that was never saved and has been emptied again has nothing to keep and does not ask.
+- **An undo the engine refuses forgets the saved state.** `QUndoStack` moves its index even when `_set` refuses the list, and the list stays as it was. If that index is the saved step, the unchanged — unsaved — features would be reported as saved and dropped without a question, so `_restore` calls `resetClean()` then. The engine accepted that exact list before, so this needs a bug elsewhere; rolling the stack back is not worth it.
 - **Ctrl+Z is claimed by an event filter, not a shortcut.** QGIS binds the same keys in its main window, and two shortcuts for one key cancel each other out. `UndoKeys` accepts `ShortcutOverride` and acts on the key press that follows. Probed: this beats a window-level Ctrl+Z action; a focused spin box or line edit keeps Ctrl+Z for its own text, as everywhere in Qt; `QgsMapCanvas` does **not** call a map tool's `shortcutEvent` for it in 4.2.2, so the canvas needs its own filter, which only claims the keys while the active map tool is a `SketchTool`. The filter is installed on the main panel, on the Profiles panel and on the canvas.
 - **After an undo or redo, tools bound to the old list stop.** A vertex edit and a brush stroke that extends a feature hold its old outline and would put it back on their next change, so both end. Drawing a new feature does not depend on the list and carries on. The Properties page reloads its fields only after an undo or redo — reloading on every change would rewrite a spin box while the user types in it.
 - **The header is a toolbar.** Undo, Redo and 3D view took the header row from 367 px to more than 437 px of minimum width, measured offscreen. In a `QToolBar` — as in QGIS's own panels — buttons that do not fit move behind », so the header no longer sets the panel's width. The Hillshade checkbox moves up beside Start; spec §7.2 counts both rows as the header.
@@ -2303,12 +2303,12 @@ git commit -m "fix: projection failures, replaced exports, working files and a h
 
 **Files:**
 - Create: `terrain_sketch/gui/undo.py`
-- Modify: `terrain_sketch/gui/controller.py`, `terrain_sketch/gui/help_texts.py`
+- Modify: `terrain_sketch/gui/controller.py`, `terrain_sketch/gui/help_texts.py`, `terrain_sketch/gui/profile_dock.py`
 - Test: `tests/qgis/test_undo.py`
 
 **Interfaces:**
 - Consumes: `SketchController._set(features) -> bool`, `find`, `cancel_preview`; Plan 6's `is_dirty`, `save_scenario`, `open_scenario`, `new_scenario`, `_forget_scenario`, `before_discard`.
-- Produces: `gui/undo.py` `FeatureListChange(restore, before, after, text, key=None)`; `SketchController.undo_stack` (`QUndoStack`), signal `featuresRestored`, `_commit(features, text, key=None) -> bool`; `add_drawn` returns None when the engine refuses; `update_feature`/`delete_feature` do nothing for an unknown id; `is_dirty` is `not undo_stack.isClean()`; `help_texts.UNDO_ADD`, `UNDO_DELETE`, `UNDO_RENAME`, `UNDO_TURN_ON`, `UNDO_TURN_OFF`, `UNDO_REORDER`, `UNDO_SHAPE`, `UNDO_PROFILE`, `UNDO_SETTINGS`.
+- Produces: `gui/undo.py` `FeatureListChange(restore, before, after, text, key=None)`; `SketchController.undo_stack` (`QUndoStack`), signal `featuresRestored`, `_commit(features, text, key=None) -> bool`, `update_profile(fid, **changes)` (used by `ProfileDock` for its commits and both Reset buttons); `add_drawn` returns None when the engine refuses; `update_feature`/`update_profile`/`delete_feature` do nothing for an unknown id; `is_dirty` is `not undo_stack.isClean()` and there are features or a scenario path; `help_texts.UNDO_ADD`, `UNDO_DELETE`, `UNDO_RENAME`, `UNDO_TURN_ON`, `UNDO_TURN_OFF`, `UNDO_REORDER`, `UNDO_SHAPE`, `UNDO_PROFILE`, `UNDO_SETTINGS`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2324,6 +2324,7 @@ from terrain_sketch.core.engine import FeatureStack
 from terrain_sketch.core.tools import Mode, PixelMode, Tool
 from terrain_sketch.gui.help_texts import (UNDO_ADD, UNDO_DELETE, UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER,
                                            UNDO_SETTINGS, UNDO_SHAPE, UNDO_TURN_OFF, UNDO_TURN_ON)
+from terrain_sketch.gui.profile_dock import ProfileDock
 
 
 def terrain(c):
@@ -2524,6 +2525,86 @@ def test_a_long_run_of_undo_and_redo_keeps_the_terrain_exact(tmp_path):
     while c.undo_stack.canRedo():
         c.undo_stack.redo()
         assert np.array_equal(terrain(c), replayed(c))
+
+
+def test_each_drag_in_the_profiles_panel_is_its_own_profile_step(tmp_path):
+    """The panel's cross-profile drags also move width, slope and reach, which alone count as
+    settings; they must still be one named profile step each, never merged."""
+    c = start_session(tmp_path)
+    dike, pond = dike_and_pond(c)
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    start = c.undo_stack.index()
+    dock._cross_edited([(0.0, 0.0), (2.0, 0.0), (6.0, -1.0)], True)
+    after_first = c.find(dike.id)
+    dock._cross_edited([(0.0, 0.0), (2.5, 0.0), (7.0, -1.2)], True)
+    assert c.undo_stack.index() == start + 2
+    assert c.undo_stack.undoText() == UNDO_PROFILE.format(dike.name)
+    c.undo_stack.undo()
+    assert c.find(dike.id) == after_first               # one drag back, not both
+
+    dock.show_feature(pond.id)                          # an area drag sends only slope and reach
+    dock._cross_edited([(0.0, 0.0), (0.5, 0.0), (4.0, 1.0)], True)
+    assert c.undo_stack.undoText() == UNDO_PROFILE.format(pond.name)
+
+
+def test_the_profile_reset_buttons_are_profile_steps(tmp_path):
+    c = start_session(tmp_path)
+    dike, _pond = dike_and_pond(c)
+    c.update_feature(dike.id, cross_right=((3.0, -0.6),), long_profile=((0.0, 12.0), (29.0, 13.0)))
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    start = c.undo_stack.index()
+    dock._reset_cross()
+    assert c.undo_stack.undoText() == UNDO_PROFILE.format(dike.name)
+    dock._reset_long()
+    assert c.undo_stack.index() == start + 2 and c.undo_stack.undoText() == UNDO_PROFILE.format(dike.name)
+
+
+def test_an_undo_the_engine_refuses_leaves_the_scenario_unsaved(tmp_path):
+    from unittest import mock
+    c = start_session(tmp_path)
+    dike, _pond = dike_and_pond(c)
+    c.save_scenario(str(tmp_path / "saved.gpkg"))
+    c.update_feature(dike.id, amount=2.0)
+    with mock.patch.object(c.stack, "update", side_effect=MemoryError("no room")):
+        c.undo_stack.undo()                             # lands on the saved step, list unchanged
+    assert c.find(dike.id).amount == 2.0
+    assert c.is_dirty                                   # still the unsaved change on screen
+
+
+def test_an_emptied_scenario_that_was_never_saved_has_nothing_to_keep(tmp_path):
+    c = start_session(tmp_path)
+    dike, pond = dike_and_pond(c)
+    c.delete_feature(dike.id)
+    c.delete_feature(pond.id)
+    assert not c.is_dirty and c.undo_stack.canUndo()
+
+
+def test_a_change_that_changes_nothing_still_refreshes_the_views(tmp_path):
+    c = start_session(tmp_path)
+    dike, _pond = dike_and_pond(c)
+    heard = []
+    c.featuresChanged.connect(lambda: heard.append(True))
+    c.update_feature(dike.id, amount=dike.amount)
+    assert heard == [True]
+
+
+def test_an_add_the_engine_refuses_returns_nothing_and_leaves_no_work(tmp_path):
+    from unittest import mock
+    c = start_session(tmp_path)
+    with mock.patch.object(c.stack, "update", side_effect=RuntimeError("refused")):
+        assert c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM) is None
+    assert c.features == () and not c.is_dirty and not c.undo_stack.canUndo()
+
+
+def test_stepping_a_setting_back_after_a_save_is_clean_again(tmp_path):
+    c = start_session(tmp_path)
+    dike, _pond = dike_and_pond(c)
+    c.save_scenario(str(tmp_path / "saved.gpkg"))
+    c.update_feature(dike.id, amount=2.0)
+    c.update_feature(dike.id, amount=1.0)
+    assert not c.is_dirty
 ```
 - [ ] **Step 2: Run it to see it fail**
 
@@ -2532,7 +2613,7 @@ Expected: collection error `ImportError: cannot import name 'UNDO_ADD' from 'ter
 
 - [ ] **Step 3: Implement**
 
-Every mutation now goes through `_commit`, and `_dirty` is gone: the undo stack's clean state replaces it. `_offer_save_before_discard` no longer requires features, so an emptied scenario still asks.
+Every mutation now goes through `_commit`, and `_dirty` is gone: the undo stack's clean state replaces it. `_offer_save_before_discard` no longer requires features, so an emptied saved scenario still asks. `ProfileDock` switches its three commits to `update_profile`.
 
 Replace the whole file:
 
@@ -2756,11 +2837,20 @@ class SketchController(QObject):
         return True
 
     def update_feature(self, fid: str, **changes) -> None:
+        self._update(fid, changes, _describe)
+
+    def update_profile(self, fid: str, **changes) -> None:
+        """A change made in the Profiles panel: one undo step per drag or reset, never merged, and
+        named as a profile change — even though a cross-profile drag also moves the width, slope
+        and reach, which on their own would count as settings."""
+        self._update(fid, changes, lambda feature, _changes: (UNDO_PROFILE.format(feature.name), None))
+
+    def _update(self, fid: str, changes: dict, describe) -> None:
         self.cancel_preview()  # the committed result replaces whatever the overlay was showing
         feature = self.find(fid)
         if feature is None:
             return
-        text, key = _describe(feature, changes)
+        text, key = describe(feature, changes)
         self._commit([replace(f, **changes) if f.id == fid else f for f in self._features], text, key)
 
     def set_enabled(self, fid: str, enabled: bool) -> None:
@@ -2851,9 +2941,10 @@ class SketchController(QObject):
 
     @property
     def is_dirty(self) -> bool:
-        """Whether the features differ from the last save or load of a scenario. Follows undo:
-        undoing back to the saved state makes the scenario clean again."""
-        return not self.undo_stack.isClean()
+        """Whether there is work a save would keep: the features differ from the last save or load.
+        Follows undo — undoing back to the saved state makes the scenario clean again — and a
+        scenario that was never saved and has been emptied again has nothing to keep."""
+        return not self.undo_stack.isClean() and bool(self._features or self._scenario_path)
 
     @property
     def scenario_path(self) -> str | None:
@@ -2950,6 +3041,7 @@ class SketchController(QObject):
         was records nothing, so it neither costs an undo step nor marks the scenario unsaved."""
         before, after = tuple(self._features), tuple(features)
         if after == before:
+            self.featuresChanged.emit()   # a view showing values the change normalised away re-syncs
             return True
         if not self._set(after):
             return False
@@ -2958,10 +3050,13 @@ class SketchController(QObject):
 
     def _restore(self, features) -> None:
         """Undo or redo. Runs inside QUndoStack from a button or a key, so it never raises: `_set`
-        already turns an engine failure into a message."""
+        already turns an engine failure into a message. The stack moves its index even when the
+        engine refuses the list, so the saved state is forgotten then: an unchanged list that
+        happened to land on the saved step must not be reported as saved."""
         self.cancel_preview()
         if self.stack is not None:
-            self._set(features)
+            if not self._set(features):
+                self.undo_stack.resetClean()
             self.featuresRestored.emit()
 
     def _outline_items(self) -> list:
@@ -3283,6 +3378,174 @@ UNSAVED_BEFORE_CLOSING = ("Terrain Sketch is closing this scenario, and it has c
                           "saved. Save them now?")
 ```
 
+Replace the whole file:
+
+**File:** `terrain_sketch/gui/profile_dock.py`
+```python
+"""Bottom dock: the cross profile and the long profile of the selected feature, side by side."""
+from __future__ import annotations
+
+from qgis.gui import QgsDockWidget
+from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPushButton, QSplitter, QVBoxLayout,
+                                 QWidget)
+
+from ..core.sections import cross_section, set_cross_section, supports_long_profile
+from ..core.tools import TOOL_INFO, Mode
+from .help_texts import (AREA_LONG_SECTION_HINT, AREA_LONG_SECTION_NOTE, CUSTOM_PROFILE_NOTE,
+                         MULTIPART_LONG_SECTION_NOTE, SYMMETRIC_TIP)
+from . import settings
+from .profile_widget import Kind, ProfileWidget
+
+
+class ProfileDock(QgsDockWidget):
+    """Shows the selected feature's shape and writes every edit back through the controller."""
+
+    def __init__(self, controller, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(self.tr("Terrain Sketch — Profiles"))
+        self.setObjectName("TerrainSketchProfileDock")
+        self.controller = controller
+        self._fid = None
+        self._loading = False
+
+        self.cross = ProfileWidget(Kind.CROSS)
+        self.long = ProfileWidget(Kind.LONG)
+        self.symmetric = QCheckBox(self.tr("Symmetric"))
+        self.symmetric.setChecked(True)
+        self.symmetric.setToolTip(SYMMETRIC_TIP)
+        self.reset_cross = QPushButton(self.tr("Reset shape"))
+        self.reset_long = QPushButton(self.tr("Reset to rule"))
+        self.note = QLabel()
+        self.note.setWordWrap(True)
+
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        for title, widget, controls in (
+                (self.tr("Cross profile"), self.cross, (self.symmetric, self.reset_cross)),
+                (self.tr("Long profile"), self.long, (self.reset_long,))):
+            panel = QWidget()
+            column = QVBoxLayout(panel)
+            column.setContentsMargins(0, 0, 0, 0)
+            header = QHBoxLayout()
+            header.addWidget(QLabel(title))
+            header.addStretch(1)
+            for control in controls:
+                header.addWidget(control)
+            column.addLayout(header)
+            column.addWidget(widget, 1)
+            splitter.addWidget(panel)
+        self.splitter = splitter
+        splitter.setObjectName("TerrainSketchProfileSplitter")
+        settings.restore_state("profile_splitter", splitter)
+        splitter.splitterMoved.connect(
+            lambda *_args: settings.save_state("profile_splitter", splitter))
+        layout.addWidget(splitter, 1)
+        layout.addWidget(self.note)
+        self.setWidget(body)
+
+        self.cross.profileChanged.connect(lambda points: self._cross_edited(points, False))
+        self.cross.profileCommitted.connect(lambda points: self._cross_edited(points, True))
+        self.long.profileChanged.connect(lambda points: self._long_edited(points, False))
+        self.long.profileCommitted.connect(lambda points: self._long_edited(points, True))
+        self.reset_cross.clicked.connect(self._reset_cross)
+        self.reset_long.clicked.connect(self._reset_long)
+        controller.featuresChanged.connect(self._refresh)
+        controller.sessionChanged.connect(self._session_changed)
+        self.show_feature(None)
+
+    def show_feature(self, fid) -> None:
+        """Load a feature's profiles, or clear both panels when there is no selection."""
+        self._fid = fid
+        if fid is None or not self.controller.has_dem:
+            self.cross.clear()
+            self.long.clear()
+            self.note.clear()
+            self._set_enabled(False)
+            return
+        self._refresh()
+
+    def _refresh(self) -> None:
+        if self._fid is None:
+            return
+        feature = self.controller.find(self._fid)
+        if feature is None:
+            self.show_feature(None)
+            return
+        self._loading = True
+        try:
+            info = TOOL_INFO[feature.tool]
+            is_path = feature.mode is Mode.PATH
+            # Break points are for paths only: the engine discards an area's (spec 5.4).
+            self.cross.set_profile(cross_section(feature, side=1), editable=info.has_slopes,
+                                   allow_breaks=is_path)
+            self.symmetric.setEnabled(info.has_slopes and is_path)
+            self.reset_cross.setEnabled(info.has_slopes)
+            section = self.controller.long_section(self._fid)
+            if feature.mode is Mode.AREA:
+                # There is no section through an area yet, so say so rather than paint an empty
+                # plot under a note promising one.
+                self.long.set_profile((), editable=False, hint=AREA_LONG_SECTION_HINT)
+                self.note.setText(AREA_LONG_SECTION_NOTE)
+            elif not supports_long_profile(feature):
+                # A multi-part path: the engine follows the tool rule whatever is stored here.
+                self.long.set_profile(section["design"], terrain=self._pairs(section),
+                                      editable=False)
+                self.note.setText(MULTIPART_LONG_SECTION_NOTE)
+            else:
+                self.long.set_profile(section["design"], terrain=self._pairs(section))
+                self.note.setText(CUSTOM_PROFILE_NOTE if section["custom"] else "")
+            self.reset_long.setEnabled(bool(section["custom"]))
+        finally:
+            self._loading = False
+
+    @staticmethod
+    def _pairs(section) -> tuple:
+        return tuple(zip(section["stations"], section["terrain"]))
+
+    def _cross_edited(self, points, commit: bool) -> None:
+        if self._loading or self._fid is None:
+            return
+        feature = self.controller.find(self._fid)
+        if feature is None:
+            return
+        changes = set_cross_section(feature, 1, points)
+        if self.symmetric.isChecked() and feature.mode is Mode.PATH:
+            changes["cross_left"] = changes["cross_right"]
+        self._apply(changes, commit)
+
+    def _long_edited(self, points, commit: bool) -> None:
+        if self._loading or self._fid is None:
+            return
+        self._apply({"long_profile": tuple((float(s), float(z)) for s, z in points)}, commit)
+
+    def _apply(self, changes: dict, commit: bool) -> None:
+        if commit:
+            self.controller.update_profile(self._fid, **changes)
+        else:
+            self.controller.preview(self._fid, **changes)
+
+    def _reset_cross(self) -> None:
+        if self._fid is not None:
+            self.controller.update_profile(self._fid, cross_left=(), cross_right=())
+
+    def _reset_long(self) -> None:
+        if self._fid is not None:
+            self.controller.update_profile(self._fid, long_profile=None)
+
+    def _session_changed(self) -> None:
+        if not self.controller.has_dem:
+            self.show_feature(None)
+
+    def _set_enabled(self, enabled: bool) -> None:
+        for widget in (self.symmetric, self.reset_cross, self.reset_long):
+            widget.setEnabled(enabled)
+
+    def shutdown(self) -> None:
+        self.controller.cancel_preview()
+```
+
 Create:
 
 **File:** `terrain_sketch/gui/undo.py`
@@ -3336,13 +3599,13 @@ class FeatureListChange(QUndoCommand):
 ```
 - [ ] **Step 4: Run the tests**
 
-Run: `scripts/test.sh tests/qgis/test_undo.py` → Expected: `21 passed`
-Run: `scripts/test.sh` → Expected: `399 passed`
+Run: `scripts/test.sh tests/qgis/test_undo.py` → Expected: `28 passed`
+Run: `scripts/test.sh` → Expected: `406 passed`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add terrain_sketch/gui/controller.py terrain_sketch/gui/help_texts.py terrain_sketch/gui/undo.py tests/qgis/test_undo.py
+git add terrain_sketch/gui/controller.py terrain_sketch/gui/help_texts.py terrain_sketch/gui/profile_dock.py terrain_sketch/gui/undo.py tests/qgis/test_undo.py
 git commit -m "feat(gui): undo and redo for every change to the feature list"
 ```
 
@@ -4398,7 +4661,7 @@ class UndoKeys(QObject):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_undo_panel.py` → Expected: `9 passed`
-Run: `scripts/test.sh` → Expected: `408 passed`
+Run: `scripts/test.sh` → Expected: `415 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -4749,11 +5012,20 @@ class SketchController(QObject):
         return True
 
     def update_feature(self, fid: str, **changes) -> None:
+        self._update(fid, changes, _describe)
+
+    def update_profile(self, fid: str, **changes) -> None:
+        """A change made in the Profiles panel: one undo step per drag or reset, never merged, and
+        named as a profile change — even though a cross-profile drag also moves the width, slope
+        and reach, which on their own would count as settings."""
+        self._update(fid, changes, lambda feature, _changes: (UNDO_PROFILE.format(feature.name), None))
+
+    def _update(self, fid: str, changes: dict, describe) -> None:
         self.cancel_preview()  # the committed result replaces whatever the overlay was showing
         feature = self.find(fid)
         if feature is None:
             return
-        text, key = _describe(feature, changes)
+        text, key = describe(feature, changes)
         self._commit([replace(f, **changes) if f.id == fid else f for f in self._features], text, key)
 
     def set_enabled(self, fid: str, enabled: bool) -> None:
@@ -4860,9 +5132,10 @@ class SketchController(QObject):
 
     @property
     def is_dirty(self) -> bool:
-        """Whether the features differ from the last save or load of a scenario. Follows undo:
-        undoing back to the saved state makes the scenario clean again."""
-        return not self.undo_stack.isClean()
+        """Whether there is work a save would keep: the features differ from the last save or load.
+        Follows undo — undoing back to the saved state makes the scenario clean again — and a
+        scenario that was never saved and has been emptied again has nothing to keep."""
+        return not self.undo_stack.isClean() and bool(self._features or self._scenario_path)
 
     @property
     def scenario_path(self) -> str | None:
@@ -4959,6 +5232,7 @@ class SketchController(QObject):
         was records nothing, so it neither costs an undo step nor marks the scenario unsaved."""
         before, after = tuple(self._features), tuple(features)
         if after == before:
+            self.featuresChanged.emit()   # a view showing values the change normalised away re-syncs
             return True
         if not self._set(after):
             return False
@@ -4967,10 +5241,13 @@ class SketchController(QObject):
 
     def _restore(self, features) -> None:
         """Undo or redo. Runs inside QUndoStack from a button or a key, so it never raises: `_set`
-        already turns an engine failure into a message."""
+        already turns an engine failure into a message. The stack moves its index even when the
+        engine refuses the list, so the saved state is forgotten then: an unchanged list that
+        happened to land on the saved step must not be reported as saved."""
         self.cancel_preview()
         if self.stack is not None:
-            self._set(features)
+            if not self._set(features):
+                self.undo_stack.resetClean()
             self.featuresRestored.emit()
 
     def _outline_items(self) -> list:
@@ -6214,7 +6491,7 @@ def _title(feature) -> str:
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_list_actions.py` → Expected: `7 passed`
-Run: `scripts/test.sh` → Expected: `415 passed`
+Run: `scripts/test.sh` → Expected: `422 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -6604,11 +6881,20 @@ class SketchController(QObject):
         return True
 
     def update_feature(self, fid: str, **changes) -> None:
+        self._update(fid, changes, _describe)
+
+    def update_profile(self, fid: str, **changes) -> None:
+        """A change made in the Profiles panel: one undo step per drag or reset, never merged, and
+        named as a profile change — even though a cross-profile drag also moves the width, slope
+        and reach, which on their own would count as settings."""
+        self._update(fid, changes, lambda feature, _changes: (UNDO_PROFILE.format(feature.name), None))
+
+    def _update(self, fid: str, changes: dict, describe) -> None:
         self.cancel_preview()  # the committed result replaces whatever the overlay was showing
         feature = self.find(fid)
         if feature is None:
             return
-        text, key = _describe(feature, changes)
+        text, key = describe(feature, changes)
         self._commit([replace(f, **changes) if f.id == fid else f for f in self._features], text, key)
 
     def set_enabled(self, fid: str, enabled: bool) -> None:
@@ -6715,9 +7001,10 @@ class SketchController(QObject):
 
     @property
     def is_dirty(self) -> bool:
-        """Whether the features differ from the last save or load of a scenario. Follows undo:
-        undoing back to the saved state makes the scenario clean again."""
-        return not self.undo_stack.isClean()
+        """Whether there is work a save would keep: the features differ from the last save or load.
+        Follows undo — undoing back to the saved state makes the scenario clean again — and a
+        scenario that was never saved and has been emptied again has nothing to keep."""
+        return not self.undo_stack.isClean() and bool(self._features or self._scenario_path)
 
     @property
     def scenario_path(self) -> str | None:
@@ -6844,6 +7131,7 @@ class SketchController(QObject):
         was records nothing, so it neither costs an undo step nor marks the scenario unsaved."""
         before, after = tuple(self._features), tuple(features)
         if after == before:
+            self.featuresChanged.emit()   # a view showing values the change normalised away re-syncs
             return True
         if not self._set(after):
             return False
@@ -6852,10 +7140,13 @@ class SketchController(QObject):
 
     def _restore(self, features) -> None:
         """Undo or redo. Runs inside QUndoStack from a button or a key, so it never raises: `_set`
-        already turns an engine failure into a message."""
+        already turns an engine failure into a message. The stack moves its index even when the
+        engine refuses the list, so the saved state is forgotten then: an unchanged list that
+        happened to land on the saved step must not be reported as saved."""
         self.cancel_preview()
         if self.stack is not None:
-            self._set(features)
+            if not self._set(features):
+                self.undo_stack.resetClean()
             self.featuresRestored.emit()
 
     def _outline_items(self) -> list:
@@ -7886,7 +8177,7 @@ class MainDock(QgsDockWidget):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_view_3d.py` → Expected: `10 passed`
-Run: `scripts/test.sh` → Expected: `425 passed`
+Run: `scripts/test.sh` → Expected: `432 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -8253,11 +8544,20 @@ class SketchController(QObject):
         return True
 
     def update_feature(self, fid: str, **changes) -> None:
+        self._update(fid, changes, _describe)
+
+    def update_profile(self, fid: str, **changes) -> None:
+        """A change made in the Profiles panel: one undo step per drag or reset, never merged, and
+        named as a profile change — even though a cross-profile drag also moves the width, slope
+        and reach, which on their own would count as settings."""
+        self._update(fid, changes, lambda feature, _changes: (UNDO_PROFILE.format(feature.name), None))
+
+    def _update(self, fid: str, changes: dict, describe) -> None:
         self.cancel_preview()  # the committed result replaces whatever the overlay was showing
         feature = self.find(fid)
         if feature is None:
             return
-        text, key = _describe(feature, changes)
+        text, key = describe(feature, changes)
         self._commit([replace(f, **changes) if f.id == fid else f for f in self._features], text, key)
 
     def set_enabled(self, fid: str, enabled: bool) -> None:
@@ -8364,9 +8664,10 @@ class SketchController(QObject):
 
     @property
     def is_dirty(self) -> bool:
-        """Whether the features differ from the last save or load of a scenario. Follows undo:
-        undoing back to the saved state makes the scenario clean again."""
-        return not self.undo_stack.isClean()
+        """Whether there is work a save would keep: the features differ from the last save or load.
+        Follows undo — undoing back to the saved state makes the scenario clean again — and a
+        scenario that was never saved and has been emptied again has nothing to keep."""
+        return not self.undo_stack.isClean() and bool(self._features or self._scenario_path)
 
     @property
     def scenario_path(self) -> str | None:
@@ -8498,6 +8799,7 @@ class SketchController(QObject):
         was records nothing, so it neither costs an undo step nor marks the scenario unsaved."""
         before, after = tuple(self._features), tuple(features)
         if after == before:
+            self.featuresChanged.emit()   # a view showing values the change normalised away re-syncs
             return True
         if not self._set(after):
             return False
@@ -8506,10 +8808,13 @@ class SketchController(QObject):
 
     def _restore(self, features) -> None:
         """Undo or redo. Runs inside QUndoStack from a button or a key, so it never raises: `_set`
-        already turns an engine failure into a message."""
+        already turns an engine failure into a message. The stack moves its index even when the
+        engine refuses the list, so the saved state is forgotten then: an unchanged list that
+        happened to land on the saved step must not be reported as saved."""
         self.cancel_preview()
         if self.stack is not None:
-            self._set(features)
+            if not self._set(features):
+                self.undo_stack.resetClean()
             self.featuresRestored.emit()
 
     def _outline_items(self) -> list:
@@ -9710,7 +10015,7 @@ def _write_tif(path: str, array: np.ndarray, grid: DemGrid, info: DemInfo, extra
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_export_options.py` → Expected: `4 passed`
-Run: `scripts/test.sh` → Expected: `429 passed`
+Run: `scripts/test.sh` → Expected: `436 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -9746,3 +10051,31 @@ The suite cannot see these. Plans 2-6 still have their own lists waiting.
 | Replacing a scenario that is open as a QGIS layer on Windows; `_check_replaceable` being check-then-replace | Platform and race edge cases (Plan 6). |
 | `FeatureListModel.data()` rebuilding a dict per call; tests never disconnecting `SketchController` from the `QgsProject` singleton | Performance and test hygiene. |
 | Plan 6 minors: `load`/`load_meta` repeating one skeleton; `differences()` tested for 2 of 4 labels; a `_mark_scenario` helper; `created` kept by string path comparison | Style and coverage. |
+
+## Addendum: final-review fixes (2026-09-15)
+
+The six tasks landed byte-identical to the blocks above, with one exception: Task 3's review added a text-field Ctrl+Z test to `tests/qgis/test_undo_panel.py`, so from Task 3 onwards each full-suite count is one higher than stated. Task 2's review led to the plan being regenerated before Task 3 (`update_profile`, the refused-undo `resetClean`, `featuresChanged` on a no-op, and `is_dirty` requiring features or a path); the blocks above already include that. The final whole-branch review found no Critical issues and six Important ones. They were fixed in one wave (d4dc1e3..0f1e530). **Where the code on `main` differs from the task blocks above, the code and its tests are authoritative.** 452 tests.
+
+| # | What changed | Why |
+|---|---|---|
+| I1 | Rename looks its row up by fid when picked; `FeatureListModel.data`, `setData` and `mimeData` tolerate an out-of-range row | A list change while the context menu was open left a stale index that reached `data()` and aborted QGIS. |
+| I2 | A brush remembers from its start that it extends a feature, and an undo that removes that feature ends it | The undo cleared the brush's target first, so the brush kept the undone outline and finishing it added the feature back. |
+| I3 | `ProfileWidget.clear()` ends a drag in progress; `mouseMoveEvent` ignores an out-of-range handle | Ctrl+Z mid-drag that removed the feature left a drag on an empty plot; the next mouse move aborted QGIS. |
+| I4 | Removing the Modified DEM layer puts the project's terrain back at once; a DEM terrain whose layer is gone counts as ours | Otherwise the remembered terrain was discarded and the project kept a terrain pointing at nothing. |
+| I5 | The selection highlight catches `QgsCsException` and stays empty | The same transform Task 1 guarded for Edit shape, Brush and Zoom to ran unguarded on every selection and change. |
+| I6 | Each Properties spin box has its own undo-key filter; `UndoKeys` passes `applies(redo)`, so a field keeps Ctrl+Z only while it has typed text to undo, and Ctrl+Shift+Z only while it has text to redo | After stepping a value with the arrows, Ctrl+Z did nothing (manual check 2). The first fix still swallowed a second Ctrl+Z after a field undid its own typing; the re-review caught it. |
+| — | Smaller: `_drop_session` forgets the remembered terrain; the whole 3D view click is guarded; each context menu is deleted after it closes; a second 3D view press re-captures a terrain the user picked in between; unload is tested to restore the terrain and remove the map's key filter; the 3D view tip says the terrain is temporary even in a saved project | Each confirmed by review. |
+
+### Additions to the manual check
+10. Press **3D view** twice while the first 3D view is still open. Note whether a second view named "3D Map 2" opens; if so, report it (QGIS may refuse the repeated name).
+11. Type a value in a Properties field and press Ctrl+Z twice: the first press undoes your typing, the second undoes the last change to the feature.
+12. Press **3D view**, then remove the Modified DEM layer: Project ▸ Properties ▸ Terrain should be back to what it was straight away.
+
+### Deferred to Plan 8 (in addition to the table above)
+| Item | Why not here |
+|---|---|
+| The Properties page shows old Width, Slope and Reach after a cross-profile drag, so the next arrow step silently reverts the drag's width | Pre-existing; needs a reload rule that does not fight a focused field. |
+| Clicking the Undo button discards a value typed but not yet committed | Committing it first would change which step is undone; needs its own design. |
+| Two export messages for the same overwritten path can each add a layer; `EXPORT_NOT_ADDED` is shared by an unreadable file and an unexpected error | Task 6 minors. |
+| `_restore_terrain` treats any DEM terrain on the Modified DEM layer as ours; `dropMimeData` can reach `reorder()`'s ValueError; a settings merge has no time boundary | Task 2 and Task 5 minors, ruled acceptable. |
+| Deferred minors: `EXPORT_REPLACE` repeats `SCENARIO_REPLACE`; `set_dem`'s narrow except; no test for a failed second Start; Export DEM… keeps its text label in an icon toolbar; the duplicate test checks 7 of 12 fields; a second duplicate lands before the first | Style and coverage. |

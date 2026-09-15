@@ -38,3 +38,18 @@ def test_selection_survives_edits_and_list_changes(tmp_path):
     assert view.selected_id() == b.id
     c.delete_feature(a.id)
     assert view.selected_id() == b.id
+
+
+def test_a_row_index_from_before_the_list_shrank_is_ignored(tmp_path):
+    """Qt checks only that a row is not negative before handing an index to the model, so an index
+    kept across a reset can point past the end of the list — inside a Qt call that must not raise."""
+    c = start_session(tmp_path)
+    a, b = (c.add_drawn(Tool.ADD, Mode.PATH, line_through(5, r, 30, r), UTM) for r in (10, 20))
+    model = FeatureListModel(c)
+    stale = model.index(1)
+    c.delete_feature(b.id)
+    assert model.data(stale) is None
+    assert model.setData(stale, "Barrier", Qt.ItemDataRole.EditRole) is False
+    assert c.feature(a.id).name != "Barrier"
+    assert bytes(model.mimeData([model.index(0), stale]).data("application/x-terrain-sketch-feature-ids")) \
+        == a.id.encode()

@@ -27,12 +27,16 @@ class SketchLayers:
         hillshade.setOpacity(0.5)
         self.hillshade.setRenderer(hillshade)
         _style_outlines(self.outlines)
-        self.group = project.layerTreeRoot().insertGroup(0, GROUP_NAME)
-        for layer in (self.outlines, self.change, self.hillshade, self.working):
-            project.addMapLayer(layer, False)
-            self.group.addLayer(layer)
-        self.group.findLayer(self.hillshade.id()).setItemVisibilityChecked(False)
         self.layer_ids = [layer.id() for layer in (self.outlines, self.change, self.hillshade, self.working)]
+        self.group = project.layerTreeRoot().insertGroup(0, GROUP_NAME)
+        try:
+            for layer in (self.outlines, self.change, self.hillshade, self.working):
+                project.addMapLayer(layer, False)
+                self.group.addLayer(layer)
+            self.group.findLayer(self.hillshade.id()).setItemVisibilityChecked(False)
+        except Exception:
+            self.remove()  # a half-built group would stay in the user's layer tree for good
+            raise
         self.outlines_id, self.change_id, self.hillshade_id, self.working_id = self.layer_ids
 
     def refresh(self) -> None:

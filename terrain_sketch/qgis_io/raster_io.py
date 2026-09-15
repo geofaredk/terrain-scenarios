@@ -33,6 +33,7 @@ class DemInfo:
     nodata: float  # nodata value written to the working, change and exported files
     band_count: int
     warnings: tuple = ()
+    integer: bool = False  # the source stores whole numbers; the working files and export are float32
 
 
 def read_dem(layer) -> tuple[DemGrid, DemInfo]:
@@ -63,7 +64,8 @@ def read_dem(layer) -> tuple[DemGrid, DemInfo]:
         warnings.append(f"The DEM has {cells / 1e6:.0f} million cells and needs about "
                         f"{cells * 12 / 1e9:.1f} GB of memory; consider clipping it to your site.")
     info = DemInfo(layer.source(), layer.crs().toWkt(),
-                   DEFAULT_NODATA if nodata is None else float(nodata), ds.RasterCount, tuple(warnings))
+                   DEFAULT_NODATA if nodata is None else float(nodata), ds.RasterCount, tuple(warnings),
+                   integer=bool(np.issubdtype(array.dtype, np.integer)))
     return grid, info
 
 
@@ -72,6 +74,7 @@ class WorkingFiles:
 
     def __init__(self, folder: str, original: DemGrid, info: DemInfo):
         os.makedirs(folder, exist_ok=True)
+        self.folder = folder
         self.working_path = os.path.join(folder, "working_dem.tif")
         self.change_path = os.path.join(folder, "change.tif")
         self._original = original

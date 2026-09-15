@@ -1,7 +1,7 @@
 from unittest import mock
 
 import pytest
-from qgis.core import QgsFlatTerrainProvider, QgsProject
+from qgis.core import QgsFlatTerrainProvider, QgsProject, QgsSettings
 from qgis.PyQt.QtCore import QEvent, Qt
 from qgis.PyQt.QtGui import QKeyEvent
 from qgis.PyQt.QtWidgets import QApplication
@@ -352,6 +352,7 @@ def test_the_panels_open_where_they_were_left_and_unloading_remembers_it(tmp_pat
     assert iface.addDockWidget.call_args_list[0][0] == (Qt.DockWidgetArea.LeftDockWidgetArea, plugin.dock)
     assert window.dockWidgetArea(plugin.profiles) == Qt.DockWidgetArea.BottomDockWidgetArea   # the default
     window.addDockWidget(Qt.DockWidgetArea.TopDockWidgetArea, plugin.profiles)   # the user moves it
+    QgsSettings().remove(f"{settings.GROUP}/main_dock/area")         # only unloading can write it back now
     plugin.unload()
     area = Qt.DockWidgetArea
     assert settings.dock_area("profile_dock", area.BottomDockWidgetArea) == area.TopDockWidgetArea

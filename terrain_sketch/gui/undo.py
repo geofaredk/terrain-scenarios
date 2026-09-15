@@ -57,9 +57,9 @@ class UndoKeys(QObject):
     Installed as an event filter. QGIS binds the same keys to layer-editing undo in its main
     window, and two shortcuts for one key cancel each other out, so this claims the key during
     `ShortcutOverride` (which Qt sends before resolving shortcuts) and acts on the key press that
-    follows. `applies` decides per event whether the keys are ours; it must not raise."""
+    follows. `applies(redo)` decides per event whether the key is ours; it must not raise."""
 
-    def __init__(self, stack, applies=lambda: True, parent=None):
+    def __init__(self, stack, applies=lambda _redo: True, parent=None):
         super().__init__(parent)
         self.stack = stack
         self.applies = applies
@@ -71,7 +71,7 @@ class UndoKeys(QObject):
         try:
             undo = event.matches(QKeySequence.StandardKey.Undo)
             redo = not undo and event.matches(QKeySequence.StandardKey.Redo)
-            if not (undo or redo) or not self.applies():
+            if not (undo or redo) or not self.applies(redo):
                 return False
             if kind == QEvent.Type.ShortcutOverride:
                 event.accept()

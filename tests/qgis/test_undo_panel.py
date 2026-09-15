@@ -210,3 +210,23 @@ def test_ctrl_z_after_stepping_a_setting_undoes_the_change(tmp_path):
     assert c.find(dike.id).amount == 1.0 and spin.value() == 1.0 and qgis_undo == []
     press(spin, QKeySequence.StandardKey.Redo)
     assert c.find(dike.id).amount == pytest.approx(1.3) and qgis_undo == []
+
+
+def test_ctrl_z_after_a_field_undid_its_own_text_undoes_the_last_change(tmp_path):
+    """Once the typed text is undone the field has only a redo left, so the next Ctrl+Z goes on to
+    the feature change instead of doing nothing."""
+    iface, c, dock = panel(tmp_path)
+    _window, qgis_undo = in_a_window(iface, dock)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.select_id(dike.id)
+    spin = dock.properties.amount
+    spin.setFocus()
+    spin_event_loop(10)
+    QTest.keyClick(spin, Qt.Key.Key_Up)
+    spin_event_loop(5)
+    spin.selectAll()
+    QTest.keyClicks(spin, "2")                             # typed, not yet committed
+    press(spin, QKeySequence.StandardKey.Undo)             # the field undoes its own text
+    assert c.find(dike.id).amount == pytest.approx(1.1)
+    press(spin, QKeySequence.StandardKey.Undo)
+    assert c.find(dike.id).amount == 1.0 and qgis_undo == []

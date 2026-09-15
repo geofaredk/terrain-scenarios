@@ -59,6 +59,11 @@ def _action_button(action) -> QToolButton:
     return button
 
 
+def _has_text_history(spin) -> bool:
+    edit = spin.lineEdit()
+    return edit.isUndoAvailable() or edit.isRedoAvailable()
+
+
 class MainDock(QgsDockWidget):
     def __init__(self, iface, controller, profiles=None, parent=None):
         super().__init__(parent)
@@ -202,6 +207,14 @@ class MainDock(QgsDockWidget):
         self.installEventFilter(self.undo_keys)
         if profiles is not None:
             profiles.installEventFilter(self.undo_keys)   # the Profiles panel is Terrain Sketch too
+        # A spin box claims Ctrl+Z for its own text even when it has none to undo, as after its arrows
+        # committed each step; only while it has typed text to undo or redo are the keys its own
+        self.spin_undo_keys = []
+        page = self.properties
+        for spin in (page.amount, page.width, page.slope, page.reach):
+            keys = UndoKeys(controller.undo_stack, applies=lambda s=spin: not _has_text_history(s), parent=self)
+            spin.installEventFilter(keys)
+            self.spin_undo_keys.append(keys)
         self.canvas_undo_keys = UndoKeys(controller.undo_stack, applies=self._sketch_tool_active, parent=self)
         iface.mapCanvas().installEventFilter(self.canvas_undo_keys)
         self._session_changed()

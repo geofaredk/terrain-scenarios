@@ -1,4 +1,5 @@
 """Undo and redo from the panel: the buttons, Ctrl+Z where it belongs, and what the panel does after."""
+import pytest
 from qgis.core import QgsProject
 from qgis.gui import QgsMapToolPan
 from qgis.PyQt.QtCore import Qt
@@ -172,12 +173,40 @@ def test_the_panel_header_does_not_make_the_panel_wider(tmp_path):
 
 
 def test_ctrl_z_in_a_text_field_of_the_panel_is_left_to_that_field(tmp_path):
-    """A spin box or line edit keeps Ctrl+Z for its own text, as everywhere in Qt: pressing it
-    there must neither undo a Terrain Sketch change nor reach QGIS's own undo."""
+    """A spin box or line edit keeps Ctrl+Z for its own text, as everywhere in Qt: while there is
+    typed text to undo, pressing it there must neither undo a Terrain Sketch change nor reach
+    QGIS's own undo."""
     iface, c, dock = panel(tmp_path)
     _window, qgis_undo = in_a_window(iface, dock)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.feature_view.select_id(dike.id)
     assert dock.pages.currentIndex() == PAGE_PROPERTIES
-    press(dock.properties.amount, QKeySequence.StandardKey.Undo)
-    assert len(c.features) == 1 and qgis_undo == []
+    spin = dock.properties.amount
+    spin.setFocus()
+    spin_event_loop(10)
+    spin.selectAll()
+    QTest.keyClicks(spin, "2")                             # typed, not yet committed
+    assert spin.lineEdit().text() == "2 m"
+    press(spin, QKeySequence.StandardKey.Undo)
+    assert len(c.features) == 1 and c.find(dike.id).amount == 1.0 and qgis_undo == []
+    assert spin.lineEdit().text() == "1.00 m"              # the field undid its own text
+
+
+def test_ctrl_z_after_stepping_a_setting_undoes_the_change(tmp_path):
+    """The arrows commit each step, so the field has no text of its own to undo: Ctrl+Z there
+    undoes the whole adjustment, as one step, like it does anywhere else in the panel."""
+    iface, c, dock = panel(tmp_path)
+    _window, qgis_undo = in_a_window(iface, dock)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.select_id(dike.id)
+    spin = dock.properties.amount
+    spin.setFocus()
+    spin_event_loop(10)
+    for _ in range(3):
+        QTest.keyClick(spin, Qt.Key.Key_Up)
+        spin_event_loop(5)
+    assert c.find(dike.id).amount == pytest.approx(1.3)
+    press(spin, QKeySequence.StandardKey.Undo)
+    assert c.find(dike.id).amount == 1.0 and spin.value() == 1.0 and qgis_undo == []
+    press(spin, QKeySequence.StandardKey.Redo)
+    assert c.find(dike.id).amount == pytest.approx(1.3) and qgis_undo == []

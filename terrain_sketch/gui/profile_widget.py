@@ -17,6 +17,7 @@ GRAB_PIXELS = 8
 HANDLE_RADIUS = 4
 NUDGE, NUDGE_FINE = 0.1, 0.01
 NUDGE_KEYS = (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right)
+MIN_HALF_WIDTH = 0.05   # the narrowest corridor a path takes is 0.1 m
 
 
 class Kind(Enum):
@@ -31,6 +32,10 @@ class ProfileWidget(QWidget):
     the full point list. The arrow keys work the same way: each press (and each auto-repeat while a
     key is held) emits `profileChanged`, and letting go of the key commits once. The widget owns no
     feature state: whoever drives it sets points and applies the edits.
+
+    A `mirrored` cross profile shows both sides of a path around a centre line at 0: no handle crosses
+    it, the two crest edges move together (a path's width is one value), and while `symmetric` is set
+    every handle that has a mirror image on the other side takes it along.
     """
 
     profileChanged = pyqtSignal(object)     # ((x, z), ...) while dragging
@@ -44,6 +49,8 @@ class ProfileWidget(QWidget):
         self.terrain: list[tuple[float, float]] = []
         self.editable = True
         self.allow_breaks = True
+        self.mirrored = False
+        self.symmetric = False
         self.hint = PROFILE_EMPTY_HINT
         self.selected = -1
         self._dragging = -1
@@ -57,7 +64,7 @@ class ProfileWidget(QWidget):
     # ---- contents -------------------------------------------------------------------
 
     def set_profile(self, points, terrain=(), editable=True, allow_breaks=True,
-                    hint: str = PROFILE_EMPTY_HINT) -> None:
+                    hint: str = PROFILE_EMPTY_HINT, mirrored: bool = False) -> None:
         """Show `points` over `terrain`.
 
         `allow_breaks` is False when the engine does not use break points for this feature, so
@@ -69,6 +76,7 @@ class ProfileWidget(QWidget):
         self.terrain = [(float(x), float(z)) for x, z in terrain]
         self.editable = editable
         self.allow_breaks = allow_breaks
+        self.mirrored = mirrored
         self.hint = hint
         self.selected = -1
         self._dragging = -1
@@ -107,6 +115,8 @@ class ProfileWidget(QWidget):
         self._draw_design(painter, palette)
         if self.editable:
             self._draw_handles(painter, palette)
+        if self.mirrored:
+            self._draw_sides(painter, palette)
 
     def _draw_grid(self, painter, palette) -> None:
         plot = self._plot_rect()
@@ -185,6 +195,17 @@ class ProfileWidget(QWidget):
             out.append((x, _interpolate(x, xs, zs)))
         return out
 
+    def _draw_sides(self, painter, palette) -> None:
+        """Say which side is which, and mark the centre line the two sides are measured from."""
+        plot = self._plot_rect()
+        centre = self._to_screen(0.0, self._z_range()[0]).x()
+        painter.setPen(QPen(palette.mid().color(), 1, Qt.PenStyle.DashDotLine))
+        painter.drawLine(QPointF(centre, plot.top()), QPointF(centre, plot.bottom()))
+        painter.setPen(palette.windowText().color())
+        label = plot.adjusted(4, 2, -4, 0)
+        painter.drawText(label, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, self.tr("Left"))
+        painter.drawText(label, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop, self.tr("Right"))
+
     def _draw_handles(self, painter, palette) -> None:
         for index, (x, z) in enumerate(self.points):
             centre = self._to_screen(x, z)
@@ -200,7 +221,7 @@ class ProfileWidget(QWidget):
             return
         index = self.handle_at(event.position())
         if event.button() == Qt.MouseButton.RightButton:
-            if self.allow_breaks and index > 0 and index < len(self.points) - 1:
+            if self.allow_breaks and 0 < index < len(self.points) - 1 and index not in self._edges():
                 self.points.pop(index)
                 self.selected = -1
                 self.update()
@@ -276,29 +297,63 @@ class ProfileWidget(QWidget):
 
     def _move_handle(self, index: int, position) -> None:
         x, z = position
+        partner = self._partner(index)
         if not self._can_move_x(index):
             x = self.points[index][0]
         else:
-            low = self.points[index - 1][0] if index > 0 else None
-            high = self.points[index + 1][0] if index < len(self.points) - 1 else None
-            if low is not None:
-                x = max(x, low + 1e-6)
-            if high is not None:
-                x = min(x, high - 1e-6)
-            x = max(x, 0.0) if self.kind is Kind.CROSS else x
+            x = self._clamp_x(index, x)
+            if partner is not None:
+                x = -self._clamp_x(partner, -x)   # the mirror image must fit between its own neighbours too
+            if self.mirrored:
+                x = min(x, -MIN_HALF_WIDTH) if self.points[index][0] < 0.0 else max(x, MIN_HALF_WIDTH)
+            elif self.kind is Kind.CROSS:
+                x = max(x, 0.0)
+        if partner is not None:
+            edge = partner in self._edges()     # the crest stays level: an edge's partner keeps its height
+            self.points[partner] = (-x, self.points[partner][1] if edge else z)
         self.points[index] = (x, z)
         self.update()
 
+    def _clamp_x(self, index: int, x: float) -> float:
+        if index > 0:
+            x = max(x, self.points[index - 1][0] + 1e-6)
+        if index < len(self.points) - 1:
+            x = min(x, self.points[index + 1][0] - 1e-6)
+        return x
+
+    def _edges(self) -> tuple:
+        """Indexes of the two crest edges of a mirrored profile: the handles either side of the centre."""
+        if not self.mirrored:
+            return ()
+        right = next((i for i, (x, _z) in enumerate(self.points) if x > 0.0), None)
+        return (right - 1, right) if right else ()
+
+    def _partner(self, index: int):
+        """The handle that moves with `index`: the other crest edge, or — while `symmetric` — the
+        mirror image of any handle that has one."""
+        edges = self._edges()
+        if index in edges:
+            return edges[1] if index == edges[0] else edges[0]
+        mirror = len(self.points) - 1 - index
+        if self.symmetric and edges and mirror != index and _mirrors(self.points[index], self.points[mirror]):
+            return mirror
+        return None
+
     def _can_move_x(self, index: int) -> bool:
-        """The first point is pinned; in a long section the last one is too (it is the end)."""
+        """The first point is pinned (the centre of a one-sided cross profile, the start of a long
+        section); in a long section the last one is too (it is the end). A mirrored profile has no
+        pinned point: its outer handles are the ends of the slopes."""
+        if self.mirrored:
+            return True
         if index == 0:
             return False
         return not (self.kind is Kind.LONG and index == len(self.points) - 1)
 
     def _insertion_index(self, x: float):
+        edges = self._edges()
         for index in range(1, len(self.points)):
             if self.points[index - 1][0] < x < self.points[index][0]:
-                return index
+                return None if edges and index == edges[1] else index   # never on the crest itself
         return None
 
     # ---- coordinate transforms ------------------------------------------------------
@@ -352,6 +407,10 @@ class ProfileWidget(QWidget):
             out.append(round(value, 6))
             value += step
         return out
+
+
+def _mirrors(a, b) -> bool:
+    return abs(a[0] + b[0]) < 1e-6 and abs(a[1] - b[1]) < 1e-6
 
 
 def _floor_log10(value: float) -> int:

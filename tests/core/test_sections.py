@@ -4,8 +4,8 @@ import pytest
 from helpers import feature, flat, make_grid, tilted
 from terrain_sketch.core.engine import FeatureStack
 from terrain_sketch.core.geometry import line_wkb, multi_wkb, polygon_wkb
-from terrain_sketch.core.sections import (cross_section, long_section, set_cross_section,
-                                          supports_long_profile)
+from terrain_sketch.core.sections import (cross_section, long_section, set_cross_section, set_whole_cross_section,
+                                          supports_long_profile, whole_cross_section)
 from terrain_sketch.core.tools import Mode, Tool
 
 
@@ -230,3 +230,42 @@ def test_a_real_but_very_flat_slope_is_still_written():
     f = dike(width=4.0, slope_n=3.0, reach=20.0)
     changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (22.0, -0.5)])
     assert changes["slope_n"] == pytest.approx(40.0)
+
+
+def test_the_whole_cross_section_runs_from_the_left_slope_to_the_right_one():
+    f = dike(width=4.0, slope_n=2.0, reach=10.0, cross_left=((2.0, -0.5),), cross_right=((4.0, -1.5),))
+    points = whole_cross_section(f)
+    assert points[0][0] == pytest.approx(-12.0) and points[-1][0] == pytest.approx(12.0)
+    assert (-4.0, -0.5) in points and (-2.0, 0.0) in points and (2.0, 0.0) in points and (6.0, -1.5) in points
+    assert [x for x, _z in points] == sorted(x for x, _z in points)
+    assert not any(x == 0.0 for x, _z in points)                # no centre handle: the crest runs across it
+
+
+def test_an_untouched_whole_section_writes_back_what_the_feature_has():
+    f = dike(width=4.5, slope_n=2.5, reach=12.0, cross_left=((2.0, -0.5),), cross_right=((4.0, -1.5), (6.0, -1.6)))
+    changes = set_whole_cross_section(f, whole_cross_section(f))
+    assert changes["width"] == pytest.approx(4.5)
+    assert changes["slope_n"] == pytest.approx(2.5) and changes["reach"] == pytest.approx(12.0)
+    for side in ("cross_left", "cross_right"):
+        assert len(changes[side]) == len(getattr(f, side))
+        for written, stored in zip(changes[side], getattr(f, side)):
+            assert written == pytest.approx(stored)
+
+
+def test_a_left_side_edit_changes_the_left_side_and_the_shared_slope():
+    f = dike(width=4.0, slope_n=3.0, reach=10.0)
+    points = list(whole_cross_section(f))
+    points[0] = (-14.0, -4.0)                                   # the left slope's end: 12 m out, 4 m down
+    changes = set_whole_cross_section(f, points)
+    assert changes["reach"] == pytest.approx(12.0) and changes["slope_n"] == pytest.approx(3.0)
+    assert changes["cross_left"] == () and changes["cross_right"] == ()
+
+
+def test_symmetric_copies_the_edited_side_whichever_side_it_is():
+    f = dike(width=4.0, slope_n=3.0, reach=10.0)
+    left_berm = [(-12.0, -3.0), (-6.0, -1.0), (-2.0, 0.0), (2.0, 0.0), (12.0, -10.0 / 3.0)]
+    assert set_whole_cross_section(f, left_berm, symmetric=True)["cross_right"] == ((4.0, -1.0),)
+    right_berm = [(-12.0, -10.0 / 3.0), (-2.0, 0.0), (2.0, 0.0), (6.0, -1.0), (12.0, -3.0)]
+    assert set_whole_cross_section(f, right_berm, symmetric=True)["cross_left"] == ((4.0, -1.0),)
+    unticked = set_whole_cross_section(f, left_berm, symmetric=False)
+    assert unticked["cross_left"] == ((4.0, -1.0),) and unticked["cross_right"] == ()

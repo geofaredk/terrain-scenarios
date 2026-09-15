@@ -123,6 +123,10 @@ AREA_LONG_SECTION_NOTE = ("An area has no long profile to edit. A section throug
 MULTIPART_LONG_SECTION_NOTE = ("This feature has more than one part, so its long profile follows "
                                "the tool rule and cannot be edited by hand. Use Height or Depth in "
                                "the panel above to drive its shape.")
+CROSS_SIDES_TIP = ("A section across the path, looking along it in the direction it was drawn: its left side "
+                   "on the left. Drag the crest edges to change the width, and the ends of the slopes to change "
+                   "their steepness and reach; double-click to add a break point, such as a berm, and "
+                   "right-click to remove one.")
 SYMMETRIC_TIP = ("While this is ticked, break points are mirrored to the other side of the path. "
                  "Width and side slope are single values that always apply to both sides.")
 AMOUNT_IS_CUSTOM = ("The long profile was edited by hand, so its heights are fixed. Use "

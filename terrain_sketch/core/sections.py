@@ -14,6 +14,7 @@ from .stations import vertex_stations
 from .tools import TOOL_INFO, Mode
 
 SAMPLES = 200
+SAME = 5e-5   # values written back at four decimals: closer than this is the same value
 
 
 def cross_section(feature, side: int = 1) -> tuple:
@@ -90,6 +91,45 @@ def set_cross_section(feature, side: int, points) -> dict:
         changes["reach"] = 0.0 if not deduplicated else feature.reach
 
     return changes
+
+
+def whole_cross_section(feature) -> tuple:
+    """A path's cross profile across both sides, as a surveyor draws it: ((offset, dz), ...) from the
+    end of the left slope to the end of the right one, left of the centre line at negative offsets.
+    Left and right are as seen looking along the path in the direction it was drawn."""
+    left = cross_section(feature, side=-1)[1:]
+    right = cross_section(feature, side=1)[1:]
+    return tuple((-x, z) for x, z in reversed(left)) + right
+
+
+def set_whole_cross_section(feature, points, symmetric: bool = False) -> dict:
+    """Turn an edited whole cross profile back into feature fields.
+
+    Each side is read the way `set_cross_section` reads one. Width, side slope and reach are single
+    values shared by both sides, so each is taken from the side where it changed. With `symmetric`,
+    the break points of the side that was edited are copied to the other side."""
+    pts = [(float(x), float(z)) for x, z in points]
+    from_right = set_cross_section(feature, 1, [(0.0, 0.0)] + sorted(p for p in pts if p[0] > 0.0))
+    from_left = set_cross_section(feature, -1, [(0.0, 0.0)] + sorted((-x, z) for x, z in pts if x < 0.0))
+    changes = {"cross_left": from_left["cross_left"], "cross_right": from_right["cross_right"]}
+    for key in ("width", "slope_n", "reach"):
+        current = getattr(feature, key)
+        left_moved = abs(from_left[key] - current) > SAME
+        right_moved = abs(from_right[key] - current) > SAME
+        changes[key] = from_left[key] if left_moved and not right_moved else from_right[key]
+    if symmetric:
+        if _same_points(changes["cross_right"], feature.cross_right) \
+                and not _same_points(changes["cross_left"], feature.cross_left):
+            changes["cross_right"] = changes["cross_left"]
+        else:
+            changes["cross_left"] = changes["cross_right"]
+    return changes
+
+
+def _same_points(a, b) -> bool:
+    """Whether two break lists are equal to within the rounding a round trip through the plot adds."""
+    return len(a) == len(b) and all(abs(ax - bx) <= SAME and abs(az - bz) <= SAME
+                                    for (ax, az), (bx, bz) in zip(a, b))
 
 
 def _slope_n(run: float, rise: float, current: float) -> float:

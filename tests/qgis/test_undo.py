@@ -219,9 +219,9 @@ def test_each_drag_in_the_profiles_panel_is_its_own_profile_step(tmp_path):
     dock = ProfileDock(c)
     dock.show_feature(dike.id)
     start = c.undo_stack.index()
-    dock._cross_edited([(0.0, 0.0), (2.0, 0.0), (6.0, -1.0)], True)
+    dock._cross_edited([(-6.0, -1.0), (-2.0, 0.0), (2.0, 0.0), (6.0, -1.0)], True)
     after_first = c.find(dike.id)
-    dock._cross_edited([(0.0, 0.0), (2.5, 0.0), (7.0, -1.2)], True)
+    dock._cross_edited([(-7.0, -1.2), (-2.5, 0.0), (2.5, 0.0), (7.0, -1.2)], True)
     assert c.undo_stack.index() == start + 2
     assert c.undo_stack.undoText() == UNDO_PROFILE.format(dike.name)
     c.undo_stack.undo()

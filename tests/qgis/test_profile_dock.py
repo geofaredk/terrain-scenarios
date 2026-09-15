@@ -14,8 +14,9 @@ def test_the_profile_dock_loads_the_selected_feature(tmp_path):
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock = ProfileDock(c)
     dock.show_feature(dike.id)
-    assert dock.cross.points[0] == (0.0, 0.0)
-    assert dock.cross.points[1][0] == pytest.approx(dike.width / 2.0)
+    assert dock.cross.mirrored                                     # both sides of the path
+    assert (-dike.width / 2.0, 0.0) in dock.cross.points and (dike.width / 2.0, 0.0) in dock.cross.points
+    assert dock.cross.points[0][0] == -dock.cross.points[-1][0] < 0.0
     assert len(dock.long.terrain) == 200 and len(dock.long.points) >= 2
     assert dock.note.text() == ""
 
@@ -25,7 +26,7 @@ def test_editing_the_cross_profile_writes_width_and_slope_back(tmp_path):
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM, )
     dock = ProfileDock(c)
     dock.show_feature(dike.id)
-    dock.cross.profileCommitted.emit(((0.0, 0.0), (3.0, 0.0), (15.0, -4.0)))
+    dock.cross.profileCommitted.emit(((-15.0, -4.0), (-3.0, 0.0), (3.0, 0.0), (15.0, -4.0)))
     updated = c.feature(dike.id)
     assert updated.width == pytest.approx(6.0)
     assert updated.slope_n == pytest.approx(3.0)
@@ -35,14 +36,17 @@ def test_editing_the_cross_profile_writes_width_and_slope_back(tmp_path):
 def test_symmetric_mirrors_the_edit_to_the_other_side(tmp_path):
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.update_feature(dike.id, width=4.0, slope_n=3.0, reach=10.0)
     dock = ProfileDock(c)
     dock.show_feature(dike.id)
     dock.symmetric.setChecked(True)
-    dock.cross.profileCommitted.emit(((0.0, 0.0), (2.0, 0.0), (6.0, -1.0), (12.0, -3.0)))
+    # a berm added on the right; the left side is still as it was
+    dock.cross.profileCommitted.emit(((-12.0, -10.0 / 3.0), (-2.0, 0.0), (2.0, 0.0), (6.0, -1.0), (12.0, -3.0)))
     updated = c.feature(dike.id)
     assert updated.cross_left == updated.cross_right == ((4.0, -1.0),)
     dock.symmetric.setChecked(False)
-    dock.cross.profileCommitted.emit(((0.0, 0.0), (2.0, 0.0), (8.0, -2.0), (14.0, -4.0)))
+    assert dock.cross.points == [(-12.0, -3.0), (-6.0, -1.0), (-2.0, 0.0), (2.0, 0.0), (6.0, -1.0), (12.0, -3.0)]
+    dock.cross.profileCommitted.emit(((-12.0, -3.0), (-6.0, -1.0), (-2.0, 0.0), (2.0, 0.0), (8.0, -2.0), (14.0, -4.0)))
     after = c.feature(dike.id)
     assert after.cross_right == ((6.0, -2.0),) and after.cross_left == ((4.0, -1.0),)
 
@@ -53,10 +57,12 @@ def test_the_side_slope_is_shared_between_the_sides_and_the_tip_says_so(tmp_path
     that every edit is mirrored only while it is ticked."""
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.update_feature(dike.id, width=4.0, slope_n=3.0, reach=20.0)
     dock = ProfileDock(c)
     dock.show_feature(dike.id)
     dock.symmetric.setChecked(False)
-    dock.cross.profileCommitted.emit(((0.0, 0.0), (2.0, 0.0), (14.0, -4.0)))
+    # only the right slope's end moves; the left side is still as it was
+    dock.cross.profileCommitted.emit(((-22.0, -20.0 / 3.0), (-2.0, 0.0), (2.0, 0.0), (14.0, -4.0)))
     updated = c.feature(dike.id)
     assert updated.slope_n == pytest.approx(3.0) and updated.reach == pytest.approx(12.0)
     tip = dock.symmetric.toolTip()
@@ -214,9 +220,35 @@ def test_the_properties_page_follows_a_cross_profile_drag(tmp_path):
     page.show_feature(dike.id)
     dock = ProfileDock(c)
     dock.show_feature(dike.id)
-    dock.cross.profileCommitted.emit(((0.0, 0.0), (2.5, 0.0), (7.0, -1.2)))
+    dock.cross.profileCommitted.emit(((-7.0, -1.2), (-2.5, 0.0), (2.5, 0.0), (7.0, -1.2)))
     updated = c.feature(dike.id)
     assert (updated.width, updated.slope_n, updated.reach) == pytest.approx((5.0, 3.75, 4.5))
     assert page.width.value() == pytest.approx(5.0) and page.reach.value() == pytest.approx(4.5)
     assert page.slope.value() == pytest.approx(3.8)            # shown to its one decimal
     assert c.feature(dike.id).slope_n == pytest.approx(3.75)   # and not written back rounded
+
+
+def test_the_left_side_of_a_path_can_be_given_its_own_berm(tmp_path):
+    """Until the whole cross-section was shown, only the right side could be edited."""
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.update_feature(dike.id, width=4.0, slope_n=3.0, reach=10.0)
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    dock.symmetric.setChecked(False)
+    right = [p for p in dock.cross.points if p[0] > 0.0]
+    dock.cross.profileCommitted.emit(((-12.0, -3.0), (-6.0, -1.0), (-2.0, 0.0), *right))
+    updated = c.feature(dike.id)
+    assert updated.cross_left == ((4.0, -1.0),) and updated.cross_right == ()
+    assert (updated.width, updated.slope_n, updated.reach) == pytest.approx((4.0, 3.0, 10.0))
+    assert sample(c.layers.working, 20, 16) > sample(c.layers.working, 20, 24)   # north is left of an eastward path
+
+
+def test_the_symmetric_box_tells_the_plot_to_move_mirror_handles_together(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    assert dock.cross.symmetric
+    dock.symmetric.setChecked(False)
+    assert not dock.cross.symmetric

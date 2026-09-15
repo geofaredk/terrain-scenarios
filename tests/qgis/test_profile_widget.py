@@ -242,3 +242,70 @@ def test_clearing_the_plot_mid_drag_ends_the_drag():
     press(w, start.x() + 20, start.y() - 20, kind=QEvent.Type.MouseMove)
     press(w, start.x() + 20, start.y() - 20, kind=QEvent.Type.MouseButtonRelease)
     assert w.points == [] and committed == []
+
+
+def whole(width=4.0, left=(), right=((12.0, -3.0),)):
+    """A mirrored plot: left-side points (negative), the two crest edges, right-side points."""
+    edge = width / 2.0
+    points = [*left, (-edge, 0.0), (edge, 0.0), *right]
+    return widget_with(points, mirrored=True)
+
+
+def drag(widget, x, z, to_x, to_z):
+    start, end = widget._to_screen(x, z), widget._to_screen(to_x, to_z)
+    press(widget, start.x(), start.y())
+    press(widget, end.x(), end.y(), kind=QEvent.Type.MouseMove)
+    press(widget, end.x(), end.y(), kind=QEvent.Type.MouseButtonRelease)
+
+
+def test_the_two_crest_edges_move_together():
+    w = whole(left=((-12.0, -3.0),))
+    drag(w, 2.0, 0.0, 3.0, 0.0)
+    assert w.points[1][0] == pytest.approx(-w.points[2][0]) and w.points[2][0] == pytest.approx(3.0, abs=0.1)
+    assert w.points[1][1] == w.points[2][1] == 0.0                # the crest stays level
+
+
+def test_no_handle_crosses_the_centre_line():
+    w = whole(left=((-12.0, -3.0),))
+    drag(w, -2.0, 0.0, 5.0, 0.0)                                  # the left edge dragged far to the right
+    assert w.points[1][0] < 0.0 < w.points[2][0]
+    assert w.points[2][0] <= 12.0
+
+
+def test_with_symmetric_on_a_handle_takes_its_mirror_image_along():
+    w = whole(left=((-12.0, -3.0),))
+    w.symmetric = True
+    drag(w, 12.0, -3.0, 14.0, -4.0)
+    assert w.points[0][0] == pytest.approx(-w.points[3][0]) and w.points[0][1] == pytest.approx(w.points[3][1])
+    w.symmetric = False
+    drag(w, 14.0, w.points[3][1], 10.0, -2.0)
+    assert w.points[0][0] != pytest.approx(-w.points[3][0])       # off: only the dragged side moves
+
+
+def test_a_handle_without_a_mirror_image_moves_alone_even_when_symmetric():
+    w = whole(left=((-12.0, -3.0),), right=((6.0, -1.0), (12.0, -3.0)))
+    w.symmetric = True
+    before = list(w.points)
+    drag(w, 6.0, -1.0, 7.0, -1.5)
+    assert w.points[:3] == before[:3]
+
+
+def test_the_arrow_keys_move_both_crest_edges():
+    w = whole(left=((-12.0, -3.0),))
+    select(w, 2.0, 0.0)
+    key(w, Qt.Key.Key_Right)
+    assert w.points[2][0] == pytest.approx(2.0 + NUDGE) and w.points[1][0] == pytest.approx(-2.0 - NUDGE)
+
+
+def test_the_crest_edges_cannot_be_removed_and_nothing_is_added_on_the_crest():
+    w = whole(left=((-12.0, -3.0),))
+    committed = []
+    w.profileCommitted.connect(committed.append)
+    edge = w._to_screen(2.0, 0.0)
+    press(w, edge.x(), edge.y(), button=Qt.MouseButton.RightButton)
+    crest = w._to_screen(0.5, 0.0)
+    press(w, crest.x(), crest.y(), kind=QEvent.Type.MouseButtonDblClick)
+    assert len(w.points) == 4 and committed == []
+    slope = w._to_screen(7.0, -1.5)
+    press(w, slope.x(), slope.y(), kind=QEvent.Type.MouseButtonDblClick)
+    assert len(w.points) == 5 and len(committed) == 1              # a berm on a slope is fine

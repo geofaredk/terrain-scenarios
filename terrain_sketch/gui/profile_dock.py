@@ -6,9 +6,10 @@ from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPushButton, QSplitter, QVBoxLayout,
                                  QWidget)
 
-from ..core.sections import cross_section, set_cross_section, supports_long_profile
+from ..core.sections import (cross_section, set_cross_section, set_whole_cross_section, supports_long_profile,
+                             whole_cross_section)
 from ..core.tools import TOOL_INFO, Mode
-from .help_texts import (AREA_LONG_SECTION_HINT, AREA_LONG_SECTION_NOTE, CUSTOM_PROFILE_NOTE,
+from .help_texts import (AREA_LONG_SECTION_HINT, AREA_LONG_SECTION_NOTE, CROSS_SIDES_TIP, CUSTOM_PROFILE_NOTE,
                          MULTIPART_LONG_SECTION_NOTE, SYMMETRIC_TIP)
 from . import settings
 from .profile_widget import Kind, ProfileWidget
@@ -26,10 +27,13 @@ class ProfileDock(QgsDockWidget):
         self._loading = False
 
         self.cross = ProfileWidget(Kind.CROSS)
+        self.cross.setToolTip(CROSS_SIDES_TIP)
         self.long = ProfileWidget(Kind.LONG)
         self.symmetric = QCheckBox(self.tr("Symmetric"))
         self.symmetric.setChecked(True)
         self.symmetric.setToolTip(SYMMETRIC_TIP)
+        self.cross.symmetric = True
+        self.symmetric.toggled.connect(self._symmetric_toggled)
         self.reset_cross = QPushButton(self.tr("Reset shape"))
         self.reset_long = QPushButton(self.tr("Reset to rule"))
         self.note = QLabel()
@@ -93,9 +97,13 @@ class ProfileDock(QgsDockWidget):
         try:
             info = TOOL_INFO[feature.tool]
             is_path = feature.mode is Mode.PATH
-            # Break points are for paths only: the engine discards an area's (spec 5.4).
-            self.cross.set_profile(cross_section(feature, side=1), editable=info.has_slopes,
-                                   allow_breaks=is_path)
+            # A path shows both sides around its centre line; an area shows its one edge slope, and
+            # takes no break points: the engine discards an area's (spec 5.4).
+            if is_path:
+                self.cross.set_profile(whole_cross_section(feature), editable=info.has_slopes, mirrored=True)
+            else:
+                self.cross.set_profile(cross_section(feature, side=1), editable=info.has_slopes,
+                                       allow_breaks=False)
             self.symmetric.setEnabled(info.has_slopes and is_path)
             self.reset_cross.setEnabled(info.has_slopes)
             section = self.controller.long_section(self._fid)
@@ -126,9 +134,13 @@ class ProfileDock(QgsDockWidget):
         feature = self.controller.find(self._fid)
         if feature is None:
             return
-        changes = set_cross_section(feature, 1, points)
-        if self.symmetric.isChecked() and feature.mode is Mode.PATH:
-            changes["cross_left"] = changes["cross_right"]
+        try:
+            if feature.mode is Mode.PATH:
+                changes = set_whole_cross_section(feature, points, symmetric=self.symmetric.isChecked())
+            else:
+                changes = set_cross_section(feature, 1, points)
+        except ValueError:
+            return            # a side without its crest edge; the plot never sends one, and this is a slot
         self._apply(changes, commit)
 
     def _long_edited(self, points, commit: bool) -> None:
@@ -149,6 +161,9 @@ class ProfileDock(QgsDockWidget):
     def _reset_long(self) -> None:
         if self._fid is not None:
             self.controller.update_profile(self._fid, long_profile=None)
+
+    def _symmetric_toggled(self, checked: bool) -> None:
+        self.cross.symmetric = checked
 
     def _session_changed(self) -> None:
         if not self.controller.has_dem:

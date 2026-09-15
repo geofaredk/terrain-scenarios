@@ -23,7 +23,7 @@ from .help_texts import (DEM_NOT_READABLE, EXPORT_ADD_FAILED, EXPORT_DONE, EXPOR
                          EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_NOT_APPLIED,
                          SCENARIO_NOT_APPLIED_ON_ITS_DEM, SCENARIO_OPENED, SCENARIO_OTHER_DEM, SCENARIO_REPLACE,
                          SCENARIO_SAVED, SECTION_LINE_HINT, SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING,
-                         UNSAVED_CHANGES, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
+                         UNSAVED_CHANGES, PROFILES_TIP, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
 from .map_tools.base import SketchTool
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
@@ -37,6 +37,7 @@ from .tool_gallery import ToolGallery
 from .undo import UndoKeys
 
 PAGE_START, PAGE_GALLERY, PAGE_PROPERTIES = range(3)
+PROFILES_ICON = "/mActionElevationProfile.svg"
 
 
 def _file_button(icon: str, text: str, tip: str) -> QToolButton:
@@ -152,6 +153,12 @@ class MainDock(QgsDockWidget):
         self.toolbar.addWidget(self.export_button)
         self.view_3d_button = _file_button("/3d.svg", self.tr("3D view"), VIEW_3D_TIP)
         self.toolbar.addWidget(self.view_3d_button)
+        # The Profiles panel stays hidden until this button asks for it, and the button follows the panel
+        # when the user closes it there instead.
+        self.profiles_button = _file_button(PROFILES_ICON, self.tr("Profiles"), PROFILES_TIP)
+        self.profiles_button.setCheckable(True)
+        self.profiles_action = self.toolbar.addWidget(self.profiles_button)
+        self.profiles_action.setVisible(profiles is not None)
         layout.addWidget(self.toolbar)
 
         self.model = FeatureListModel(controller, self)
@@ -217,6 +224,8 @@ class MainDock(QgsDockWidget):
         if profiles is not None:
             profiles.installEventFilter(self.undo_keys)   # the Profiles panel is Terrain Sketch too
             profiles.drawSectionRequested.connect(self._draw_section_line)
+            self.profiles_button.toggled.connect(profiles.setUserVisible)
+            profiles.closedStateChanged.connect(lambda closed: self.profiles_button.setChecked(not closed))
         # A spin box claims Ctrl+Z for its own text even when it has none to undo, as after its arrows
         # committed each step; only while it has typed text to undo (or redo) is that key its own
         self.spin_undo_keys = []

@@ -343,3 +343,53 @@ def test_the_panels_open_where_they_were_left_and_unloading_remembers_it(tmp_pat
     area = Qt.DockWidgetArea
     assert settings.dock_area("profile_dock", area.BottomDockWidgetArea) == area.TopDockWidgetArea
     assert settings.dock_area("main_dock", area.RightDockWidgetArea) == area.LeftDockWidgetArea
+
+
+def plugin_in_a_window():
+    """The plugin with its panels in a real, shown main window, as QGIS puts them."""
+    iface = fake_iface()
+    window = iface.mainWindow()
+    iface.addDockWidget.side_effect = window.addDockWidget
+    window.show()
+    plugin = classFactory(iface)
+    plugin.initGui()
+    plugin.action.setChecked(True)
+    QApplication.processEvents()
+    return iface, plugin
+
+
+def test_the_profiles_panel_starts_hidden_and_the_panel_button_shows_and_hides_it():
+    _iface, plugin = plugin_in_a_window()
+    button = plugin.dock.profiles_button
+    assert plugin.dock.isUserVisible() and not plugin.profiles.isUserVisible()
+    assert button.isCheckable() and not button.isChecked() and button.isEnabled()
+    button.click()
+    assert plugin.profiles.isUserVisible() and button.isChecked()
+    button.click()
+    assert not plugin.profiles.isUserVisible() and not button.isChecked()
+    plugin.unload()
+
+
+def test_closing_the_profiles_panel_itself_releases_the_button():
+    _iface, plugin = plugin_in_a_window()
+    plugin.dock.profiles_button.click()
+    plugin.profiles.close()                                   # the panel's own close button
+    QApplication.processEvents()
+    assert not plugin.dock.profiles_button.isChecked()
+    plugin.unload()
+
+
+def test_hiding_terrain_sketch_hides_the_profiles_and_opening_it_again_does_not_show_them():
+    _iface, plugin = plugin_in_a_window()
+    plugin.dock.profiles_button.click()
+    plugin.action.setChecked(False)
+    assert not plugin.profiles.isUserVisible()
+    plugin.action.setChecked(True)
+    assert plugin.dock.isUserVisible() and not plugin.profiles.isUserVisible()
+    assert not plugin.dock.profiles_button.isChecked()
+    plugin.unload()
+
+
+def test_a_panel_without_a_profiles_panel_has_no_profiles_button():
+    dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
+    assert not dock.profiles_action.isVisible()

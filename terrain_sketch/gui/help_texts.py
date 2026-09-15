@@ -99,6 +99,8 @@ UNDO_DUPLICATE = "Duplicate {}"
 UNDO_SECTION_LINE = "Move the section line of {}"
 COPY_NAME = "{} (copy)"
 
+PROFILES_TIP = ("Show or hide the Profiles panel, where you see the selected feature's cross profile and long "
+                "profile and drag their shape.")
 VIEW_3D_TIP = ("Show the modified DEM in a new 3D view. It is the project's terrain, but only a temporary one, "
                "even if you save the project meanwhile: the terrain you had before is put back when this "
                "session ends.")

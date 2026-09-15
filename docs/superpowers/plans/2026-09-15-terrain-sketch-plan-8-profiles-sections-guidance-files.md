@@ -19641,7 +19641,7 @@ The suite cannot see these. Plans 2-7 still have their own lists waiting.
 9. Save a scenario as `flood.gpkg`: a `flood_files` folder appears beside it and the Modified DEM layer's source (Layer Properties ▸ Information) points into it. Save the QGIS project, close QGIS, reopen the project: the Modified DEM layer is still there.
 10. **New scenario**, draw something, and check that `flood_files/working_dem.tif` did not change (its modified time).
 11. Open a scenario made on another DEM whose file is still on disk: choose **Start on its DEM** and check that the session is on that DEM with the scenario's features.
-12. Save a scenario into a read-only folder, or onto a USB stick you then remove: expect a warning that the working rasters stayed where they were, not a crash.
+12. Save as `flood.gpkg` into a folder where `flood_files` already exists as a file (or a read-only folder): the scenario saves, and a warning says the working rasters are kept in a temporary folder — not a crash.
 
 ## Still open after Plan 8
 
@@ -19652,3 +19652,33 @@ The suite cannot see these. Plans 2-7 still have their own lists waiting.
 | A settings merge has no time boundary; `_restore_terrain` treats any DEM terrain on the Modified DEM layer as ours | Ruled acceptable in Plan 7; revisit if the manual checks surprise. |
 | `EXPORT_REPLACE` repeats `SCENARIO_REPLACE`'s text | One constant per message is the file's convention. |
 | Translations | Out of scope for v1 (spec §2). |
+
+## Addendum: execution and final-review fixes (2026-09-15)
+
+The eight tasks landed byte-identical to the blocks above. Two task reviews found plan-level defects; each was fixed in the prototype, the plan regenerated and dry-run again before the task's fix round, so **the blocks above already include them**:
+- **Task 3:** `set_whole_cross_section` re-read the side the user did not touch, and a side whose breaks run past the reach (no slope-end handle) was misread — an edit on one side rewrote the other side's slope and reach and dropped its berm. Also: `SAME` 5e-5 → 1e-4; the far-end axis test allows one bit; crest edges only move sideways; the sides tooltip only on an editable path.
+- **Task 8:** New and Open wrote the next terrain into the saved scenario's `_files` rasters before moving away, a failed move kept writing into another scenario's folder, and discarded edits stayed in the rasters. Now the rasters leave a scenario folder before the features change, a folder edited since its scenario was saved is rewritten from the file when the session leaves it, and a failed move falls back to a temp folder.
+
+The session scratchpad was wiped when the app quit mid-plan; the prototype was rebuilt from this plan's own blocks (identical for the tasks already done) in the git-ignored `.superpowers/`.
+
+The final whole-branch review found no Critical issues and four Important ones; one fix wave (e5f7dde..ed82a3f) and three controller fixes after its re-review (b344225..b1b36b3) followed. **Where the code on `main` differs from the task blocks above, the code and its tests are authoritative.** 549 tests.
+
+| # | What changed | Why |
+|---|---|---|
+| I1 | With Symmetric, only a side whose break handles moved on the plot is copied (compared as crest edge + offset); selecting a path sets Symmetric from whether its sides match | Any slope-end or crest-edge edit copied the right side's breaks over the left, wiping a left-only berm; Symmetric is ticked by default. |
+| I2 | Opening a scenario puts the rasters beside it only when it was made on this DEM file with the same grid; otherwise they stay in a temp folder until Save | Opening on another DEM (even a same-grid one, which asks no question) rewrote the scenario's `_files` rasters with that DEM's terrain. |
+| I3 | The rasters never move into a folder whose `working_dem.tif` or `change.tif` is the session's DEM | Starting on a reopened project's Modified DEM and saving as its scenario overwrote the DEM under the session. |
+| I4 | A reloaded plot keeps the selected handle where it still is (count and position within 5 mm); selecting another feature clears it | Each nudge commit reloaded the plot and dropped the selection, so tapping an arrow key moved a handle once. |
+| — | Smaller: a section-line drawing ends when another feature is selected; the outline and section band follow a map CRS change; reshaping an area away from its section line restores the default line in the same undo step; a malformed `section_line` loads as the default; a default line through a centroid outside the area falls back to a point on it; area amount labels say "highest/lowest point" and the path summaries name the straight grade; the Profiles buttons reset with no selection; picture redraws in Qt callbacks are guarded; each failed raster move says it once; a failed "Start on its DEM" removes the layer it added and a failed Open after it no longer claims the old features are unchanged; a scenario without a DEM record opens without an exception; tests for the grown section window and the unload save | Each confirmed by review. |
+
+### Additions to the manual check
+13. Select a dike whose two sides differ: Symmetric unticks. Tick it, drag a crest edge: neither side's berm is copied. Drag a berm: it is mirrored.
+14. Select a slope end and tap the Right arrow three times: the handle moves 0.3 m in three undo steps.
+15. Start on a DEM, open a scenario made on another DEM file (choose "Open on this DEM"), then close without saving: the scenario's `_files` rasters are unchanged (their modified time).
+
+### Still open after Plan 8 (in addition to the table above)
+| Item | Why not here |
+|---|---|
+| Rewriting a scenario's rasters on project clear while its layers still hold them may fail on Windows (shown as a message) | Cannot be tested on macOS. |
+| A crest-edge drag keeps break handles where they are on the plot, so stored offsets shrink as the crest widens | The Properties width still carries breaks outward (spec §5.4); ruled in Task 3. |
+| Duplicate ordering by the "(copy)" name; a held arrow key overlapping a mouse edit emits an extra, empty commit; a floating panel's later moves saved only at unload; the area section recomputed on every change (~0.35 s for a 1.3 M-cell area) | Task minors, accepted with rulings. |

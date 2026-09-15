@@ -88,6 +88,8 @@ class ProfileDock(QgsDockWidget):
         Selecting a path ticks Symmetric when its two sides have the same break points, and unticks it
         when they differ: ticked, the next break-point edit would copy one side over the other. Only on
         selection — a reload after an edit keeps whatever the user chose."""
+        if fid != self._fid:
+            self.cross.selected = self.long.selected = -1   # a handle of another feature is not this one's
         self._fid = fid
         if fid is None or not self.controller.has_dem:
             self.cross.setToolTip("")

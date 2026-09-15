@@ -1,6 +1,6 @@
 import pytest
 from qgis.PyQt.QtCore import QEvent, QPointF, Qt
-from qgis.PyQt.QtGui import QMouseEvent
+from qgis.PyQt.QtGui import QKeyEvent, QMouseEvent
 
 from qgis_helpers import UTM, line_layer, line_through, sample, square, start_session
 from terrain_sketch.core.tools import Mode, Tool
@@ -296,3 +296,35 @@ def test_the_cross_plot_explains_its_sides_only_for_a_path_it_can_edit(tmp_path)
     for other in (pond.id, band.id, None):
         dock.show_feature(other)
         assert dock.cross.toolTip() == "", other
+
+
+def tap(widget, which):
+    widget.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, which, Qt.KeyboardModifier.NoModifier))
+    widget.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, which, Qt.KeyboardModifier.NoModifier))
+
+
+def test_each_tap_of_an_arrow_key_nudges_the_selected_handle_again(tmp_path):
+    """Every nudge commits, and the commit reloads the plot: the handle must stay selected for the next tap."""
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    cross = dock.cross
+    cross.resize(400, 200)
+    reach, steps = c.find(dike.id).reach, c.undo_stack.count()
+    end = cross._to_screen(*cross.points[-1])                        # the right slope's end
+    mouse(cross, QEvent.Type.MouseButtonPress, end)
+    mouse(cross, QEvent.Type.MouseButtonRelease, end)
+    tap(cross, Qt.Key.Key_Right)
+    tap(cross, Qt.Key.Key_Right)
+    assert c.find(dike.id).reach == pytest.approx(reach + 0.2)
+    assert c.undo_stack.count() == steps + 2
+
+    end = cross._to_screen(*cross.points[-1])
+    mouse(cross, QEvent.Type.MouseButtonPress, end)
+    mouse(cross, QEvent.Type.MouseMove, end + QPointF(-30, 0))
+    mouse(cross, QEvent.Type.MouseButtonRelease, end + QPointF(-30, 0))
+    dragged = c.find(dike.id).reach
+    assert dragged < reach and c.undo_stack.count() == steps + 3
+    tap(cross, Qt.Key.Key_Right)                                     # straight after the drag, no new click
+    assert c.find(dike.id).reach == pytest.approx(dragged + 0.1)

@@ -71,14 +71,19 @@ class ProfileWidget(QWidget):
         the plot must refuse to add or remove them; `hint` is what an empty plot says instead of
         the default "select a feature". The widget knows nothing about features: the dock, which
         does, sets both.
+
+        The selected handle stays selected when the new profile has as many points: every drag and
+        nudge commits, and the commit reloads the plot, so the next arrow key must still find it.
         """
-        self.points = [(float(x), float(z)) for x, z in points]
+        points = [(float(x), float(z)) for x, z in points]
+        if len(points) != len(self.points):
+            self.selected = -1
+        self.points = points
         self.terrain = [(float(x), float(z)) for x, z in terrain]
         self.editable = editable
         self.allow_breaks = allow_breaks
         self.mirrored = mirrored
         self.hint = hint
-        self.selected = -1
         self._dragging = -1
         self._nudge_before = None
         self.update()

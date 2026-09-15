@@ -242,3 +242,18 @@ def test_when_neither_the_new_nor_a_temp_folder_can_be_written_the_message_says_
     c.update_feature(dike.id, amount=4.0)
     c.close()                                                          # and they are put back, as it says
     assert read_tif(tmp_path / "first_files" / "working_dem.tif")[0][19, 20] == 11.0
+
+
+def test_a_scenario_that_does_not_name_its_dem_opens_without_taking_qgis_down(tmp_path):
+    """Only a hand-edited or third-party file lacks the record, but Open runs in a button's slot."""
+    from osgeo import ogr
+    c = start_session(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    path = str(tmp_path / "flood.gpkg")
+    c.save_scenario(path)
+    source = ogr.Open(path, 1)
+    source.ExecuteSQL("UPDATE terrain_sketch_meta SET value = NULL WHERE key = 'dem_source'")
+    source.Close()
+    c.new_scenario()
+    c.open_scenario(path)
+    assert len(c.features) == 1 and c.scenario_path == path

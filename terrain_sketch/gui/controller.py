@@ -479,7 +479,7 @@ class SketchController(QObject):
             raise ScenarioError(SCENARIO_NOT_APPLIED)
         self.undo_stack.clear()   # the history belonged to the features that were just replaced
         self._mark_scenario(path, meta.created)
-        if _same_file(meta.dem_source, self.info.path) \
+        if meta.dem_source and _same_file(meta.dem_source, self.info.path) \
                 and not scenario.dem_meta(self.info, self.stack.original).differences(meta):
             self._place_files()
         self.sessionChanged.emit()

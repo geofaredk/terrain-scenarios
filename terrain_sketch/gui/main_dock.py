@@ -19,10 +19,11 @@ from ..qgis_io.raster_io import DemError, GeographicDemError
 from ..qgis_io.scenario import ScenarioError
 from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
-from .help_texts import (EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED, EXPORT_REPLACE,
-                         REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_REPLACE,
-                         SCENARIO_SAVED, SECTION_LINE_HINT, SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING,
-                         UNSAVED_CHANGES, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
+from .help_texts import (DEM_NOT_READABLE, EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED,
+                         EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED,
+                         SCENARIO_OTHER_DEM, SCENARIO_REPLACE, SCENARIO_SAVED, SECTION_LINE_HINT,
+                         SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES, VIEW_3D_NOT_OPENED,
+                         VIEW_3D_TIP)
 from .map_tools.base import SketchTool
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
@@ -87,6 +88,7 @@ class MainDock(QgsDockWidget):
         self.ask_save_path = self._save_dialog
         self.ask_open_path = self._open_dialog
         self.confirm_save = self._save_question
+        self.choose_dem = self._dem_choice_dialog
         self._asked_about_unsaved = False
         controller.before_discard = self._offer_save_before_discard
         self.edit_tool = None
@@ -336,16 +338,35 @@ class MainDock(QgsDockWidget):
             return
         if self._keep_unsaved_work():
             return
+        self._start_session(layer)
+
+    def _start_session(self, layer) -> bool:
+        """Start on `layer` once any unsaved work has been dealt with. True when the session started."""
         self._asked_about_unsaved = True   # the user has just answered; closing the old session must not ask again
         try:
             self.controller.set_dem(layer)
+            return True
         except DemError as error:
             if isinstance(error, GeographicDemError):
                 self._offer_reproject(str(error))
             else:
                 self._show_message(Qgis.MessageLevel.Warning, str(error))
+            return False
         finally:
             self._asked_about_unsaved = False
+
+    def _start_on_file(self, source: str) -> bool:
+        """Start on the DEM at `source`: the layer already in the project that reads it, or a new one."""
+        layer = next((layer for layer in QgsProject.instance().mapLayers().values()
+                      if isinstance(layer, QgsRasterLayer) and _same_source(layer.source(), source)), None)
+        if layer is None:
+            layer = QgsRasterLayer(source, os.path.splitext(os.path.basename(source))[0])
+            if not layer.isValid():
+                self._show_message(Qgis.MessageLevel.Warning, DEM_NOT_READABLE.format(source))
+                return False
+            QgsProject.instance().addMapLayer(layer)
+        self.dem_combo.setLayer(layer)
+        return self._start_session(layer)
 
     def _new_feature(self) -> None:
         self.feature_view.clearSelection()
@@ -561,9 +582,16 @@ class MainDock(QgsDockWidget):
         if not path:
             return
         try:
-            differences = self.controller.scenario_differences(path)
-            if differences and not self.confirm(SCENARIO_DEM_DIFFERS.format(", ".join(differences))):
-                return
+            differences = ", ".join(self.controller.scenario_differences(path))
+            if differences:
+                source = self.controller.scenario_dem_source(path)
+                if source is None:        # its DEM is gone or unknown: this one or nothing
+                    choice = "current" if self.confirm(SCENARIO_DEM_DIFFERS.format(differences)) else None
+                else:
+                    choice = self.choose_dem(SCENARIO_OTHER_DEM.format(dem=os.path.basename(source),
+                                                                       differences=differences))
+                if choice is None or (choice == "scenario" and not self._start_on_file(source)):
+                    return
             self.stop_tools()
             self.controller.open_scenario(path)
         except ScenarioError as error:
@@ -781,6 +809,17 @@ class MainDock(QgsDockWidget):
         path, _ = QFileDialog.getOpenFileName(self, self.tr("Open scenario"), self._dialog_start_dir(),
                                               self.tr("Terrain Sketch scenario (*.gpkg)"))
         return path
+
+    def _dem_choice_dialog(self, text: str):
+        """"scenario" to start on the scenario's own DEM, "current" to open it on this one, None to cancel."""
+        box = QMessageBox(QMessageBox.Icon.Question, self.tr("Terrain Sketch"), text,
+                          QMessageBox.StandardButton.Cancel, self)
+        theirs = box.addButton(self.tr("Start on its DEM"), QMessageBox.ButtonRole.AcceptRole)
+        mine = box.addButton(self.tr("Open on this DEM"), QMessageBox.ButtonRole.ActionRole)
+        box.setDefaultButton(theirs)
+        box.exec()
+        clicked = box.clickedButton()
+        return "scenario" if clicked is theirs else "current" if clicked is mine else None
 
     def _save_question(self, text: str, can_cancel: bool = True):
         """True to save, False to discard, None to cancel (only offered when `can_cancel`)."""

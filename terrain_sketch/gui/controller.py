@@ -26,7 +26,7 @@ from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import DemError, WorkingFiles, export_dem, read_dem
 from ..qgis_io.scenario import ScenarioError
-from .help_texts import (COPY_NAME, DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, EMPTY_LAYER,
+from .help_texts import (COPY_NAME, DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, EMPTY_LAYER, FILES_NOT_MOVED,
                          NO_FEATURES_SELECTED, NO_SESSION, RESULT_LAYER_REMOVED, SCENARIO_NOT_APPLIED,
                          SESSION_ENDED_DEM_REMOVED, TOOL_LABELS, UNDO_ADD, UNDO_DELETE, UNDO_DUPLICATE,
                          UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER, UNDO_SECTION_LINE, UNDO_SETTINGS, UNDO_SHAPE,
@@ -34,6 +34,12 @@ from .help_texts import (COPY_NAME, DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE,
 from .undo import FeatureListChange
 
 LOG_TAG = "Terrain Sketch"
+FILES_SUFFIX = "_files"
+
+
+def scenario_files_folder(path: str) -> str:
+    """Where a scenario's working rasters live once it is saved: `flood.gpkg` → `flood_files/` (spec §8.2)."""
+    return os.path.splitext(path)[0] + FILES_SUFFIX
 
 
 def plugin_version() -> str:
@@ -76,6 +82,7 @@ class SketchController(QObject):
         self.stack = None
         self.info = None
         self.files = None
+        self._files_temporary = True   # the working rasters are in a temp folder, not a scenario's
         self.layers = None
         self.dem_layer_id = None
         self.dem_crs = QgsCoordinateReferenceSystem()
@@ -134,6 +141,7 @@ class SketchController(QObject):
         self.stack = FeatureStack(grid)
         self.info = info
         self.files = files
+        self._files_temporary = True
         try:
             self.layers = SketchLayers(self.project, layer, self.files.working_path, self.files.change_path)
         except Exception as error:  # noqa: BLE001 — never leave a half-built session behind
@@ -415,6 +423,7 @@ class SketchController(QObject):
         """Drop every feature and forget the file, keeping the DEM session as it is."""
         if self._set([]):
             self._forget_scenario()
+            self._place_files()
             self.sessionChanged.emit()
 
     def save_scenario(self, path: str) -> None:
@@ -426,6 +435,7 @@ class SketchController(QObject):
         written = scenario.save(path, self._features, meta, crs_wkt=getattr(self.info, "crs_wkt", ""))
         self._mark_scenario(path, written.created)
         self.undo_stack.setClean()
+        self._place_files()
         self.sessionChanged.emit()
 
     def scenario_differences(self, path: str) -> list[str]:
@@ -434,6 +444,16 @@ class SketchController(QObject):
         if not self.has_dem:
             raise ScenarioError(NO_SESSION)
         return scenario.dem_meta(self.info, self.stack.original).differences(scenario.load_meta(path))
+
+    def scenario_dem_source(self, path: str) -> str | None:
+        """The DEM file the scenario at `path` was made on, when it is still there and is not the one in use —
+        so opening can offer to start on it. None otherwise. Raises ScenarioError when the file cannot be read."""
+        if not self.has_dem:
+            raise ScenarioError(NO_SESSION)
+        source = scenario.load_meta(path).dem_source
+        if not source or not os.path.isfile(source) or _same_file(source, self.info.path):
+            return None
+        return source
 
     def open_scenario(self, path: str) -> None:
         """Replace the features with the scenario at `path`. Raises ScenarioError when the file
@@ -447,12 +467,42 @@ class SketchController(QObject):
             raise ScenarioError(SCENARIO_NOT_APPLIED)
         self.undo_stack.clear()   # the history belonged to the features that were just replaced
         self._mark_scenario(path, meta.created)
+        self._place_files()
         self.sessionChanged.emit()
 
     def _mark_scenario(self, path: str, created: str) -> None:
         """The features now belong to the scenario file at `path`, first saved at `created`."""
         self._scenario_path = path
         self._created = created
+
+    def _place_files(self) -> None:
+        """Keep the working rasters with the scenario the features belong to (spec §8.2 step 3): in
+        `<scenario>_files/` beside a saved or opened scenario, so a QGIS project saved with these layers
+        still finds them later; in a temp folder when there is no scenario file. They move whenever that
+        changes, so edits to a new or another scenario never write over a scenario's own rasters."""
+        if self._scenario_path is None:
+            if not self._files_temporary:
+                self._move_files(tempfile.mkdtemp(prefix="terrain_sketch_"), temporary=True)
+        elif self._files_temporary or not _same_file(scenario_files_folder(self._scenario_path), self.files.folder):
+            self._move_files(scenario_files_folder(self._scenario_path), temporary=False)
+
+    def _move_files(self, folder: str, temporary: bool) -> None:
+        """Move the working rasters to `folder` and point the layers at them. A folder that cannot be written
+        leaves them where they are, with a message: the save or open this follows has already happened."""
+        old, was_temporary = self.files.folder, self._files_temporary
+        try:
+            self.files.move_to(folder)
+        except Exception as error:  # noqa: BLE001 — a read-only share, a full disk, a file another program holds
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Warning)
+            self.message.emit(Qgis.MessageLevel.Warning, FILES_NOT_MOVED.format(folder=folder, error=error))
+            if temporary:
+                shutil.rmtree(folder, ignore_errors=True)
+            return
+        self._files_temporary = temporary
+        if self.layers is not None:
+            self.layers.repoint(self.files.working_path, self.files.change_path)
+        if was_temporary:
+            shutil.rmtree(old, ignore_errors=True)
 
     def _forget_scenario(self) -> None:
         self._scenario_path = None
@@ -598,8 +648,10 @@ class SketchController(QObject):
         had_session = self.stack is not None
         self._forget_scenario()  # a Save after this must not write the next session over this file
         self._terrain_before = None  # the project is being cleared, or close() has already put it back
-        folder = self.files.folder if self.files is not None else None
+        # A scenario's `_files` folder is the scenario's, and stays; only a temp folder goes with the session
+        folder = self.files.folder if self.files is not None and self._files_temporary else None
         self.stack = self.info = self.files = self.layers = None
+        self._files_temporary = True
         self.dem_layer_id = None
         self.dem_crs = QgsCoordinateReferenceSystem()
         self._features = []

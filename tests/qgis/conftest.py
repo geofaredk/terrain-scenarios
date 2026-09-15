@@ -41,6 +41,7 @@ def no_modal_dialogs(monkeypatch):
         return QMessageBox.StandardButton.NoButton
 
     monkeypatch.setattr(QMessageBox, "question", staticmethod(question))
+    monkeypatch.setattr(QMessageBox, "exec", lambda _box: QMessageBox.StandardButton.Cancel)   # no button clicked
     monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: ("", "")))
     monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: ("", "")))
 

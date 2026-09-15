@@ -1,7 +1,7 @@
 """The "Terrain Sketch" layer group: modified DEM, change, hillshade and sketch outlines."""
 from __future__ import annotations
 
-from qgis.core import (Qgis, QgsColorRampShader, QgsFeature, QgsFillSymbol, QgsHillshadeRenderer,
+from qgis.core import (Qgis, QgsColorRampShader, QgsDataProvider, QgsFeature, QgsFillSymbol, QgsHillshadeRenderer,
                        QgsPalLayerSettings, QgsRasterLayer, QgsRasterShader, QgsSingleBandPseudoColorRenderer,
                        QgsVectorLayer, QgsVectorLayerSimpleLabeling)
 from qgis.PyQt import sip
@@ -46,6 +46,16 @@ class SketchLayers:
             if layer is not None:
                 layer.dataProvider().reloadData()
                 layer.triggerRepaint()
+
+    def repoint(self, working_path: str, change_path: str) -> None:
+        """Read the working and change rasters from the files they were moved to, keeping each layer's style
+        (and so a 3D terrain on the Modified DEM layer). Layers the user removed are skipped."""
+        options = QgsDataProvider.ProviderOptions()
+        for layer_id, path in ((self.change_id, change_path), (self.hillshade_id, working_path),
+                               (self.working_id, working_path)):
+            layer = self.project.mapLayer(layer_id)
+            if layer is not None:
+                layer.setDataSource(path, layer.name(), "gdal", options)
 
     def set_outlines(self, items) -> None:
         """Replace the outlines with `items`: (name, tool label, QgsGeometry in the DEM CRS).

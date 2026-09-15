@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
 
 import numpy as np
@@ -13,6 +14,7 @@ from ..core.grid import DemGrid, Window
 gdal.UseExceptions()
 
 WARN_CELLS = 50_000_000
+WORKING_NAME, CHANGE_NAME = "working_dem.tif", "change.tif"
 DEFAULT_NODATA = -9999.0
 _CREATE_OPTIONS = ["COMPRESS=LZW", "TILED=YES", "BIGTIFF=IF_SAFER"]
 
@@ -75,13 +77,22 @@ class WorkingFiles:
     def __init__(self, folder: str, original: DemGrid, info: DemInfo):
         os.makedirs(folder, exist_ok=True)
         self.folder = folder
-        self.working_path = os.path.join(folder, "working_dem.tif")
-        self.change_path = os.path.join(folder, "change.tif")
+        self.working_path = os.path.join(folder, WORKING_NAME)
+        self.change_path = os.path.join(folder, CHANGE_NAME)
         self._original = original
         self._info = info
         _write_tif(self.working_path, _for_output(original.data, original.valid, info.nodata), original, info)
         _write_tif(self.change_path, _for_output(np.zeros(original.data.shape), original.valid, info.nodata),
                    original, info)
+
+    def move_to(self, folder: str) -> None:
+        """Copy both files into `folder` and write there from now on. The old files are left for the caller
+        to remove, so a copy that fails half way changes nothing: the old ones are still the ones in use."""
+        os.makedirs(folder, exist_ok=True)
+        working, change = os.path.join(folder, WORKING_NAME), os.path.join(folder, CHANGE_NAME)
+        shutil.copyfile(self.working_path, working)
+        shutil.copyfile(self.change_path, change)
+        self.folder, self.working_path, self.change_path = folder, working, change
 
     def write(self, window: Window, working: DemGrid) -> None:
         """Write one window of the working DEM and its change into both files."""

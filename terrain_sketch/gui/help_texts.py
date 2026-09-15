@@ -256,6 +256,11 @@ SCENARIO_DEM_DIFFERS = ("This scenario was made on a DEM with a different {}.\n\
                         "the result before using it.\n\n"
                         "Choose No to keep your current work, then pick the DEM the scenario was made "
                         "for and press Start before opening it.")
+DEM_NOT_READABLE = "{} cannot be read as a raster, so Terrain Sketch cannot start on it."
+SCENARIO_OTHER_DEM = ("This scenario was made on {dem}, which differs from the DEM you are using in {differences}."
+                      "\n\nStart on {dem} and open the scenario there? Your current DEM stays in the project.")
+FILES_NOT_MOVED = ("Terrain Sketch could not put its working rasters in {folder} ({error}). They stay where they "
+                   "were, so a QGIS project saved now will not find them next time.")
 SCENARIO_NOT_APPLIED = ("The scenario could not be applied to this DEM, so it was not opened. "
                         "Your current features are unchanged.")
 UNSAVED_BEFORE_CLOSING = ("Terrain Sketch is closing this scenario, and it has changes that are not "

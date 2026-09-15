@@ -1,7 +1,10 @@
 from unittest import mock
 
 import pytest
-from qgis.core import QgsProject
+from qgis.core import QgsFlatTerrainProvider, QgsProject
+from qgis.PyQt.QtCore import QEvent, Qt
+from qgis.PyQt.QtGui import QKeyEvent
+from qgis.PyQt.QtWidgets import QApplication
 
 from qgis.core import QgsCoordinateReferenceSystem, QgsCsException, QgsGeometry, QgsPointXY
 
@@ -14,6 +17,7 @@ from terrain_sketch.gui.selection import Method
 from terrain_sketch.gui.controller import SketchController
 from terrain_sketch.gui.help_texts import SCENARIO_TOTALS, cubic_metres
 from terrain_sketch.gui.main_dock import PAGE_GALLERY, PAGE_PROPERTIES, PAGE_START, MainDock
+from terrain_sketch.gui.map_tools.draw_line import DrawLineTool
 from terrain_sketch.qgis_io.layers import GROUP_NAME
 
 
@@ -97,7 +101,10 @@ def test_a_new_session_applies_the_hillshade_checkbox(tmp_path):
     assert node.itemVisibilityChecked()
 
 
-def test_plugin_adds_and_removes_its_button_menu_and_panel():
+def test_plugin_adds_and_removes_its_button_menu_and_panel(tmp_path):
+    flat = QgsFlatTerrainProvider()
+    flat.setOffset(5.0)
+    QgsProject.instance().elevationProperties().setTerrainProvider(flat)
     iface = fake_iface()
     plugin = classFactory(iface)
     plugin.initGui()
@@ -106,11 +113,24 @@ def test_plugin_adds_and_removes_its_button_menu_and_panel():
     plugin.action.setChecked(True)
     assert plugin.dock is not None and plugin.profiles is not None
     assert iface.addDockWidget.call_count == 2  # the panel on the right, the profiles below
+    plugin.dock.dem_combo.setLayer(dem_layer(tmp_path))
+    plugin.dock.start_button.click()
+    controller = plugin.controller              # kept alive, so its undo stack can be watched after unload
+    assert controller.show_in_3d()
     plugin.unload()
     iface.removeToolBarIcon.assert_called_once()
     assert iface.removeDockWidget.call_count == 2
     assert plugin.dock is None and plugin.profiles is None
     assert plugin.controller is None and plugin.action is None
+    terrain = QgsProject.instance().elevationProperties().terrainProvider()
+    assert isinstance(terrain, QgsFlatTerrainProvider) and terrain.offset() == 5.0   # the project's terrain is back
+    # The canvas outlives the plugin: its Ctrl+Z filter must go at once, not whenever the dock is deleted
+    canvas = iface.mapCanvas()
+    canvas.setMapTool(DrawLineTool(canvas))     # a Terrain Sketch tool, as far as that filter could tell
+    controller.undo_stack.undo = mock.Mock()
+    for kind in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress):
+        QApplication.sendEvent(canvas, QKeyEvent(kind, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier))
+    controller.undo_stack.undo.assert_not_called()
 
 
 def _session_dock(tmp_path):

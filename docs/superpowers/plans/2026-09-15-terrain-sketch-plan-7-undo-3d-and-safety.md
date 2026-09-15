@@ -10051,3 +10051,31 @@ The suite cannot see these. Plans 2-6 still have their own lists waiting.
 | Replacing a scenario that is open as a QGIS layer on Windows; `_check_replaceable` being check-then-replace | Platform and race edge cases (Plan 6). |
 | `FeatureListModel.data()` rebuilding a dict per call; tests never disconnecting `SketchController` from the `QgsProject` singleton | Performance and test hygiene. |
 | Plan 6 minors: `load`/`load_meta` repeating one skeleton; `differences()` tested for 2 of 4 labels; a `_mark_scenario` helper; `created` kept by string path comparison | Style and coverage. |
+
+## Addendum: final-review fixes (2026-09-15)
+
+The six tasks landed byte-identical to the blocks above, with one exception: Task 3's review added a text-field Ctrl+Z test to `tests/qgis/test_undo_panel.py`, so from Task 3 onwards each full-suite count is one higher than stated. Task 2's review led to the plan being regenerated before Task 3 (`update_profile`, the refused-undo `resetClean`, `featuresChanged` on a no-op, and `is_dirty` requiring features or a path); the blocks above already include that. The final whole-branch review found no Critical issues and six Important ones. They were fixed in one wave (d4dc1e3..0f1e530). **Where the code on `main` differs from the task blocks above, the code and its tests are authoritative.** 452 tests.
+
+| # | What changed | Why |
+|---|---|---|
+| I1 | Rename looks its row up by fid when picked; `FeatureListModel.data`, `setData` and `mimeData` tolerate an out-of-range row | A list change while the context menu was open left a stale index that reached `data()` and aborted QGIS. |
+| I2 | A brush remembers from its start that it extends a feature, and an undo that removes that feature ends it | The undo cleared the brush's target first, so the brush kept the undone outline and finishing it added the feature back. |
+| I3 | `ProfileWidget.clear()` ends a drag in progress; `mouseMoveEvent` ignores an out-of-range handle | Ctrl+Z mid-drag that removed the feature left a drag on an empty plot; the next mouse move aborted QGIS. |
+| I4 | Removing the Modified DEM layer puts the project's terrain back at once; a DEM terrain whose layer is gone counts as ours | Otherwise the remembered terrain was discarded and the project kept a terrain pointing at nothing. |
+| I5 | The selection highlight catches `QgsCsException` and stays empty | The same transform Task 1 guarded for Edit shape, Brush and Zoom to ran unguarded on every selection and change. |
+| I6 | Each Properties spin box has its own undo-key filter; `UndoKeys` passes `applies(redo)`, so a field keeps Ctrl+Z only while it has typed text to undo, and Ctrl+Shift+Z only while it has text to redo | After stepping a value with the arrows, Ctrl+Z did nothing (manual check 2). The first fix still swallowed a second Ctrl+Z after a field undid its own typing; the re-review caught it. |
+| — | Smaller: `_drop_session` forgets the remembered terrain; the whole 3D view click is guarded; each context menu is deleted after it closes; a second 3D view press re-captures a terrain the user picked in between; unload is tested to restore the terrain and remove the map's key filter; the 3D view tip says the terrain is temporary even in a saved project | Each confirmed by review. |
+
+### Additions to the manual check
+10. Press **3D view** twice while the first 3D view is still open. Note whether a second view named "3D Map 2" opens; if so, report it (QGIS may refuse the repeated name).
+11. Type a value in a Properties field and press Ctrl+Z twice: the first press undoes your typing, the second undoes the last change to the feature.
+12. Press **3D view**, then remove the Modified DEM layer: Project ▸ Properties ▸ Terrain should be back to what it was straight away.
+
+### Deferred to Plan 8 (in addition to the table above)
+| Item | Why not here |
+|---|---|
+| The Properties page shows old Width, Slope and Reach after a cross-profile drag, so the next arrow step silently reverts the drag's width | Pre-existing; needs a reload rule that does not fight a focused field. |
+| Clicking the Undo button discards a value typed but not yet committed | Committing it first would change which step is undone; needs its own design. |
+| Two export messages for the same overwritten path can each add a layer; `EXPORT_NOT_ADDED` is shared by an unreadable file and an unexpected error | Task 6 minors. |
+| `_restore_terrain` treats any DEM terrain on the Modified DEM layer as ours; `dropMimeData` can reach `reorder()`'s ValueError; a settings merge has no time boundary | Task 2 and Task 5 minors, ruled acceptable. |
+| Deferred minors: `EXPORT_REPLACE` repeats `SCENARIO_REPLACE`; `set_dem`'s narrow except; no test for a failed second Start; Export DEM… keeps its text label in an icon toolbar; the duplicate test checks 7 of 12 fields; a second duplicate lands before the first | Style and coverage. |

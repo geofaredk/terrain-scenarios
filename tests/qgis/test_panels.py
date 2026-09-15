@@ -1,11 +1,58 @@
 import pytest
-from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem
+from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsProject
 
-from qgis_helpers import UTM, line_layer, line_through, sample, square, start_session
+from qgis_helpers import UTM, dem_layer, fake_iface, line_layer, line_through, panel, sample, square, start_session
 from terrain_sketch.core.tools import Mode, PixelMode, Tool
+from terrain_sketch.gui.controller import SketchController
+from terrain_sketch.gui.main_dock import VIEW_SESSION, VIEW_WELCOME, MainDock
 from terrain_sketch.gui.properties_page import PropertiesPage
 from terrain_sketch.gui.selection import EDIT_ICON, METHOD_ICONS, Method
 from terrain_sketch.gui.tool_gallery import ToolGallery
+
+
+def test_the_panel_opens_on_a_welcome_view_and_switches_to_the_session(tmp_path):
+    iface = fake_iface()
+    dock = MainDock(iface, SketchController(QgsProject.instance()))
+    assert dock.views.currentIndex() == VIEW_WELCOME
+    layer = dem_layer(tmp_path)
+    dock.dem_combo.setLayer(layer)
+    dock.start_button.click()
+    assert dock.views.currentIndex() == VIEW_SESSION
+    assert layer.name() in dock.status_label.text()
+
+
+def test_every_page_the_panel_opens_is_in_dock_mode(tmp_path):
+    """A panel that is not in dock mode opens a modal dialog, which never returns offscreen."""
+    _iface, _c, dock = panel(tmp_path)
+    dock.new_button.click()
+    assert dock.main_panel.dockMode() and dock.stack.currentPanel().dockMode()
+
+
+def test_the_scenario_actions_live_behind_one_menu_button(tmp_path):
+    _iface, _c, dock = panel(tmp_path)
+    assert [a.text() for a in dock.scenario_button.menu().actions()] == [
+        "New scenario", "Open scenario…", "Save scenario", "Save scenario as…"]
+
+
+def test_changing_the_dem_goes_back_to_the_welcome_view(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dock.status_label.linkActivated.emit("change")
+    assert dock.views.currentIndex() == VIEW_WELCOME and c.has_dem     # the session keeps running until Start
+
+
+def test_a_page_survives_being_closed_and_reopened(tmp_path):
+    """QgsPanelWidgetStack deletes a closed panel by default (verified by probe): the gallery and
+    properties pages are built once and reopened many times, so they must opt out of that, or the
+    second open is a use of a deleted C++ object."""
+    from qgis.PyQt.QtWidgets import QApplication
+
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.select_id(dike.id)          # opens the properties page
+    dock.feature_view.clearSelection()            # closes it
+    QApplication.processEvents()
+    dock.feature_view.select_id(dike.id)          # reopening it must not touch a deleted panel
+    assert dock.stack.currentPanel() is dock.properties_page
 
 
 def test_gallery_offers_only_the_shapes_and_methods_a_tool_supports():

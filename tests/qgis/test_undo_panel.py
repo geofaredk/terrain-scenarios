@@ -11,7 +11,7 @@ from qgis_helpers import UTM, dem_layer, fake_iface, line_through, spin_event_lo
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.controller import SketchController
 from terrain_sketch.gui.help_texts import UNDO_ADD
-from terrain_sketch.gui.main_dock import PAGE_PROPERTIES, MainDock
+from terrain_sketch.gui.main_dock import MainDock
 from terrain_sketch.gui.profile_dock import ProfileDock
 from terrain_sketch.gui.selection import Method
 
@@ -155,7 +155,7 @@ def test_undo_reloads_the_properties_page(tmp_path):
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.feature_view.select_id(dike.id)
-    assert dock.pages.currentIndex() == PAGE_PROPERTIES
+    assert dock.stack.currentPanel() is dock.properties_page
     dock.properties.amount.setValue(2.5)                   # through the page, as a user would
     assert c.find(dike.id).amount == 2.5
     dock.undo_button.click()
@@ -165,10 +165,12 @@ def test_undo_reloads_the_properties_page(tmp_path):
 
 def test_the_panel_header_does_not_make_the_panel_wider(tmp_path):
     """Seven buttons in a row forced a right-hand panel past 400 px; in a toolbar the ones that do
-    not fit go behind », so the header is no longer what sets the panel's minimum width."""
+    not fit go behind », so the header is no longer what sets the panel's minimum width. New feature
+    and Scenario ▾ now carry their own text (spec §5.1), so the floor is one such button wide rather
+    than icon-only — still nowhere near what used to force the panel wider."""
     _iface, _c, dock = panel(tmp_path)
     dock.show()
-    assert dock.toolbar.minimumSizeHint().width() < 100
+    assert dock.toolbar.minimumSizeHint().width() < 200
     assert dock.widget().minimumSizeHint().width() < 360
 
 
@@ -180,7 +182,7 @@ def test_ctrl_z_in_a_text_field_of_the_panel_is_left_to_that_field(tmp_path):
     _window, qgis_undo = in_a_window(iface, dock)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.feature_view.select_id(dike.id)
-    assert dock.pages.currentIndex() == PAGE_PROPERTIES
+    assert dock.stack.currentPanel() is dock.properties_page
     spin = dock.properties.amount
     spin.setFocus()
     spin_event_loop(10)

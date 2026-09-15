@@ -95,6 +95,20 @@ def start_session(tmp_path, array=None):
     return controller
 
 
+def panel(tmp_path):
+    """A fake iface, a SketchController and a MainDock with a session already started on a fresh
+    test DEM — the panel tests' usual starting point."""
+    from terrain_sketch.gui.controller import SketchController  # imported late, as start_session does
+    from terrain_sketch.gui.main_dock import MainDock
+
+    iface = fake_iface()
+    controller = SketchController(QgsProject.instance())
+    dock = MainDock(iface, controller)
+    dock.dem_combo.setLayer(dem_layer(tmp_path))
+    dock.start_button.click()
+    return iface, controller, dock
+
+
 def spin_event_loop(ms: int) -> None:
     """Run the Qt event loop for `ms` milliseconds, so a queued QTimer (like the preview
     throttle) actually fires instead of just sitting there unexercised in a synchronous test."""

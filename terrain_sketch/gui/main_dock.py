@@ -7,38 +7,39 @@ import traceback
 
 from qgis.core import (Qgis, QgsApplication, QgsCoordinateTransform, QgsCsException, QgsGeometry, QgsMessageLog,
                        QgsProject, QgsRasterLayer)
-from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsRubberBand
+from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsPanelWidget, QgsPanelWidgetStack, QgsRubberBand
 from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QAction
-from qgis.PyQt.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QSplitter,
+from qgis.PyQt.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
                                  QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from ..core.tools import Mode
 from ..qgis_io.convert import from_wkb
 from ..qgis_io.raster_io import DemError, GeographicDemError
 from ..qgis_io.scenario import ScenarioError
-from . import settings
+from .help_texts import (CHANGE_DEM_LINK, DEM_NOT_READABLE, EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE,
+                         EXPORT_NOT_ADDED, EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS,
+                         SCENARIO_MENU_TIP, SCENARIO_NOT_APPLIED, SCENARIO_NOT_APPLIED_ON_ITS_DEM, SCENARIO_OPENED,
+                         SCENARIO_OTHER_DEM, SCENARIO_REPLACE, SCENARIO_SAVED, SECTION_LINE_HINT, SHAPE_NOT_TRANSFORMED,
+                         SKETCHING_ON, START_HEADING, START_INTRO, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES,
+                         PROFILES_TIP, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
 from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
-from .help_texts import (DEM_NOT_READABLE, EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED,
-                         EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_NOT_APPLIED,
-                         SCENARIO_NOT_APPLIED_ON_ITS_DEM, SCENARIO_OPENED, SCENARIO_OTHER_DEM, SCENARIO_REPLACE,
-                         SCENARIO_SAVED, SECTION_LINE_HINT, SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING,
-                         UNSAVED_CHANGES, PROFILES_TIP, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
 from .map_tools.base import SketchTool
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
 from .map_tools.freehand import FreehandTool
 from .map_tools.vertex_edit import VertexEditTool
+from .muted import MutedLabel
 from .overlay import PreviewOverlay
 from .properties_page import PropertiesPage
 from .selection import BRUSH_EXTEND_HINT, EDIT_HINT, EDIT_ICON, METHOD_HINTS, Method
 from .tool_gallery import ToolGallery
 from .undo import UndoKeys
 
-PAGE_START, PAGE_GALLERY, PAGE_PROPERTIES = range(3)
+VIEW_WELCOME, VIEW_SESSION = range(2)
 PROFILES_ICON = "/mActionElevationProfile.svg"
 
 
@@ -62,6 +63,33 @@ def _action_button(action) -> QToolButton:
     button.setAutoRaise(True)
     button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
     return button
+
+
+def _scenario_action(menu: QMenu, icon: str, text: str, tip: str) -> QAction:
+    """One entry of the Scenario ▾ menu: same icon, text and tooltip shape as the buttons it replaces."""
+    action = menu.addAction(QgsApplication.getThemeIcon(icon), text)
+    action.setToolTip(f"{text}\n{tip}")
+    return action
+
+
+class _PagePanel(QgsPanelWidget):
+    """Hosts an existing widget as one page of the panel stack, built fresh each time it is opened.
+
+    A temporary wrapper: Task 4 turns `ToolGallery` and Task 5 turns `PropertiesPage` into
+    `QgsPanelWidget`s of their own, at which point `open_page` targets them directly and this
+    class goes away. `content` keeps its identity — it is only reparented — so `dock.gallery` and
+    `dock.properties` stay the same objects other code already reaches for. A fresh wrapper every
+    open (rather than one reused instance) matches how `QgsPanelWidgetStack` is meant to be used:
+    reopening the very same panel object after it has already been closed once (verified by probe,
+    even with `autoDelete` turned off) corrupts the stack's own bookkeeping and segfaults."""
+
+    def __init__(self, title: str, content: QWidget, parent=None):
+        super().__init__(parent)
+        self.setDockMode(True)
+        self.setPanelTitle(title)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(content)
 
 
 def _3d_types_loaded() -> bool:
@@ -104,6 +132,7 @@ class MainDock(QgsDockWidget):
         self.confirm_save = self._save_question
         self.choose_dem = self._dem_choice_dialog
         self._asked_about_unsaved = False
+        self._dem_name = ""                 # set by _start_session before its sessionChanged fires
         controller.before_discard = self._offer_save_before_discard
         self.edit_tool = None
         self._brush_fid = None
@@ -118,8 +147,22 @@ class MainDock(QgsDockWidget):
         self.section_band.setWidth(QgsMapToolEdit.digitizingStrokeWidth())
         self.section_band.setLineStyle(Qt.PenStyle.DashLine)
 
-        body = QWidget()
-        layout = QVBoxLayout(body)
+        # Welcome view (no session): a heading and intro, centred, then the DEM picker and Start —
+        # the same row and behaviour as before, just no longer sharing the panel with a session.
+        welcome_view = QWidget()
+        welcome_layout = QVBoxLayout(welcome_view)
+        welcome_layout.addStretch(1)
+        heading = QLabel(START_HEADING)
+        heading_font = heading.font()
+        heading_font.setBold(True)
+        heading.setFont(heading_font)
+        heading.setWordWrap(True)
+        heading.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        welcome_layout.addWidget(heading)
+        intro = QLabel(START_INTRO)
+        intro.setWordWrap(True)
+        intro.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        welcome_layout.addWidget(intro)
         dem_row = QHBoxLayout()
         dem_row.addWidget(QLabel(self.tr("DEM")))
         self.dem_combo = QgsMapLayerComboBox()
@@ -128,37 +171,53 @@ class MainDock(QgsDockWidget):
         self.start_button = QPushButton(self.tr("Start"))
         self.start_button.setToolTip(self.tr("Start sketching on this DEM. The DEM itself is never changed."))
         dem_row.addWidget(self.start_button)
-        layout.addLayout(dem_row)
+        welcome_layout.addLayout(dem_row)
+        welcome_layout.addStretch(1)
 
-        # A toolbar, like QGIS's own panels: when the panel is narrower than its buttons, the ones
-        # that do not fit move behind the » button instead of forcing the whole panel wider.
+        # The session view: a toolbar, like QGIS's own panels (when the panel is narrower than its
+        # buttons, the ones that do not fit move behind the » button instead of forcing it wider),
+        # the feature list, and a status line.
         self.toolbar = QToolBar()
         self.toolbar.setIconSize(iface.iconSize(True))
-        self.new_scenario_button = _file_button(
-            "/mActionFileNew.svg", self.tr("New scenario"),
-            self.tr("Start again with no features. The DEM stays as it is."))
-        self.open_scenario_button = _file_button(
-            "/mActionFileOpen.svg", self.tr("Open scenario…"),
-            self.tr("Open a saved scenario (.gpkg) onto the DEM you started on."))
-        self.save_scenario_button = _file_button(
-            "/mActionFileSave.svg", self.tr("Save scenario"),
-            self.tr("Save the features to a scenario file you can open again later."))
-        self.save_as_scenario_button = _file_button(
-            "/mActionFileSaveAs.svg", self.tr("Save scenario as…"),
-            self.tr("Save the features to a new scenario file, leaving the current one as it is."))
-        self.scenario_buttons = (self.new_scenario_button, self.open_scenario_button,
-                                 self.save_scenario_button, self.save_as_scenario_button)
-        for button in self.scenario_buttons:
-            self.toolbar.addWidget(button)
+        self.new_button = QToolButton()
+        self.new_button.setIcon(QgsApplication.getThemeIcon("/mActionAdd.svg"))
+        self.new_button.setText(self.tr("New feature"))
+        self.new_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.new_button.setAutoRaise(True)
+        self.toolbar.addWidget(self.new_button)
         self.undo_action = controller.undo_stack.createUndoAction(self, self.tr("Undo"))
         self.undo_action.setIcon(QgsApplication.getThemeIcon("/mActionUndo.svg"))
         self.redo_action = controller.undo_stack.createRedoAction(self, self.tr("Redo"))
         self.redo_action.setIcon(QgsApplication.getThemeIcon("/mActionRedo.svg"))
         self.undo_button = _action_button(self.undo_action)
         self.redo_button = _action_button(self.redo_action)
-        self.toolbar.addSeparator()
         self.toolbar.addWidget(self.undo_button)
         self.toolbar.addWidget(self.redo_button)
+        self.toolbar.addSeparator()
+        self.scenario_button = QToolButton()
+        self.scenario_button.setIcon(QgsApplication.getThemeIcon("/mActionFileOpen.svg"))
+        self.scenario_button.setText(self.tr("Scenario"))
+        self.scenario_button.setToolTip(SCENARIO_MENU_TIP)
+        self.scenario_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.scenario_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.scenario_button.setAutoRaise(True)
+        scenario_menu = QMenu(self)
+        self.new_scenario_action = _scenario_action(
+            scenario_menu, "/mActionFileNew.svg", self.tr("New scenario"),
+            self.tr("Start again with no features. The DEM stays as it is."))
+        self.open_scenario_action = _scenario_action(
+            scenario_menu, "/mActionFileOpen.svg", self.tr("Open scenario…"),
+            self.tr("Open a saved scenario (.gpkg) onto the DEM you started on."))
+        self.save_scenario_action = _scenario_action(
+            scenario_menu, "/mActionFileSave.svg", self.tr("Save scenario"),
+            self.tr("Save the features to a scenario file you can open again later."))
+        self.save_as_scenario_action = _scenario_action(
+            scenario_menu, "/mActionFileSaveAs.svg", self.tr("Save scenario as…"),
+            self.tr("Save the features to a new scenario file, leaving the current one as it is."))
+        self.scenario_actions = (self.new_scenario_action, self.open_scenario_action,
+                                 self.save_scenario_action, self.save_as_scenario_action)
+        self.scenario_button.setMenu(scenario_menu)
+        self.toolbar.addWidget(self.scenario_button)
         self.toolbar.addSeparator()
         self.export_button = _file_button(
             "/mActionSharingExport.svg", self.tr("Export DEM…"),
@@ -172,61 +231,63 @@ class MainDock(QgsDockWidget):
         self.profiles_button.setCheckable(True)
         self.profiles_action = self.toolbar.addWidget(self.profiles_button)
         self.profiles_action.setVisible(profiles is not None)
-        layout.addWidget(self.toolbar)
 
         self.model = FeatureListModel(controller, self)
         self.feature_view = FeatureListView(self.model)
-        list_row = QHBoxLayout()
-        self.new_button = QPushButton(QgsApplication.getThemeIcon("/mActionAdd.svg"), self.tr("New feature"))
-        self.delete_button = QPushButton(QgsApplication.getThemeIcon("/mActionDeleteSelected.svg"), self.tr("Delete"))
-        self.edit_button = QPushButton(QgsApplication.getThemeIcon(EDIT_ICON), self.tr("Edit shape"))
-        self.edit_button.setCheckable(True)
-        self.edit_button.setToolTip(self.tr("Move, add or remove the points of the selected feature."))
-        list_row.addWidget(self.new_button)
-        list_row.addWidget(self.delete_button)
-        list_row.addWidget(self.edit_button)
-        list_row.addStretch(1)
-        layout.addLayout(list_row)
 
-        self.hint = QLabel()
+        # `hint`, `delete_button` and `edit_button` move onto later pages (Task 4 and Task 5); kept
+        # constructed and working here, parented but not laid out, so nothing that reaches for them
+        # mid-plan breaks.
+        self.hint = QLabel(self)
         self.hint.setWordWrap(True)
         self.hint.hide()
+        self.delete_button = QPushButton(QgsApplication.getThemeIcon("/mActionDeleteSelected.svg"),
+                                         self.tr("Delete"), self)
+        self.edit_button = QPushButton(QgsApplication.getThemeIcon(EDIT_ICON), self.tr("Edit shape"), self)
+        self.edit_button.setCheckable(True)
+        self.edit_button.setToolTip(self.tr("Move, add or remove the points of the selected feature."))
 
-        self.pages = QStackedWidget()
-        start_label = QLabel(self.tr("Pick a DEM above and press Start. Terrain Sketch works on a copy; your DEM "
-                                     "is never changed."))
-        start_label.setWordWrap(True)
+        self.status_label = MutedLabel()
+        self.status_label.setOpenExternalLinks(False)
+
+        session_view = QWidget()
+        session_layout = QVBoxLayout(session_view)
+        session_layout.setContentsMargins(0, 0, 0, 0)
+        session_layout.addWidget(self.toolbar)
+        session_layout.addWidget(self.feature_view, 1)
+        session_layout.addWidget(self.status_label)
+
+        self.views = QStackedWidget()
+        self.views.addWidget(welcome_view)   # VIEW_WELCOME
+        self.views.addWidget(session_view)   # VIEW_SESSION
+
+        self.main_panel = QgsPanelWidget()
+        self.main_panel.setDockMode(True)    # QgsPanelWidgetStack.setMainPanel does not set this itself (QGIS 4.2.2):
+                                             # a panel opened without it is a modal dialog, which hangs offscreen tests
+        main_panel_layout = QVBoxLayout(self.main_panel)
+        main_panel_layout.setContentsMargins(0, 0, 0, 0)
+        main_panel_layout.addWidget(self.views)
+
+        self.stack = QgsPanelWidgetStack()
+        self.stack.setMainPanel(self.main_panel)
+        self.setWidget(self.stack)
+
+        # `gallery` and `properties` keep their names and behaviour (spec §12); each is wrapped as a
+        # drill-in page until Tasks 4 and 5 make them `QgsPanelWidget`s in their own right. The
+        # wrapper itself is rebuilt fresh each time it is opened (see `_PagePanel`); these two
+        # attributes always name whichever wrapper is current (or was current last).
         self.gallery = ToolGallery()
         self.properties = PropertiesPage(controller)
-        for page in (start_label, self.gallery, self.properties):
-            self.pages.addWidget(page)
-        # The list and the pages below it share the panel's height; dragging the handle between them gives the
-        # list more or less of it, and the split is remembered like the Profiles panel's.
-        lower = QWidget()
-        lower_layout = QVBoxLayout(lower)
-        lower_layout.setContentsMargins(0, 0, 0, 0)
-        lower_layout.addWidget(self.hint)
-        lower_layout.addWidget(self.pages, 1)
-        self.list_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.list_splitter.setObjectName("TerrainSketchListSplitter")
-        self.list_splitter.setChildrenCollapsible(False)
-        self.list_splitter.addWidget(self.feature_view)
-        self.list_splitter.addWidget(lower)
-        self.list_splitter.setStretchFactor(0, 1)
-        self.list_splitter.setStretchFactor(1, 2)
-        settings.restore_state("list_splitter", self.list_splitter)
-        self.list_splitter.splitterMoved.connect(
-            lambda *_args: settings.save_state("list_splitter", self.list_splitter))
-        layout.addWidget(self.list_splitter, 1)
-        self.setWidget(body)
+        self.gallery_page = None
+        self.properties_page = None
 
         self.start_button.clicked.connect(self._start)
         self.export_button.clicked.connect(self._export)
         self.view_3d_button.clicked.connect(self._open_3d_view)
-        self.new_scenario_button.clicked.connect(self._new_scenario)
-        self.open_scenario_button.clicked.connect(self._open_scenario)
-        self.save_scenario_button.clicked.connect(lambda: self._save_scenario())
-        self.save_as_scenario_button.clicked.connect(lambda: self._save_scenario(save_as=True))
+        self.new_scenario_action.triggered.connect(self._new_scenario)
+        self.open_scenario_action.triggered.connect(self._open_scenario)
+        self.save_scenario_action.triggered.connect(lambda: self._save_scenario())
+        self.save_as_scenario_action.triggered.connect(lambda: self._save_scenario(save_as=True))
         self.new_button.clicked.connect(self._new_feature)
         self.delete_button.clicked.connect(self._delete_selected)
         self.feature_view.selectionModel().selectionChanged.connect(self._selection_changed)
@@ -234,6 +295,7 @@ class MainDock(QgsDockWidget):
         self.gallery.drawRequested.connect(self._begin_drawing)
         self.gallery.layerRequested.connect(self._use_layer)
         self.edit_button.toggled.connect(self._toggle_edit)
+        self.status_label.linkActivated.connect(self._show_welcome_view)
         self.iface.mapCanvas().mapToolSet.connect(self._map_tool_set)
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_radius_units)
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_overlay_transform)
@@ -249,6 +311,10 @@ class MainDock(QgsDockWidget):
         # Ctrl+Z / Ctrl+Shift+Z: in the panel always, on the map only while a Terrain Sketch tool is active
         self.undo_keys = UndoKeys(controller.undo_stack, parent=self)
         self.installEventFilter(self.undo_keys)
+        # QgsPanelWidgetStack.keyPressEvent (verified by probe) consumes every key press itself and
+        # never forwards an unhandled one to its parent, unlike a plain QWidget: without this, the
+        # key press that follows an accepted ShortcutOverride never reaches the filter above.
+        self.stack.installEventFilter(self.undo_keys)
         if profiles is not None:
             profiles.installEventFilter(self.undo_keys)   # the Profiles panel is Terrain Sketch too
             profiles.drawSectionRequested.connect(self._draw_section_line)
@@ -321,16 +387,46 @@ class MainDock(QgsDockWidget):
             self.stop_tools()  # a drawing or edit cannot outlive its session
             self._update_highlight(None)
         for widget in (self.export_button, self.new_button, self.delete_button,
-                       self.edit_button, self.feature_view, self.view_3d_button, *self.scenario_buttons):
+                       self.edit_button, self.feature_view, self.view_3d_button):
             widget.setEnabled(has_dem)
+        for action in self.scenario_actions:
+            action.setEnabled(has_dem)
+        self.scenario_button.setEnabled(has_dem)
         if self.controller.layers is not None:
             project = self.controller.project
             self.dem_combo.setExceptedLayerList([project.mapLayer(i) for i in self.controller.layers.layer_ids])
         else:
             self.dem_combo.setExceptedLayerList([])
-        self.pages.setCurrentIndex(PAGE_GALLERY if has_dem else PAGE_START)
+        self.close_page()   # any open page belonged to the session that just started or ended
+        if has_dem:
+            self.status_label.setText(SKETCHING_ON.format(self._dem_name) + CHANGE_DEM_LINK)
+        self.views.setCurrentIndex(VIEW_SESSION if has_dem else VIEW_WELCOME)
         self._update_radius_units()
         self._update_overlay_transform()
+
+    def open_page(self, page) -> None:
+        """Push `page` onto the stack, closing whatever page is already open first: the panel never
+        drills more than one level deep from the main list."""
+        page.setDockMode(True)   # mandatory before openPanel — see the note on `main_panel` above
+        self.close_page()
+        self.main_panel.openPanel(page)
+
+    def close_page(self) -> None:
+        """Accept the open page, if there is one, returning the stack to the main list."""
+        current = self.stack.currentPanel()
+        if current is not None and current is not self.main_panel:
+            current.acceptPanel()
+
+    def _show_welcome_view(self, _link: str = "") -> None:
+        """The status line's Change… link: back to the welcome view, asking about unsaved work
+        first — the session itself keeps running until a new DEM is started, as pressing Start does."""
+        try:
+            if self._keep_unsaved_work():
+                return
+            self.close_page()
+            self.views.setCurrentIndex(VIEW_WELCOME)
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _update_overlay_transform(self) -> None:
         """Keep the drag preview georeferenced.
@@ -379,6 +475,7 @@ class MainDock(QgsDockWidget):
     def _start_session(self, layer) -> bool:
         """Start on `layer` once any unsaved work has been dealt with. True when the session started."""
         self._asked_about_unsaved = True   # the user has just answered; closing the old session must not ask again
+        self._dem_name = layer.name()      # set before set_dem: sessionChanged fires from inside it
         try:
             self.controller.set_dem(layer)
             return True
@@ -412,7 +509,8 @@ class MainDock(QgsDockWidget):
 
     def _new_feature(self) -> None:
         self.feature_view.clearSelection()
-        self.pages.setCurrentIndex(PAGE_GALLERY)
+        self.gallery_page = _PagePanel(self.tr("New feature"), self.gallery, self)
+        self.open_page(self.gallery_page)
 
     def _delete_selected(self) -> None:
         fid = self.feature_view.selected_id()
@@ -435,9 +533,10 @@ class MainDock(QgsDockWidget):
         self._update_highlight(fid)
         if fid is not None:
             self.properties.show_feature(fid)
-            self.pages.setCurrentIndex(PAGE_PROPERTIES)
+            self.properties_page = _PagePanel("", self.properties, self)
+            self.open_page(self.properties_page)
         elif self.controller.has_dem:
-            self.pages.setCurrentIndex(PAGE_GALLERY)
+            self.close_page()
 
     def _begin_drawing(self, tool, mode, method) -> None:
         self.stop_tools()
@@ -565,7 +664,7 @@ class MainDock(QgsDockWidget):
         emitting `selectionChanged` (a clear that leaves nothing selected is a no-op) — so a
         deleted feature can be left showing on the Properties page with stale figures. Make the
         dock behave as if the user had deselected whenever that happens."""
-        if self.pages.currentIndex() != PAGE_PROPERTIES:
+        if self.stack.currentPanel() is not self.properties_page:
             return
         fid = self.feature_view.selected_id()
         if fid is None or fid not in {f.id for f in self.controller.features}:

@@ -67,6 +67,12 @@ FLAG_TEXTS = {
 
 NO_SESSION = "Pick a DEM and press Start first."
 
+START_HEADING = "Sketch changes on your terrain"
+START_INTRO = "Terrain Sketch works on a copy; your DEM is never changed."
+SKETCHING_ON = "Sketching on: {}"
+CHANGE_DEM_LINK = ' <a href="change">Change…</a>'
+SCENARIO_MENU_TIP = "Start, open or save a scenario file."
+
 EXPORT_OVER_SOURCE = "Choose a new file name: Terrain Sketch never overwrites your DEM or its own working files."
 
 SESSION_ENDED_DEM_REMOVED = "The Terrain Sketch session ended because its DEM was removed from the project."

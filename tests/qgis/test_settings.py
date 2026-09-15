@@ -17,6 +17,22 @@ def test_a_missing_setting_falls_back_to_the_default():
     assert settings.load("never/written", "fallback") == "fallback"
 
 
+def test_a_stale_list_splitter_setting_is_left_alone():
+    """spec §10: list_splitter is retired along with the splitter it described. A value left over
+    in an existing profile from before the redesign is simply ignored — nothing reads it any more,
+    and the panel does not even have a splitter to restore it into."""
+    from qgis.core import QgsProject
+
+    from qgis_helpers import fake_iface
+    from terrain_sketch.gui.controller import SketchController
+    from terrain_sketch.gui.main_dock import MainDock
+
+    settings.save("list_splitter/state", b"an old value from before the redesign")
+    dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
+    assert not hasattr(dock, "list_splitter")
+    assert settings.load("list_splitter/state") == b"an old value from before the redesign"
+
+
 def test_splitter_state_is_stored_and_handed_back_to_the_widget():
     first = QSplitter()
     first.addWidget(QPushButton())

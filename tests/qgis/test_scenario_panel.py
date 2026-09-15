@@ -28,15 +28,15 @@ def test_saving_then_opening_restores_the_features(tmp_path):
     c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
     path = str(tmp_path / "panel.gpkg")
     dock.ask_save_path = lambda: path
-    dock.save_scenario_button.click()
+    dock.save_scenario_action.trigger()
     assert not c.is_dirty and c.scenario_path == path
 
     dock.confirm_save = lambda text, can_cancel=True: False           # discard, we already saved
-    dock.new_scenario_button.click()
+    dock.new_scenario_action.trigger()
     assert c.features == () and c.scenario_path is None
 
     dock.ask_open_path = lambda: path
-    dock.open_scenario_button.click()
+    dock.open_scenario_action.trigger()
     assert [f.name for f in c.features] == ["Raise path 1", "Lower flat 1"]
     assert not c.is_dirty
 
@@ -47,9 +47,9 @@ def test_a_second_save_does_not_ask_again(tmp_path):
     asked = []
     path = str(tmp_path / "once.gpkg")
     dock.ask_save_path = lambda: asked.append(1) or path
-    dock.save_scenario_button.click()
+    dock.save_scenario_action.trigger()
     c.update_feature(c.features[0].id, amount=2.0)
-    dock.save_scenario_button.click()
+    dock.save_scenario_action.trigger()
     assert len(asked) == 1                            # the path is remembered
     assert not c.is_dirty                              # and the second click actually wrote
     assert load(path)[0][0].amount == 2.0
@@ -61,7 +61,7 @@ def test_editing_marks_the_scenario_unsaved_and_saving_clears_it(tmp_path):
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     assert c.is_dirty
     dock.ask_save_path = lambda: str(tmp_path / "dirty.gpkg")
-    dock.save_scenario_button.click()
+    dock.save_scenario_action.trigger()
     assert not c.is_dirty
     c.update_feature(dike.id, amount=3.0)
     assert c.is_dirty
@@ -72,7 +72,7 @@ def test_discarding_unsaved_work_is_confirmed_first(tmp_path):
     c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     asked = []
     dock.confirm_save = lambda text, can_cancel=True: asked.append(text) or None      # cancel
-    dock.new_scenario_button.click()
+    dock.new_scenario_action.trigger()
     assert asked == [UNSAVED_CHANGES]
     assert len(c.features) == 1                        # cancelling kept the work
 
@@ -83,10 +83,10 @@ def test_choosing_save_in_the_prompt_writes_before_discarding(tmp_path):
     path = str(tmp_path / "prompted.gpkg")
     dock.confirm_save = lambda text, can_cancel=True: True
     dock.ask_save_path = lambda: path
-    dock.new_scenario_button.click()
+    dock.new_scenario_action.trigger()
     assert c.features == ()
     dock.ask_open_path = lambda: path
-    dock.open_scenario_button.click()
+    dock.open_scenario_action.trigger()
     assert len(c.features) == 1                        # the work was saved, not lost
 
 
@@ -95,7 +95,7 @@ def test_backing_out_of_the_save_dialog_keeps_the_work(tmp_path):
     c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.confirm_save = lambda text, can_cancel=True: True
     dock.ask_save_path = lambda: ""                    # the user cancelled the file dialog
-    dock.new_scenario_button.click()
+    dock.new_scenario_action.trigger()
     assert len(c.features) == 1
     # Leave the dock able to end the session cleanly: a real user who keeps choosing Save with a
     # file dialog that can never succeed would keep being asked (that is the point of I1), but a
@@ -128,14 +128,14 @@ def test_a_scenario_from_a_different_dem_is_only_opened_once_the_user_agrees(tmp
     dock.ask_open_path = lambda: path
     questions = []
     dock.confirm = lambda text: questions.append(text) or False   # No: pick another DEM first
-    dock.open_scenario_button.click()
+    dock.open_scenario_action.trigger()
 
     assert questions == [SCENARIO_DEM_DIFFERS.format("size in pixels, extent")]
     assert [f.id for f in c.features] == [mine.id]                # nothing was replaced
     assert c.is_dirty                                             # and it is still unsaved
 
     dock.confirm = lambda text: True                              # Yes: open it anyway
-    dock.open_scenario_button.click()
+    dock.open_scenario_action.trigger()
     assert len(c.features) == 1 and c.features[0].tool is Tool.RAISE_PATH
     assert c.scenario_path == path
 
@@ -146,20 +146,20 @@ def test_a_scenario_from_the_same_dem_opens_without_asking(tmp_path):
     dock.ask_open_path = lambda: path
     questions = []
     dock.confirm = lambda text: questions.append(text) or True
-    dock.open_scenario_button.click()
+    dock.open_scenario_action.trigger()
 
     assert questions == [] and len(c.features) == 1
     assert SCENARIO_OPENED.format(path) in messages(iface)
 
 
-def test_the_scenario_buttons_wait_for_a_session(tmp_path):
+def test_the_scenario_actions_wait_for_a_session(tmp_path):
     iface = fake_iface()
     c = SketchController(QgsProject.instance())
     dock = MainDock(iface, c)
-    assert not any(button.isEnabled() for button in dock.scenario_buttons)
+    assert not any(action.isEnabled() for action in dock.scenario_actions)
     dock.dem_combo.setLayer(dem_layer(tmp_path))
     dock.start_button.click()
-    assert all(button.isEnabled() for button in dock.scenario_buttons)
+    assert all(action.isEnabled() for action in dock.scenario_actions)
 
 
 def test_save_as_always_asks_and_leaves_the_first_file_as_it_was(tmp_path):
@@ -167,11 +167,11 @@ def test_save_as_always_asks_and_leaves_the_first_file_as_it_was(tmp_path):
     c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     first, second = str(tmp_path / "first.gpkg"), str(tmp_path / "second.gpkg")
     dock.ask_save_path = lambda: first
-    dock.save_scenario_button.click()
+    dock.save_scenario_action.trigger()
     c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
 
     dock.ask_save_path = lambda: second
-    dock.save_as_scenario_button.click()
+    dock.save_as_scenario_action.trigger()
     assert c.scenario_path == second
     assert len(load(first)[0]) == 1 and len(load(second)[0]) == 2
 
@@ -283,7 +283,7 @@ def test_opening_a_scenario_ends_an_edit_in_progress(tmp_path):
     dock.edit_button.setChecked(True)
     assert dock.edit_tool is not None
     dock.ask_open_path = lambda: path
-    dock.open_scenario_button.click()
+    dock.open_scenario_action.trigger()
     assert dock.edit_tool is None                  # its feature is gone; editing on would rewrite another
 
 
@@ -317,15 +317,15 @@ def test_the_save_dialog_starts_at_the_project_home_without_a_scenario_yet(tmp_p
     assert save_dirs == [QgsProject.instance().homePath()]
 
 
-def test_every_scenario_button_shows_an_icon_and_says_what_it_does(tmp_path):
-    """getThemeIcon hands back a null icon for a name it does not know, and an icon-only button
-    then renders as blank space — so check the real buttons, not a list of names."""
+def test_every_scenario_action_shows_an_icon_and_says_what_it_does(tmp_path):
+    """getThemeIcon hands back a null icon for a name it does not know, and an icon-only button or
+    action then renders as blank space — so check the real actions, not a list of names."""
     _iface, _c, dock = panel(tmp_path)
-    for button in (*dock.scenario_buttons, dock.export_button):
-        assert not button.icon().isNull(), button.text()
-    for button in dock.scenario_buttons:
-        assert button.toolTip().startswith(button.text() + "\n"), button.text()
-    icons = [button.icon().cacheKey() for button in (dock.save_as_scenario_button, dock.export_button)]
+    for item in (*dock.scenario_actions, dock.export_button, dock.new_button, dock.scenario_button):
+        assert not item.icon().isNull(), item.text()
+    for action in dock.scenario_actions:
+        assert action.toolTip().startswith(action.text() + "\n"), action.text()
+    icons = [item.icon().cacheKey() for item in (dock.save_as_scenario_action, dock.export_button)]
     assert icons[0] != icons[1]                    # Save as… and Export DEM… no longer look the same
 
 
@@ -345,7 +345,7 @@ def test_a_replace_check_that_raises_is_shown_as_a_warning_not_crashed(tmp_path)
     dock.ask_save_path = lambda: path
 
     with mock.patch.object(scenario, "_is_scenario_file", side_effect=RuntimeError("database is locked")):
-        dock.save_scenario_button.click()
+        dock.save_scenario_action.trigger()
 
     assert any("database is locked" in text for text in messages(_iface))
     assert c.is_dirty
@@ -383,12 +383,12 @@ def test_a_scenario_whose_dem_is_still_there_offers_to_start_on_that_dem(tmp_pat
     dock.ask_open_path = lambda: path
     choices = []
     dock.choose_dem = lambda text: choices.append(text) or None                       # cancel
-    dock.open_scenario_button.click()
+    dock.open_scenario_action.trigger()
     assert choices == [SCENARIO_OTHER_DEM.format(dem="dem.tif", differences="size in pixels, extent")]
     assert [f.id for f in c.features] == [mine.id] and c.info.path != other_dem
 
     dock.choose_dem = lambda text: "scenario"
-    dock.open_scenario_button.click()
+    dock.open_scenario_action.trigger()
     assert c.has_dem and c.info.path == other_dem and dock.dem_combo.currentLayer().source() == other_dem
     assert len(c.features) == 1 and c.features[0].tool is Tool.RAISE_PATH and c.scenario_path == path
     assert c.scenario_differences(path) == []
@@ -404,7 +404,7 @@ def test_starting_on_the_scenarios_dem_reuses_it_when_it_is_already_in_the_proje
     _iface, c, dock = panel(tmp_path)
     dock.ask_open_path = lambda: path
     dock.choose_dem = lambda text: "scenario"
-    dock.open_scenario_button.click()
+    dock.open_scenario_action.trigger()
     assert c.dem_layer_id == already.id()
     assert len([l for l in QgsProject.instance().mapLayers().values() if l.source() == other_dem]) == 1
 
@@ -415,7 +415,7 @@ def test_opening_on_this_dem_instead_keeps_the_session(tmp_path):
     first = c.info.path
     dock.ask_open_path = lambda: path
     dock.choose_dem = lambda text: "current"
-    dock.open_scenario_button.click()
+    dock.open_scenario_action.trigger()
     assert c.info.path == first and len(c.features) == 1 and c.scenario_path == path
 
 
@@ -446,7 +446,7 @@ def test_a_dem_that_cannot_be_started_on_is_not_left_in_the_project(tmp_path):
     dock.ask_open_path = lambda: path
     dock.choose_dem = lambda text: "scenario"
     with mock.patch.object(c, "set_dem", side_effect=DemError("refused")):
-        dock.open_scenario_button.click()
+        dock.open_scenario_action.trigger()
     assert not [l for l in project.mapLayers().values() if l.source() == other_dem]
     assert c.info.path == first and c.scenario_path is None
 
@@ -463,7 +463,7 @@ def test_a_scenario_that_fails_on_its_own_dem_does_not_claim_the_old_features_ar
     dock.ask_open_path = lambda: path
     dock.choose_dem = lambda text: "scenario"
     with mock.patch.object(c, "open_scenario", side_effect=ScenarioError(SCENARIO_NOT_APPLIED)):
-        dock.open_scenario_button.click()
+        dock.open_scenario_action.trigger()
     assert c.info.path == str(tmp_path / "other30" / "dem.tif") and c.features == ()
     assert messages(iface)[-1] == SCENARIO_NOT_APPLIED_ON_ITS_DEM
     assert "unchanged" not in SCENARIO_NOT_APPLIED_ON_ITS_DEM

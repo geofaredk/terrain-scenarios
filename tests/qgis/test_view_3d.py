@@ -6,7 +6,7 @@ from unittest import mock
 from qgis.core import QgsFlatTerrainProvider, QgsProject, QgsRasterDemTerrainProvider
 from qgis.PyQt.QtGui import QAction
 
-from qgis_helpers import UTM, dem_layer, fake_iface, line_through, start_session
+from qgis_helpers import UTM, dem_layer, fake_iface, line_through, panel, start_session
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.controller import SketchController
 from terrain_sketch.gui.help_texts import VIEW_3D_NO_LAYER, VIEW_3D_NOT_OPENED
@@ -21,15 +21,6 @@ def a_flat_terrain_at(offset: float) -> None:
     flat = QgsFlatTerrainProvider()
     flat.setOffset(offset)
     QgsProject.instance().elevationProperties().setTerrainProvider(flat)
-
-
-def panel(tmp_path):
-    iface = fake_iface()
-    controller = SketchController(QgsProject.instance())
-    dock = MainDock(iface, controller)
-    dock.dem_combo.setLayer(dem_layer(tmp_path))
-    dock.start_button.click()
-    return iface, controller, dock
 
 
 def messages(iface) -> list[str]:

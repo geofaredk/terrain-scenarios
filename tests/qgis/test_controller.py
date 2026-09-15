@@ -99,7 +99,7 @@ def test_removing_a_result_layer_keeps_the_session(tmp_path):
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     messages = []
     c.message.connect(lambda level, text: messages.append((level, text)))
-    QgsProject.instance().removeMapLayer(c.layers.hillshade_id)
+    QgsProject.instance().removeMapLayer(c.layers.change_id)
     assert c.has_dem and c.features == (dike,)
     assert messages and messages[-1][0] == Qgis.MessageLevel.Info
     c.update_feature(dike.id, amount=2.0)

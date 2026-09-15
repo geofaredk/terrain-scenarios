@@ -13,14 +13,12 @@ def _layers(tmp_path):
     return grid, files, SketchLayers(QgsProject.instance(), dem, files.working_path, files.change_path)
 
 
-def test_group_holds_the_four_layers_in_order(tmp_path):
+def test_group_holds_the_three_layers_in_order(tmp_path):
     _, _, layers = _layers(tmp_path)
     group = QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME)
     assert [n.layer().name() for n in group.findLayers()] == [
-        "Sketch outlines", "Change (new − original)", "Hillshade", "Modified DEM"]
-    assert not group.findLayer(layers.hillshade.id()).itemVisibilityChecked()
+        "Sketch outlines", "Change (new − original)", "Modified DEM"]
     assert type(layers.change.renderer()).__name__ == "QgsSingleBandPseudoColorRenderer"
-    assert type(layers.hillshade.renderer()).__name__ == "QgsHillshadeRenderer"
 
 
 def test_refresh_shows_new_values_and_outlines_update(tmp_path):
@@ -43,13 +41,9 @@ def test_remove_takes_the_group_and_its_layers_away(tmp_path):
     assert all(QgsProject.instance().mapLayer(i) is None for i in layers.layer_ids)
 
 
-def test_hillshade_toggle_and_cleanup_tolerate_layers_the_user_removed(tmp_path):
+def test_refresh_and_cleanup_tolerate_layers_the_user_removed(tmp_path):
     _, _, layers = _layers(tmp_path)
-    group = QgsProject.instance().layerTreeRoot().findGroup(GROUP_NAME)
-    layers.set_hillshade_visible(True)
-    assert group.findLayer(layers.hillshade_id).itemVisibilityChecked()
-    QgsProject.instance().removeMapLayers([layers.hillshade_id, layers.outlines_id])  # the user deletes two layers
-    layers.set_hillshade_visible(False)
+    QgsProject.instance().removeMapLayers([layers.change_id, layers.outlines_id])  # the user deletes two layers
     layers.refresh()
     layers.set_outlines([])
     layers.remove()

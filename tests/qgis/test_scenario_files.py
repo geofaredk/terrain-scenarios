@@ -13,7 +13,7 @@ from terrain_sketch.qgis_io.raster_io import WorkingFiles
 
 def layer_sources(c):
     project = QgsProject.instance()
-    return {project.mapLayer(i).source() for i in (c.layers.working_id, c.layers.change_id, c.layers.hillshade_id)}
+    return {project.mapLayer(i).source() for i in (c.layers.working_id, c.layers.change_id)}
 
 
 def test_saving_moves_the_working_rasters_beside_the_scenario_and_keeps_writing_there(tmp_path):

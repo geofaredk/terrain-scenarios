@@ -449,3 +449,21 @@ def test_a_dem_that_cannot_be_started_on_is_not_left_in_the_project(tmp_path):
         dock.open_scenario_button.click()
     assert not [l for l in project.mapLayers().values() if l.source() == other_dem]
     assert c.info.path == first and c.scenario_path is None
+
+
+def test_a_scenario_that_fails_on_its_own_dem_does_not_claim_the_old_features_are_still_there(tmp_path):
+    """Starting on its DEM already closed the session the features belonged to."""
+    from unittest import mock
+    from terrain_sketch.gui.help_texts import SCENARIO_NOT_APPLIED, SCENARIO_NOT_APPLIED_ON_ITS_DEM
+    from terrain_sketch.qgis_io.scenario import ScenarioError
+    path = scenario_from_another_dem(tmp_path, np.full((30, 30), 12.0, np.float32))
+    iface, c, dock = panel(tmp_path)
+    c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
+    dock.confirm_save = lambda text, can_cancel=True: False                           # discard my work
+    dock.ask_open_path = lambda: path
+    dock.choose_dem = lambda text: "scenario"
+    with mock.patch.object(c, "open_scenario", side_effect=ScenarioError(SCENARIO_NOT_APPLIED)):
+        dock.open_scenario_button.click()
+    assert c.info.path == str(tmp_path / "other30" / "dem.tif") and c.features == ()
+    assert messages(iface)[-1] == SCENARIO_NOT_APPLIED_ON_ITS_DEM
+    assert "unchanged" not in SCENARIO_NOT_APPLIED_ON_ITS_DEM

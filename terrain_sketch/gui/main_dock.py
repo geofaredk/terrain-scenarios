@@ -20,10 +20,10 @@ from ..qgis_io.scenario import ScenarioError
 from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
 from .help_texts import (DEM_NOT_READABLE, EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED,
-                         EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED,
-                         SCENARIO_OTHER_DEM, SCENARIO_REPLACE, SCENARIO_SAVED, SECTION_LINE_HINT,
-                         SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES, VIEW_3D_NOT_OPENED,
-                         VIEW_3D_TIP)
+                         EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_NOT_APPLIED,
+                         SCENARIO_NOT_APPLIED_ON_ITS_DEM, SCENARIO_OPENED, SCENARIO_OTHER_DEM, SCENARIO_REPLACE,
+                         SCENARIO_SAVED, SECTION_LINE_HINT, SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING,
+                         UNSAVED_CHANGES, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
 from .map_tools.base import SketchTool
 from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
@@ -595,6 +595,7 @@ class MainDock(QgsDockWidget):
         path = self.ask_open_path()
         if not path:
             return
+        started = False
         try:
             differences = ", ".join(self.controller.scenario_differences(path))
             if differences:
@@ -606,10 +607,14 @@ class MainDock(QgsDockWidget):
                                                                        differences=differences))
                 if choice is None or (choice == "scenario" and not self._start_on_file(source)):
                     return
+                started = choice == "scenario"
             self.stop_tools()
             self.controller.open_scenario(path)
         except ScenarioError as error:
-            self._show_message(Qgis.MessageLevel.Warning, str(error))
+            text = str(error)
+            if started and text == SCENARIO_NOT_APPLIED:
+                text = SCENARIO_NOT_APPLIED_ON_ITS_DEM   # starting on its DEM already closed the features' session
+            self._show_message(Qgis.MessageLevel.Warning, text)
             return
         self._show_message(Qgis.MessageLevel.Success, SCENARIO_OPENED.format(path))
 

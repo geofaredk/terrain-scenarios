@@ -275,5 +275,7 @@ FILES_NOT_RESTORED = ("Terrain Sketch could not put the rasters in {folder} back
                       "they may show changes that were not saved.")
 SCENARIO_NOT_APPLIED = ("The scenario could not be applied to this DEM, so it was not opened. "
                         "Your current features are unchanged.")
+SCENARIO_NOT_APPLIED_ON_ITS_DEM = ("The scenario could not be applied to its DEM, so it was not opened. "
+                                   "Terrain Sketch has started on that DEM without any features.")
 UNSAVED_BEFORE_CLOSING = ("Terrain Sketch is closing this scenario, and it has changes that are not "
                           "saved. Save them now?")

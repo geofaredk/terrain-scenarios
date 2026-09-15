@@ -166,8 +166,10 @@ def test_new_and_open_change_nothing_when_the_rasters_cannot_leave_the_scenarios
     c.new_scenario()
     assert len(c.features) == 1 and c.scenario_path == path
     assert heard and heard[-1] == FILES_NOT_RELEASED.format(folder=str(tmp_path / "flood_files"))
-    with pytest.raises(ScenarioError):
+    told = len(heard)
+    with pytest.raises(ScenarioError, match="could not move"):
         c.open_scenario(path)
+    assert len(heard) == told                                          # the panel shows the error: said once
     assert read_tif(tmp_path / "flood_files" / "working_dem.tif")[0][19, 20] == 11.0
 
 
@@ -200,3 +202,43 @@ def test_opening_a_scenario_on_another_dem_leaves_its_rasters_as_saved(tmp_path)
         c.close()                                                     # without saving
         saved, _ = read_tif(tmp_path / "flood_files" / "working_dem.tif")
         assert saved.shape == (40, 40) and saved[19, 20] == 11.0, name
+
+
+def test_a_session_on_a_scenarios_working_dem_never_writes_over_its_own_dem(tmp_path):
+    """A reopened QGIS project shows the Modified DEM layer, which reads `flood_files/working_dem.tif`, and
+    nothing stops a user from starting on it. Save as `flood.gpkg` would then move the rasters over that DEM."""
+    from qgis.core import QgsRasterLayer
+    from terrain_sketch.gui.help_texts import FILES_ARE_THE_DEM
+    c = start_session(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.save_scenario(str(tmp_path / "flood.gpkg"))
+    c.close()
+    dem = str(tmp_path / "flood_files" / "working_dem.tif")
+    layer = QgsRasterLayer(dem, "Modified DEM")
+    QgsProject.instance().addMapLayer(layer)
+    c.set_dem(layer)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    heard = []
+    c.message.connect(lambda _level, text: heard.append(text))
+    c.save_scenario(str(tmp_path / "flood.gpkg"))
+    assert read_tif(dem)[0][19, 20] == 11.0                            # the DEM under the session is unchanged
+    assert not c.files.folder.startswith(str(tmp_path))
+    assert heard == [FILES_ARE_THE_DEM.format(folder=str(tmp_path / "flood_files"))]
+
+
+def test_when_neither_the_new_nor_a_temp_folder_can_be_written_the_message_says_where_the_rasters_are(
+        tmp_path, monkeypatch):
+    from terrain_sketch.gui.help_texts import FILES_KEPT_IN_OLD_FOLDER
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.save_scenario(str(tmp_path / "first.gpkg"))
+    heard = []
+    c.message.connect(lambda _level, text: heard.append(text))
+    monkeypatch.setattr(WorkingFiles, "move_to", lambda self, folder: (_ for _ in ()).throw(OSError("no room")))
+    c.save_scenario(str(tmp_path / "second.gpkg"))
+    first = str(tmp_path / "first_files")
+    assert c.files.folder == first
+    assert heard == [FILES_KEPT_IN_OLD_FOLDER.format(folder=str(tmp_path / "second_files"), old_folder=first)]
+    c.update_feature(dike.id, amount=4.0)
+    c.close()                                                          # and they are put back, as it says
+    assert read_tif(tmp_path / "first_files" / "working_dem.tif")[0][19, 20] == 11.0

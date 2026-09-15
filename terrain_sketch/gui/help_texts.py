@@ -261,6 +261,12 @@ SCENARIO_OTHER_DEM = ("This scenario was made on {dem}, which differs from the D
                       "\n\nStart on {dem} and open the scenario there? Your current DEM stays in the project.")
 FILES_NOT_MOVED = ("Terrain Sketch could not put its working rasters in {folder} ({error}), so a QGIS project "
                    "saved now will not find them next time. They are kept in a temporary folder meanwhile.")
+FILES_ARE_THE_DEM = ("Terrain Sketch did not put its working rasters in {folder}: this session's DEM is one of "
+                     "the files there, and your DEM is never changed. They are kept in a temporary folder "
+                     "meanwhile, so a QGIS project saved now will not find them next time.")
+FILES_KEPT_IN_OLD_FOLDER = ("Terrain Sketch could not put its working rasters in {folder}, nor in a temporary "
+                            "folder, so they stay in {old_folder} until this session ends. That folder is put "
+                            "back to its saved scenario then.")
 FILES_NOT_RELEASED = ("Terrain Sketch could not move its working rasters out of {folder}, where the next features "
                       "would have been written over the saved scenario's, so nothing was changed.")
 FILES_NOT_RESTORED = ("Terrain Sketch could not put the rasters in {folder} back to the saved scenario ({error}); "

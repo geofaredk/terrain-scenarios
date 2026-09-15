@@ -205,6 +205,7 @@ class MainDock(QgsDockWidget):
         self.iface.mapCanvas().mapToolSet.connect(self._map_tool_set)
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_radius_units)
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_overlay_transform)
+        self.iface.mapCanvas().destinationCrsChanged.connect(self._refresh_highlight)   # drawn in the map's CRS
         controller.featuresChanged.connect(self._refresh_highlight)
         controller.featuresChanged.connect(self._drop_missing_brush_target)
         controller.featuresChanged.connect(self._sync_selection_page)

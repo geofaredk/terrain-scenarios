@@ -148,3 +148,25 @@ def test_selecting_another_feature_ends_the_section_line_drawing(tmp_path):
     assert dock.draw_tool is None and iface.mapCanvas().mapTool() is not tool
     tool.finished.emit(line_through(20, 28, 35, 28))                # a click that was already on its way
     assert c.find(first.id).section_line is None and c.find(second.id).section_line is None
+
+
+def test_the_outline_and_the_section_line_follow_the_map_into_another_crs(tmp_path):
+    iface, c, _profiles, dock = panels(tmp_path)
+    canvas = iface.mapCanvas()
+    web = QgsCoordinateReferenceSystem("EPSG:3857")
+    canvas.setDestinationCrs(web)
+    pond, _dike = pond_and_dike(c)
+    dock.feature_view.select_id(pond.id)
+
+    def in_crs(wkb, crs):
+        geometry = from_wkb(wkb)
+        if crs != UTM:
+            geometry.transform(QgsCoordinateTransform(UTM, crs, QgsProject.instance()))
+        return geometry
+
+    for crs in (web, UTM, web):
+        canvas.setDestinationCrs(crs)
+        band, outline = dock.section_band.asGeometry(), dock.highlight.asGeometry()
+        assert band.vertexAt(0).x() == pytest.approx(in_crs(c.section_line(pond.id), crs).vertexAt(0).x(), abs=0.01)
+        assert outline.boundingBox().xMinimum() == pytest.approx(
+            in_crs(c.find(pond.id).geometry_wkb, crs).boundingBox().xMinimum(), abs=0.01)

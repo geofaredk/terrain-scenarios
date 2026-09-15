@@ -1,5 +1,5 @@
 from qgis.core import QgsSettings
-from qgis.PyQt.QtWidgets import QPushButton, QSplitter
+from qgis.PyQt.QtWidgets import QApplication, QPushButton, QSplitter
 
 from terrain_sketch.gui import settings
 
@@ -63,3 +63,87 @@ def test_a_deleted_widget_does_not_raise():
 def test_a_corrupt_stored_value_does_not_raise():
     settings.save("probe_bad/state", "not a byte array")
     assert not settings.restore_state("probe_bad", QSplitter())
+
+
+def test_a_collapsed_group_is_remembered_under_the_plugin_group(tmp_path):
+    """QgsCollapsibleGroupBox saves under its own key otherwise, which the plugin cannot clear and
+    which leaked a collapsed About box from one test into the next."""
+    from qgis_helpers import start_session
+    from terrain_sketch.gui.properties_page import PropertiesPage
+    stored = QgsSettings()
+    for key in stored.allKeys():
+        if key.startswith("QgsCollapsibleGroupBox/") and "TerrainSketch" in key:
+            stored.remove(key)                     # left in the shared test profile by earlier versions
+    c = start_session(tmp_path)
+    page = PropertiesPage(c)
+    page.show()                                    # a box that is not shown does not report a collapse
+    assert not page.about.isCollapsed()
+    page.about.setCollapsed(True)
+    assert settings.load("about_group/collapsed", False, bool)
+    assert not [key for key in QgsSettings().allKeys() if key.startswith("QgsCollapsibleGroupBox/")
+                and "TerrainSketch" in key]
+    again = PropertiesPage(c)
+    again.show()                                   # a box that saved its own state would load it here
+    assert again.about.isCollapsed() and not again.volumes.isCollapsed()
+
+
+def window_with(dock, area):
+    from qgis.PyQt.QtWidgets import QMainWindow, QTextEdit
+    window = QMainWindow()
+    window.setCentralWidget(QTextEdit())
+    window.resize(1000, 700)
+    window.addDockWidget(area, dock)
+    window.show()
+    return window
+
+
+def test_a_docked_panel_comes_back_in_its_area_at_its_width():
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtWidgets import QDockWidget, QTextEdit
+    first = QDockWidget("Terrain Sketch")
+    first.setWidget(QTextEdit())
+    window = window_with(first, Qt.DockWidgetArea.LeftDockWidgetArea)
+    window.resizeDocks([first], [340], Qt.Orientation.Horizontal)
+    QApplication.processEvents()
+    settings.save_dock("probe_dock", first, window)
+
+    second = QDockWidget("Terrain Sketch")
+    second.setWidget(QTextEdit())
+    area = settings.dock_area("probe_dock", Qt.DockWidgetArea.RightDockWidgetArea)
+    assert area == Qt.DockWidgetArea.LeftDockWidgetArea
+    other = window_with(second, area)
+    settings.restore_dock("probe_dock", second, other)
+    QApplication.processEvents()
+    assert abs(second.width() - first.width()) <= 2
+
+
+def test_a_floating_panel_comes_back_floating_where_it_was():
+    from qgis.PyQt.QtCore import QRect, Qt
+    from qgis.PyQt.QtWidgets import QDockWidget, QTextEdit
+    first = QDockWidget("Profiles")
+    first.setWidget(QTextEdit())
+    window = window_with(first, Qt.DockWidgetArea.BottomDockWidgetArea)
+    first.setFloating(True)
+    first.setGeometry(QRect(120, 140, 500, 260))
+    QApplication.processEvents()
+    settings.save_dock("probe_float", first, window)
+
+    second = QDockWidget("Profiles")
+    second.setWidget(QTextEdit())
+    other = window_with(second, settings.dock_area("probe_float", Qt.DockWidgetArea.BottomDockWidgetArea))
+    settings.restore_dock("probe_float", second, other)
+    QApplication.processEvents()
+    assert second.isFloating() and second.size() == first.size()
+
+
+def test_a_panel_being_removed_or_never_placed_keeps_what_was_stored():
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtWidgets import QDockWidget, QMainWindow
+    area = Qt.DockWidgetArea
+    settings.save("probe_kept/area", int(area.TopDockWidgetArea.value))
+    settings.save_dock("probe_kept", QDockWidget(), QMainWindow())      # in no area of that window
+    assert settings.dock_area("probe_kept", area.RightDockWidgetArea) == area.TopDockWidgetArea
+    settings.save("probe_junk/area", "somewhere")
+    assert settings.dock_area("probe_junk", area.RightDockWidgetArea) == area.RightDockWidgetArea
+    settings.save("probe_none/area", 0)                                 # NoDockWidgetArea
+    assert settings.dock_area("probe_none", area.BottomDockWidgetArea) == area.BottomDockWidgetArea

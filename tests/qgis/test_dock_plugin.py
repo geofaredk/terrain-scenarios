@@ -338,3 +338,21 @@ def test_without_a_session_the_overlay_has_no_transform(tmp_path):
     assert dock.overlay.crs_transform is not None
     controller.close()
     assert dock.overlay.crs_transform is None
+
+
+def test_the_panels_open_where_they_were_left_and_unloading_remembers_it(tmp_path):
+    from terrain_sketch.gui import settings
+    iface = fake_iface()
+    window = iface.mainWindow()
+    iface.addDockWidget.side_effect = window.addDockWidget          # a real window, as in QGIS
+    settings.save("main_dock/area", int(Qt.DockWidgetArea.LeftDockWidgetArea.value))
+    plugin = classFactory(iface)
+    plugin.initGui()
+    plugin.action.setChecked(True)
+    assert iface.addDockWidget.call_args_list[0][0] == (Qt.DockWidgetArea.LeftDockWidgetArea, plugin.dock)
+    assert window.dockWidgetArea(plugin.profiles) == Qt.DockWidgetArea.BottomDockWidgetArea   # the default
+    window.addDockWidget(Qt.DockWidgetArea.TopDockWidgetArea, plugin.profiles)   # the user moves it
+    plugin.unload()
+    area = Qt.DockWidgetArea
+    assert settings.dock_area("profile_dock", area.BottomDockWidgetArea) == area.TopDockWidgetArea
+    assert settings.dock_area("main_dock", area.RightDockWidgetArea) == area.LeftDockWidgetArea

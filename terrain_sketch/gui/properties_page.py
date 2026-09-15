@@ -11,7 +11,7 @@ from qgis.PyQt.QtWidgets import QComboBox, QFormLayout, QLabel, QVBoxLayout, QWi
 
 from ..core.sections import supports_long_profile
 from ..core.tools import TOOL_INFO, Mode, PixelMode, reports_storage
-from . import illustrations
+from . import illustrations, settings
 from .controller import LOG_TAG
 from .help_texts import (AMOUNT_IS_CUSTOM, FIELD_TIPS, FLAG_TEXTS, NO_VOLUME_YET, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS,
                          SCENARIO_TOTALS, TOOL_DESCRIPTIONS, TOOL_EXAMPLES, TOOL_LABELS, TOOL_SUMMARIES,
@@ -72,7 +72,8 @@ class PropertiesPage(QWidget):
         self.form.addRow(self.tr("Slopes"), self.slope_position)
         self.form.addRow(self.tr("Pixels to change"), self.pixel_mode)
         self.about = QgsCollapsibleGroupBox(self.tr("About this tool"))
-        self.about.setObjectName("TerrainSketchAboutTool")  # QgsCollapsibleGroupBox saves state by name
+        self.about.setObjectName("TerrainSketchAboutTool")
+        settings.remember_collapsed("about_group", self.about)
         self.about_text = QLabel()
         self.about_text.setWordWrap(True)
         self.about_picture = QLabel()
@@ -88,6 +89,7 @@ class PropertiesPage(QWidget):
 
         self.volumes = QgsCollapsibleGroupBox(self.tr("Volumes"))
         self.volumes.setObjectName("TerrainSketchVolumes")
+        settings.remember_collapsed("volumes_group", self.volumes)
         self.fill_value = QLabel()
         self.fill_value.setWordWrap(True)
         self.fill_value.setToolTip(VOLUME_FILL_TIP)

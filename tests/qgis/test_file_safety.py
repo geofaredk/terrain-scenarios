@@ -138,3 +138,36 @@ def test_a_layer_group_that_fails_half_way_is_removed_again(tmp_path):
     assert not project.mapLayersByName("Sketch outlines") and not project.mapLayersByName("Modified DEM")
     assert project.mapLayer(dem.id()) is not None       # the user's DEM is untouched
     assert not c.has_dem
+
+
+def test_working_files_failing_in_an_unexpected_way_leave_no_folder_behind(tmp_path, monkeypatch):
+    import tempfile
+    made = []
+    real = tempfile.mkdtemp
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda **kw: made.append(real(**kw)) or made[-1])
+    c = SketchController(QgsProject.instance())
+    dem = dem_layer(tmp_path)
+    with mock.patch.object(controller_module, "WorkingFiles", side_effect=ValueError("a GDAL surprise")):
+        with pytest.raises(DemError):
+            c.set_dem(dem)
+    assert made and not os.path.exists(made[0])
+
+
+def test_a_start_that_fails_leaves_the_running_session_as_it_was(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    folder, working = c.files.folder, c.layers.working_id
+    (tmp_path / "geographic").mkdir()
+    with pytest.raises(DemError):
+        c.set_dem(dem_layer(tmp_path / "geographic", name="lat_lon", crs="EPSG:4326",
+                            gt=(9.0, 0.001, 0.0, 55.7, 0.0, -0.001)))
+    assert c.has_dem and [f.id for f in c.features] == [dike.id]
+    assert os.path.isdir(folder) and QgsProject.instance().mapLayer(working) is not None
+
+
+def test_shutting_a_controller_down_twice_is_safe(tmp_path):
+    c = start_session(tmp_path)
+    c.shutdown()
+    c.shutdown()
+    QgsProject.instance().clear()          # no longer listening, so nothing of it runs
+    assert not c.has_dem

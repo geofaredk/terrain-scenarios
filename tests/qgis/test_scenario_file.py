@@ -92,6 +92,9 @@ def test_a_different_dem_is_reported_as_specific_differences():
     assert same.differences(same) == []
     other = ScenarioMeta(dem_crs="EPSG:4326", dem_size="80x80", dem_pixel_size="1.0,1.0")
     assert set(same.differences(other)) == {"coordinate system", "size in pixels"}
+    every = ScenarioMeta(dem_crs="EPSG:25832", dem_size="40x40", dem_pixel_size="1.0,1.0", dem_extent="0,0,40,40")
+    moved = ScenarioMeta(dem_crs="EPSG:3035", dem_size="20x20", dem_pixel_size="2.0,2.0", dem_extent="5,5,45,45")
+    assert every.differences(moved) == ["coordinate system", "size in pixels", "pixel size", "extent"]
 
 
 def test_metadata_a_file_does_not_carry_is_not_reported_as_a_difference():

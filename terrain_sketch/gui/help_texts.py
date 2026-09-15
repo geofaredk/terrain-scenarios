@@ -80,6 +80,8 @@ EXPORT_DONE = "Exported the modified DEM to {}"
 EXPORT_INTEGER_NOTE = ("Your DEM stores whole numbers; the export keeps decimals (32-bit float), so changes "
                        "smaller than a metre are not rounded away.")
 EXPORT_NOT_ADDED = "The exported DEM could not be added to the project: {} cannot be read as a raster."
+EXPORT_ADD_FAILED = ("The exported DEM {} could not be added to the project; see the 'Terrain Sketch' log tab "
+                     "for details.")
 
 # What Undo and Redo will do, shown as "Undo Add Dike 1" in their buttons' tooltips.
 UNDO_ADD = "Add {}"

@@ -18,7 +18,7 @@ from ..qgis_io.raster_io import DemError, GeographicDemError
 from ..qgis_io.scenario import ScenarioError
 from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
-from .help_texts import (EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED, EXPORT_REPLACE,
+from .help_texts import (EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED, EXPORT_REPLACE,
                          REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_REPLACE,
                          SCENARIO_SAVED, SHAPE_NOT_TRANSFORMED, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES,
                          VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
@@ -62,6 +62,11 @@ def _action_button(action) -> QToolButton:
 def _has_text_history(spin, redo: bool) -> bool:
     edit = spin.lineEdit()
     return edit.isRedoAvailable() if redo else edit.isUndoAvailable()
+
+
+def _same_source(source: str, path: str) -> bool:
+    """Whether a layer reads the file at `path` (a raster layer's source is its file path)."""
+    return os.path.normcase(os.path.realpath(source)) == os.path.normcase(os.path.realpath(path))
 
 
 class MainDock(QgsDockWidget):
@@ -135,11 +140,9 @@ class MainDock(QgsDockWidget):
         self.toolbar.addWidget(self.undo_button)
         self.toolbar.addWidget(self.redo_button)
         self.toolbar.addSeparator()
-        self.export_button = QToolButton()
-        self.export_button.setIcon(QgsApplication.getThemeIcon("/mActionSharingExport.svg"))
-        self.export_button.setText(self.tr("Export DEM…"))
-        self.export_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.export_button.setToolTip(self.tr("Write the modified DEM to a new GeoTIFF, e.g. for a flood simulation."))
+        self.export_button = _file_button(
+            "/mActionSharingExport.svg", self.tr("Export DEM…"),
+            self.tr("Write the modified DEM to a new GeoTIFF, e.g. for a flood simulation."))
         self.toolbar.addWidget(self.export_button)
         self.view_3d_button = _file_button("/3d.svg", self.tr("3D view"), VIEW_3D_TIP)
         self.toolbar.addWidget(self.view_3d_button)
@@ -246,6 +249,7 @@ class MainDock(QgsDockWidget):
         self.overlay.dispose()
         self.highlight.reset(Qgis.GeometryType.Line)
         self.iface.mapCanvas().scene().removeItem(self.highlight)
+        # The filters on the panels are this dock's children and go with it; the canvas outlives the plugin
         self.iface.mapCanvas().removeEventFilter(self.canvas_undo_keys)
 
     def _release_tool(self, tool) -> None:
@@ -598,18 +602,21 @@ class MainDock(QgsDockWidget):
 
     def _add_export(self, path: str, button=None) -> None:
         """Add the exported GeoTIFF as a layer. Runs from the message's button, so a file that has
-        since been moved or deleted becomes a message."""
+        since been moved or deleted becomes a message. A file already in the project — added from an
+        earlier message about the same path — is not added a second time."""
         try:
-            layer = QgsRasterLayer(path, os.path.splitext(os.path.basename(path))[0])
-            if not layer.isValid():
-                self._show_message(Qgis.MessageLevel.Warning, EXPORT_NOT_ADDED.format(path))
-                return
-            QgsProject.instance().addMapLayer(layer)
+            project = QgsProject.instance()
+            if not any(_same_source(layer.source(), path) for layer in project.mapLayers().values()):
+                layer = QgsRasterLayer(path, os.path.splitext(os.path.basename(path))[0])
+                if not layer.isValid():
+                    self._show_message(Qgis.MessageLevel.Warning, EXPORT_NOT_ADDED.format(path))
+                    return
+                project.addMapLayer(layer)
             if button is not None and not sip.isdeleted(button):
-                button.setEnabled(False)       # once is enough; a second click would add a duplicate
+                button.setEnabled(False)       # once is enough
         except Exception:  # noqa: BLE001
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-            self._show_message(Qgis.MessageLevel.Warning, EXPORT_NOT_ADDED.format(path))
+            self._show_message(Qgis.MessageLevel.Warning, EXPORT_ADD_FAILED.format(path))
 
     def _open_3d_view(self) -> None:
         """The modified DEM as the project's terrain, then a new 3D view (spec §8.5): through the

@@ -126,7 +126,7 @@ class SketchController(QObject):
         folder = tempfile.mkdtemp(prefix="terrain_sketch_")
         try:
             files = WorkingFiles(folder, grid, info)
-        except (OSError, RuntimeError, MemoryError) as error:
+        except Exception as error:  # noqa: BLE001 — whatever went wrong, the new folder must not stay behind
             shutil.rmtree(folder, ignore_errors=True)
             raise DemError(f"Terrain Sketch could not create its working files: {error}") from error
         self.close()
@@ -157,11 +157,16 @@ class SketchController(QObject):
         self._drop_session()
 
     def shutdown(self) -> None:
-        """Close the session and stop listening to the project (plugin unload)."""
+        """Close the session and stop listening to the project (plugin unload). Safe to call twice:
+        the test suite shuts down every controller a test made, including ones the test already shut down."""
         self.close()
-        self.project.layersRemoved.disconnect(self._on_layers_removed)
-        self.project.cleared.disconnect(self._drop_session)
-        self.project.aboutToBeCleared.disconnect(self._drop_session)
+        for signal, slot in ((self.project.layersRemoved, self._on_layers_removed),
+                             (self.project.cleared, self._drop_session),
+                             (self.project.aboutToBeCleared, self._drop_session)):
+            try:
+                signal.disconnect(slot)
+            except TypeError:       # already disconnected
+                pass
 
     def add_drawn(self, tool: Tool, mode: Mode, geometry: QgsGeometry, crs, name: str | None = None) -> TerrainFeature | None:
         """Turn a drawn geometry (in `crs`) into a new feature with default values. Returns None,
@@ -246,17 +251,20 @@ class SketchController(QObject):
             self._commit([f for f in self._features if f.id != fid], UNDO_DELETE.format(feature.name))
 
     def duplicate_feature(self, fid: str) -> TerrainFeature | None:
-        """A copy of the feature, with every setting and profile, placed right after it in the list.
-        It starts turned off: most tools measure from the terrain beneath them, so an identical copy
-        on top would not be a copy at all — a raised path would come out twice as high. The user
-        moves or reshapes it, then ticks it on. None when the feature no longer exists."""
+        """A copy of the feature, with every setting and profile, placed right after it in the list —
+        after any copies already made of it, so they stay in the order they were made. It starts
+        turned off: most tools measure from the terrain beneath them, so an identical copy on top
+        would not be a copy at all — a raised path would come out twice as high. The user moves or
+        reshapes it, then ticks it on. None when the feature no longer exists."""
         feature = self.find(fid)
         if feature is None:
             return None
-        copy = replace(feature, id=uuid.uuid4().hex, name=self._unique(COPY_NAME.format(feature.name)),
-                       enabled=False)
-        index = self._features.index(feature)
-        features = [*self._features[:index + 1], copy, *self._features[index + 1:]]
+        copy_name = COPY_NAME.format(feature.name)
+        copy = replace(feature, id=uuid.uuid4().hex, name=self._unique(copy_name), enabled=False)
+        index = self._features.index(feature) + 1
+        while index < len(self._features) and self._features[index].name.startswith(copy_name):
+            index += 1
+        features = [*self._features[:index], copy, *self._features[index:]]
         if not self._commit(features, UNDO_DUPLICATE.format(feature.name)):
             return None
         return copy
@@ -361,11 +369,10 @@ class SketchController(QObject):
         """Write the scenario to `path`. Raises ScenarioError with a message for the user."""
         if not self.has_dem:
             raise ScenarioError(NO_SESSION)
-        created = self._created if path == self._scenario_path else ""
+        created = self._created if _same_file(path, self._scenario_path) else ""
         meta = scenario.dem_meta(self.info, self.stack.original, version=plugin_version(), created=created)
         written = scenario.save(path, self._features, meta, crs_wkt=getattr(self.info, "crs_wkt", ""))
-        self._scenario_path = path
-        self._created = written.created
+        self._mark_scenario(path, written.created)
         self.undo_stack.setClean()
         self.sessionChanged.emit()
 
@@ -386,10 +393,14 @@ class SketchController(QObject):
         features, meta = scenario.load(path)
         if not self._set(features):
             raise ScenarioError(SCENARIO_NOT_APPLIED)
-        self._scenario_path = path
-        self._created = meta.created
         self.undo_stack.clear()   # the history belonged to the features that were just replaced
+        self._mark_scenario(path, meta.created)
         self.sessionChanged.emit()
+
+    def _mark_scenario(self, path: str, created: str) -> None:
+        """The features now belong to the scenario file at `path`, first saved at `created`."""
+        self._scenario_path = path
+        self._created = created
 
     def _forget_scenario(self) -> None:
         self._scenario_path = None
@@ -570,6 +581,14 @@ class SketchController(QObject):
             self.message.emit(Qgis.MessageLevel.Warning, SESSION_ENDED_DEM_REMOVED)
         elif ids & set(self.layers.layer_ids):
             self.message.emit(Qgis.MessageLevel.Info, RESULT_LAYER_REMOVED)
+
+
+def _same_file(path: str, other: str | None) -> bool:
+    """Whether two spellings of a path name one file — "flood.gpkg" typed again from another folder,
+    say — so a save back to the scenario's own file keeps the date it was first created."""
+    if other is None:
+        return False
+    return os.path.normcase(os.path.realpath(path)) == os.path.normcase(os.path.realpath(other))
 
 
 PROFILE_FIELDS = frozenset({"cross_left", "cross_right", "long_profile"})

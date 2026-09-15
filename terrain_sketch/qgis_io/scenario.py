@@ -171,29 +171,28 @@ def _discard_partial(source, partial: str) -> None:
 
 def load(path: str) -> tuple[list[TerrainFeature], ScenarioMeta]:
     """Read a scenario back. Raises ScenarioError for anything unreadable."""
-    source = None
-    try:
-        source, layer = _open(path)
+    def read(source, layer):
         rows = sorted((_from_ogr(f) for f in layer), key=lambda pair: pair[0])
         return [feature for _order, feature in rows], _read_meta(source)
-    except ScenarioError:
-        raise
-    except Exception as error:  # noqa: BLE001
-        raise ScenarioError(f"Terrain Sketch could not read the scenario: {error}") from error
-    finally:
-        _close(source)
+    return _reading(path, read)
 
 
 def load_meta(path: str) -> ScenarioMeta:
     """Only the metadata, to compare DEMs before deciding whether to load. Raises ScenarioError
     for a file that is not a readable scenario, exactly as `load` would."""
+    return _reading(path, lambda source, _layer: _read_meta(source))
+
+
+def _reading(path: str, read):
+    """`read(source, layer)` on the scenario at `path`, with the handle closed afterwards and any
+    failure turned into a ScenarioError the user can read."""
     source = None
     try:
-        source, _layer = _open(path)
-        return _read_meta(source)
+        source, layer = _open(path)
+        return read(source, layer)
     except ScenarioError:
         raise
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:  # noqa: BLE001 — GDAL raises many types; the user gets one message
         raise ScenarioError(f"Terrain Sketch could not read the scenario: {error}") from error
     finally:
         _close(source)

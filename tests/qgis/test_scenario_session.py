@@ -83,6 +83,18 @@ def test_saving_again_keeps_the_date_the_scenario_was_created(tmp_path):
     assert second.modified > first.modified
 
 
+def test_saving_to_the_same_file_by_another_spelling_keeps_the_created_date(tmp_path):
+    c = start_session(tmp_path)
+    two_features(c)
+    (tmp_path / "elsewhere").mkdir()
+    c.save_scenario(str(tmp_path / "dated.gpkg"))
+    first = load_meta(str(tmp_path / "dated.gpkg"))
+    time.sleep(1.1)                                                  # timestamps are to the second
+    c.update_feature(c.features[0].id, amount=2.2)
+    c.save_scenario(str(tmp_path / "elsewhere" / ".." / "dated.gpkg"))
+    assert load_meta(str(tmp_path / "dated.gpkg")).created == first.created
+
+
 def test_a_scenario_that_cannot_be_applied_changes_nothing(tmp_path):
     """`theirs.gpkg` is someone else's scenario, never opened by this session before — if
     `_scenario_path` were wrongly retargeted to it, the next Save would write over a file this

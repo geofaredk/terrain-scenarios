@@ -18,7 +18,7 @@ from qgis.PyQt.QtGui import QUndoStack
 
 from ..core.engine import FeatureStack
 from ..core.operations import FeatureStats
-from ..core.sections import long_section, rescale_long_profile
+from ..core.sections import default_section_line, long_section, rescale_long_profile, section_along
 from ..core.tools import Mode, Tool
 from ..model.feature import TerrainFeature, new_feature
 from ..qgis_io import scenario
@@ -57,6 +57,7 @@ class PreviewImage(NamedTuple):
 PREVIEW_INTERVAL = 60  # ms between preview recomputes while dragging (spec 8.3)
 
 EMPTY_SECTION = {"stations": (), "terrain": (), "design": (), "custom": False}
+EMPTY_AREA_SECTION = {"stations": (), "before": (), "after": (), "line": None}
 
 
 class SketchController(QObject):
@@ -313,6 +314,28 @@ class SketchController(QObject):
         except Exception:  # noqa: BLE001 — a profile panel must never take QGIS down
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
             return EMPTY_SECTION.copy()
+
+    def area_section(self, fid: str) -> dict:
+        """The terrain just before and just after an area feature along its section line (spec §5.4):
+        `{"stations", "before", "after", "line"}`, the line as WKB in the DEM CRS — the feature's own,
+        or the default one through its middle. Reached from a slot, so a failure is logged and
+        reported as an empty section, as for `long_section`."""
+        feature = self.find(fid)
+        if feature is None or not self.has_dem or feature.mode is not Mode.AREA:
+            return EMPTY_AREA_SECTION.copy()
+        try:
+            grid = self.stack.original
+            line = feature.section_line or default_section_line(feature, grid.cell_size)
+            if line is None:
+                return EMPTY_AREA_SECTION.copy()
+            around = self.stack.terrain_around(fid, _line_window(grid, line))
+            if around is None:
+                return EMPTY_AREA_SECTION.copy()
+            _window, before, after = around
+            return {**section_along(line, before, after), "line": line}
+        except Exception:  # noqa: BLE001 — a profile panel must never take QGIS down
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+            return EMPTY_AREA_SECTION.copy()
 
     def _run_preview(self) -> None:
         if self._pending is None:
@@ -581,6 +604,12 @@ class SketchController(QObject):
             self.message.emit(Qgis.MessageLevel.Warning, SESSION_ENDED_DEM_REMOVED)
         elif ids & set(self.layers.layer_ids):
             self.message.emit(Qgis.MessageLevel.Info, RESULT_LAYER_REMOVED)
+
+
+def _line_window(grid, line: bytes):
+    """The cells a section line crosses, so the terrain it samples is replayed along all of it."""
+    box = from_wkb(line).boundingBox()
+    return grid.window_for_bbox(box.xMinimum(), box.yMinimum(), box.xMaximum(), box.yMaximum(), 1)
 
 
 def _same_file(path: str, other: str | None) -> bool:

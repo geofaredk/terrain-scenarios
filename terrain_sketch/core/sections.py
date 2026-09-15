@@ -4,9 +4,13 @@ Pure geometry and sampling — the widgets draw what these return and hand back 
 """
 from __future__ import annotations
 
-import numpy as np
+import math
 
-from .geometry import is_line, line_coords, split_parts
+import numpy as np
+from osgeo import ogr
+from scipy.spatial import ConvexHull, QhullError
+
+from .geometry import is_line, line_coords, line_wkb, polygon_rings, split_parts
 from .grid import DemGrid
 from .operations import NoReferenceError, path_coords, rule_profile
 from .profiles import side_dz, side_limit
@@ -216,6 +220,57 @@ def long_section(feature, grid: DemGrid, terrain: DemGrid | None = None) -> dict
     except NoReferenceError:
         design = ()
     return {"stations": tuple(stations), "terrain": heights, "design": design, "custom": False}
+
+
+def default_section_line(feature, cell_size: float) -> bytes | None:
+    """The line an area's section runs along until the user draws one (spec §5.4): through the
+    centroid, along the longer side of the smallest rotated rectangle around the outline, and on past
+    the outline — beyond the reach of outside slopes — so the section shows the ground around it.
+    Runs west to east (or south to north). None for a path, or an outline too thin to have a longer side."""
+    parts = [p for p in split_parts(feature.geometry_wkb) if not is_line(p)] if feature.mode is Mode.AREA else []
+    if not parts:
+        return None
+    points = np.vstack([polygon_rings(p)[0] for p in parts])
+    try:
+        hull = points[ConvexHull(points).vertices]
+    except (QhullError, ValueError):
+        return None
+    along, best = None, None
+    for a, b in zip(hull, np.roll(hull, -1, axis=0)):
+        edge = b - a
+        size = float(np.hypot(*edge))
+        if size == 0.0:
+            continue
+        u = edge / size
+        v = np.array([-u[1], u[0]])
+        span_u, span_v = np.ptp(hull @ u), np.ptp(hull @ v)
+        if best is None or span_u * span_v < best:
+            best, along = span_u * span_v, (u if span_u >= span_v else v)
+    if along[0] < 0.0 or (along[0] == 0.0 and along[1] < 0.0):
+        along = -along
+    outline = ogr.CreateGeometryFromWkb(bytes(feature.geometry_wkb))
+    centre = np.array(outline.Centroid().GetPoints()[0][:2])
+    t = (points - centre) @ along
+    outside = TOOL_INFO[feature.tool].has_slopes and feature.slope_n > 0.0 and not feature.slopes_inside
+    margin = (feature.reach if outside else 0.0) + max(5.0 * cell_size, 0.1 * float(np.ptp(t)))
+    return line_wkb([centre + (t.min() - margin) * along, centre + (t.max() + margin) * along])
+
+
+def section_along(line: bytes, before: DemGrid, after: DemGrid) -> dict:
+    """Terrain before and after a feature along `line`: `{"stations", "before", "after"}`, stations in
+    metres from the line's start. Stations where either terrain is nodata or off the grid are left out."""
+    coords = line_coords(ogr.CreateGeometryFromWkb(bytes(line)))
+    empty = {"stations": (), "before": (), "after": ()}
+    if len(coords) < 2 or _length(coords) <= 0.0:
+        return empty
+    stations = np.linspace(0.0, _length(coords), SAMPLES)
+    xs, ys = _walk(coords, stations)
+    rows = [(float(s), before.sample(x, y), after.sample(x, y)) for s, x, y in zip(stations, xs, ys)]
+    rows = [row for row in rows if not (math.isnan(row[1]) or math.isnan(row[2]))]
+    if not rows:
+        return empty
+    out = tuple(zip(*rows))
+    return {"stations": out[0], "before": out[1], "after": out[2]}
 
 
 def _length(coords: np.ndarray) -> float:

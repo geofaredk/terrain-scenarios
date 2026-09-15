@@ -26,7 +26,8 @@ def two_features(c):
     pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
     c.update_feature(dike.id, amount=1.8, width=4.5, slope_n=2.5, reach=12.0,
                      cross_right=((3.0, -0.6),), long_profile=((0.0, 12.0), (29.0, 13.0)))
-    c.update_feature(pond.id, pixel_mode=PixelMode.ALL_TOUCHED, slopes_inside=True, enabled=False)
+    c.update_feature(pond.id, pixel_mode=PixelMode.ALL_TOUCHED, slopes_inside=True, enabled=False,
+                     section_line=line_through(8, 17, 27, 18).asWkb().data())
     return c.features
 
 
@@ -47,6 +48,8 @@ def test_a_scenario_round_trips_every_field(tmp_path):
         assert after.cross_left == before.cross_left and after.cross_right == before.cross_right
         assert after.long_profile == before.long_profile
         assert after.geometry_wkb == before.geometry_wkb
+        assert after.section_line == before.section_line
+    assert loaded[1].section_line is not None and loaded[0].section_line is None
 
 
 def test_the_saved_order_is_the_order_that_comes_back(tmp_path):

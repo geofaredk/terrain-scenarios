@@ -24,6 +24,7 @@ class TerrainFeature:
     cross_left: tuple = ()           # ((distance beyond corridor edge, dz), ...)
     cross_right: tuple = ()
     long_profile: tuple | None = None  # ((station, absolute z), ...); None = tool rule
+    section_line: bytes | None = None  # areas: WKB line the section runs along; None = the default line
 
     def __post_init__(self):
         if self.mode not in TOOL_INFO[self.tool].modes:
@@ -34,6 +35,8 @@ class TerrainFeature:
         object.__setattr__(self, "cross_right", _points(self.cross_right))
         if self.long_profile is not None:
             object.__setattr__(self, "long_profile", _points(self.long_profile))
+        if self.section_line is not None:
+            object.__setattr__(self, "section_line", bytes(self.section_line))
 
     def to_dict(self) -> dict:
         return {
@@ -52,6 +55,7 @@ class TerrainFeature:
             "cross_left": [list(p) for p in self.cross_left],
             "cross_right": [list(p) for p in self.cross_right],
             "long_profile": None if self.long_profile is None else [list(p) for p in self.long_profile],
+            "section_line": None if self.section_line is None else self.section_line.hex(),
         }
 
     @classmethod
@@ -72,6 +76,7 @@ class TerrainFeature:
             cross_left=_points(d.get("cross_left")),
             cross_right=_points(d.get("cross_right")),
             long_profile=None if d.get("long_profile") is None else _points(d["long_profile"]),
+            section_line=None if d.get("section_line") is None else bytes.fromhex(d["section_line"]),
         )
 
 

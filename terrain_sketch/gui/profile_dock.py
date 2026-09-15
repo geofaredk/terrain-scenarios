@@ -9,7 +9,7 @@ from qgis.PyQt.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPushButton, QS
 from ..core.sections import (cross_section, set_cross_section, set_whole_cross_section, supports_long_profile,
                              whole_cross_section)
 from ..core.tools import TOOL_INFO, Mode
-from .help_texts import (AREA_LONG_SECTION_HINT, AREA_LONG_SECTION_NOTE, CROSS_SIDES_TIP, CUSTOM_PROFILE_NOTE,
+from .help_texts import (AREA_SECTION_EMPTY_HINT, AREA_SECTION_NOTE, CROSS_SIDES_TIP, CUSTOM_PROFILE_NOTE,
                          MULTIPART_LONG_SECTION_NOTE, SYMMETRIC_TIP)
 from . import settings
 from .profile_widget import Kind, ProfileWidget
@@ -107,23 +107,34 @@ class ProfileDock(QgsDockWidget):
                                        allow_breaks=False)
             self.symmetric.setEnabled(info.has_slopes and is_path)
             self.reset_cross.setEnabled(info.has_slopes)
-            section = self.controller.long_section(self._fid)
             if feature.mode is Mode.AREA:
-                # There is no section through an area yet, so say so rather than paint an empty
-                # plot under a note promising one.
-                self.long.set_profile((), editable=False, hint=AREA_LONG_SECTION_HINT)
-                self.note.setText(AREA_LONG_SECTION_NOTE)
-            elif not supports_long_profile(feature):
-                # A multi-part path: the engine follows the tool rule whatever is stored here.
-                self.long.set_profile(section["design"], terrain=self._pairs(section),
-                                      editable=False)
-                self.note.setText(MULTIPART_LONG_SECTION_NOTE)
+                self._show_area_section()
             else:
-                self.long.set_profile(section["design"], terrain=self._pairs(section))
-                self.note.setText(CUSTOM_PROFILE_NOTE if section["custom"] else "")
-            self.reset_long.setEnabled(bool(section["custom"]))
+                self._show_long_section(feature)
         finally:
             self._loading = False
+
+    def _show_area_section(self) -> None:
+        """An area has no long profile; the right-hand panel shows a read-only section through it
+        instead, the ground before and after the feature (spec §5.4)."""
+        area = self.controller.area_section(self._fid)
+        self.long.set_profile(tuple(zip(area["stations"], area["after"])),
+                              terrain=tuple(zip(area["stations"], area["before"])), editable=False,
+                              hint=AREA_SECTION_EMPTY_HINT)
+        self.note.setText(AREA_SECTION_NOTE)
+        self.reset_long.setEnabled(False)
+
+    def _show_long_section(self, feature) -> None:
+        section = self.controller.long_section(self._fid)
+        if not supports_long_profile(feature):
+            # A multi-part path: the engine follows the tool rule whatever is stored here.
+            self.long.set_profile(section["design"], terrain=self._pairs(section),
+                                  editable=False)
+            self.note.setText(MULTIPART_LONG_SECTION_NOTE)
+        else:
+            self.long.set_profile(section["design"], terrain=self._pairs(section))
+            self.note.setText(CUSTOM_PROFILE_NOTE if section["custom"] else "")
+        self.reset_long.setEnabled(bool(section["custom"]))
 
     @staticmethod
     def _pairs(section) -> tuple:

@@ -1,11 +1,14 @@
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
 from helpers import feature, flat, make_grid, tilted
 from terrain_sketch.core.engine import FeatureStack
 from terrain_sketch.core.geometry import line_wkb, multi_wkb, polygon_wkb
-from terrain_sketch.core.sections import (cross_section, long_section, set_cross_section, set_whole_cross_section,
-                                          supports_long_profile, whole_cross_section)
+from terrain_sketch.core.sections import (cross_section, default_section_line, long_section, section_along,
+                                          set_cross_section, set_whole_cross_section, supports_long_profile,
+                                          whole_cross_section)
 from terrain_sketch.core.tools import Mode, Tool
 
 
@@ -301,3 +304,64 @@ def test_the_side_that_was_not_edited_does_not_change_the_shared_values():
     moved = list(whole_cross_section(odd))
     moved[0] = (moved[0][0] - 3.0, moved[0][1] - 1.0)
     assert set_whole_cross_section(odd, moved)["reach"] == pytest.approx(43.34765, abs=1e-4)
+
+
+def rotated_rectangle(length, breadth, degrees, centre=(20.0, 20.0)):
+    c, s = np.cos(np.radians(degrees)), np.sin(np.radians(degrees))
+    corners = [(-length / 2, -breadth / 2), (length / 2, -breadth / 2), (length / 2, breadth / 2),
+               (-length / 2, breadth / 2)]
+    return polygon_wkb([(centre[0] + x * c - y * s, centre[1] + x * s + y * c) for x, y in corners])
+
+
+def line_points(wkb):
+    from osgeo import ogr
+    return np.array(ogr.CreateGeometryFromWkb(wkb).GetPoints())[:, :2]
+
+
+def test_the_default_section_runs_through_the_middle_along_the_longer_side():
+    pond = feature(Tool.LOWER_FLAT, Mode.AREA, rotated_rectangle(20.0, 6.0, 30.0), slopes_inside=True)
+    start, end = line_points(default_section_line(pond, cell_size=1.0))
+    direction = (end - start) / np.hypot(*(end - start))
+    assert direction == pytest.approx([np.cos(np.radians(30.0)), np.sin(np.radians(30.0))])
+    assert (start + end) / 2 == pytest.approx([20.0, 20.0])                 # through the centroid
+    assert np.hypot(*(end - start)) == pytest.approx(20.0 + 2 * 5.0)         # past the outline by five cells
+
+
+def test_the_default_section_reaches_past_outside_slopes_and_runs_west_to_east():
+    pad = feature(Tool.RAISE_FLAT, Mode.AREA, rotated_rectangle(20.0, 6.0, 180.0), slope_n=2.0, reach=8.0)
+    start, end = line_points(default_section_line(pad, cell_size=1.0))
+    assert start[0] < end[0]
+    assert np.hypot(*(end - start)) == pytest.approx(20.0 + 2 * (8.0 + 5.0))
+
+
+def test_a_path_has_no_default_section_line():
+    assert default_section_line(dike(), cell_size=1.0) is None
+
+
+def test_a_section_samples_before_and_after_and_leaves_out_what_is_off_the_grid():
+    grid = make_grid(flat(10.0))
+    pond = feature(Tool.LOWER_FLAT, Mode.AREA, polygon_wkb([(10, 15), (30, 15), (30, 25), (10, 25)]),
+                   amount=2.0, slopes_inside=False, slope_n=0.0, id="pond")
+    stack = FeatureStack(grid)
+    stack.update([pond])
+    line = line_wkb([(-10.0, 20.0), (35.0, 20.0)])                          # starts 10 m off the west edge
+    _window, before, after = stack.terrain_around("pond", grid.window_for_bbox(0, 19, 35, 21))
+    section = section_along(line, before, after)
+    assert section["stations"][0] > 6.0                                      # the first metres are off the grid
+    assert set(np.round(section["before"], 6)) == {10.0}
+    assert min(section["after"]) == pytest.approx(8.0) and section["after"][-1] == pytest.approx(10.0)
+
+
+def test_terrain_around_a_feature_is_before_and_after_it_alone():
+    grid = make_grid(flat(10.0))
+    pad = feature(Tool.RAISE_FLAT, Mode.AREA, polygon_wkb([(5, 5), (35, 5), (35, 35), (5, 35)]),
+                  amount=1.0, slope_n=0.0, id="pad")
+    pond = feature(Tool.LOWER_FLAT, Mode.AREA, polygon_wkb([(15, 15), (25, 15), (25, 25), (15, 25)]),
+                   amount=3.0, slope_n=0.0, id="pond")
+    stack = FeatureStack(grid)
+    stack.update([pad, pond])
+    window, before, after = stack.terrain_around("pond")
+    assert np.array_equal(before.data, stack.terrain_before("pond")[1].data)
+    assert before.sample(20.0, 20.0) == pytest.approx(11.0) and after.sample(20.0, 20.0) == pytest.approx(8.0)
+    _w, before_off, after_off = stack.terrain_around("pond", features=[pad, replace(pond, enabled=False)])
+    assert np.array_equal(before_off.data, after_off.data)                   # a feature turned off changes nothing

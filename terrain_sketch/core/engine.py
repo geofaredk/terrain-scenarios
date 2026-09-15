@@ -88,6 +88,25 @@ class FeatureStack:
         """The terrain as it stands just before `feature_id` is applied, over that feature's
         own window. This is the reference a profile editor draws as its dashed line, and the
         `before` state volumes are measured against."""
+        replayed = self._replay_before(feature_id, features)
+        return None if replayed is None else replayed[:2]
+
+    def terrain_around(self, feature_id: str, window: Window | None = None,
+                       features=None) -> tuple[Window, DemGrid, DemGrid] | None:
+        """The terrain just before and just after `feature_id`, over its own window grown to take in
+        `window` too — an area's section line reaches past the feature to show the ground around it."""
+        replayed = self._replay_before(feature_id, features, window)
+        if replayed is None:
+            return None
+        window, before, target = replayed
+        after = before.copy()
+        if target.enabled:
+            apply_feature(target, after)
+        return window, before, after
+
+    def _replay_before(self, feature_id: str, features=None, extra: Window | None = None):
+        """(window, terrain just before the feature, the feature), or None when it is not in the list
+        or misses the grid."""
         features = tuple(self.features if features is None else features)
         target = next((f for f in features if f.id == feature_id), None)
         if target is None:
@@ -95,7 +114,7 @@ class FeatureStack:
         window = self.footprint(target)
         if window is None:
             return None
-        window, replay = self.closure(window, features)
+        window, replay = self.closure(window.union(extra) if extra is not None else window, features)
         grid = self.original.subgrid(window)
         # By list position, not by `replay` membership: a disabled target is not in `replay` at
         # all, and stopping at its id would then never fire and apply the whole stack — including
@@ -107,7 +126,7 @@ class FeatureStack:
                 break
             apply_feature(f, grid)
         self._prune_windows()
-        return window, grid
+        return window, grid, target
 
     def preview_for(self, feature_id: str, features) -> Preview | None:
         """Preview while one feature is being dragged.

@@ -116,10 +116,9 @@ def amount_label(tool: Tool) -> str | None:
 PROFILE_EMPTY_HINT = "Select or draw a feature to edit its shape here."
 CUSTOM_PROFILE_NOTE = ("Custom long profile: the heights are fixed and no longer follow the "
                        "terrain underneath. Use Reset to rule to go back.")
-AREA_LONG_SECTION_HINT = "A section through an area arrives in a later version."
-AREA_LONG_SECTION_NOTE = ("An area has no long profile to edit. A section through the feature "
-                          "arrives in a later version; until then, use the cross profile on the "
-                          "left to shape its sides.")
+AREA_SECTION_EMPTY_HINT = "There is no terrain to show along this feature's section line."
+AREA_SECTION_NOTE = ("A section straight through the area: dashed is the ground before this feature, solid is "
+                     "the result. Shape the sides with the cross profile on the left.")
 MULTIPART_LONG_SECTION_NOTE = ("This feature has more than one part, so its long profile follows "
                                "the tool rule and cannot be edited by hand. Use Height or Depth in "
                                "the panel above to drive its shape.")

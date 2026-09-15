@@ -4,8 +4,7 @@ from qgis.PyQt.QtGui import QMouseEvent
 
 from qgis_helpers import UTM, line_layer, line_through, sample, square, start_session
 from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.help_texts import (AREA_LONG_SECTION_HINT, AREA_LONG_SECTION_NOTE,
-                                           MULTIPART_LONG_SECTION_NOTE)
+from terrain_sketch.gui.help_texts import AREA_SECTION_EMPTY_HINT, AREA_SECTION_NOTE, MULTIPART_LONG_SECTION_NOTE
 from terrain_sketch.gui.profile_dock import ProfileDock
 
 
@@ -84,19 +83,23 @@ def test_editing_the_long_profile_makes_it_custom_and_reset_restores_the_rule(tm
     assert dock.note.text() == ""
 
 
-def test_an_area_feature_gets_a_read_only_long_panel(tmp_path):
+def test_an_area_feature_gets_a_read_only_section_through_it(tmp_path):
+    """Spec §5.4: before and after along a line through the middle of the area."""
     c = start_session(tmp_path)
-    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 12, 29, 22), UTM)   # 19 m by 10 m
+    c.update_feature(pond.id, amount=2.0, slope_n=0.0)                          # straight sides
     dock = ProfileDock(c)
     dock.show_feature(pond.id)
-    assert not dock.long.editable and not dock.symmetric.isEnabled()
-    # there is no section through an area yet, so the panel says so instead of painting nothing
-    assert dock.long.points == [] and dock.long.terrain == []
-    assert dock.long.hint == AREA_LONG_SECTION_HINT
-    assert dock.note.text() == AREA_LONG_SECTION_NOTE
-    # and it never tells a user to select a feature they have already selected
-    assert "Select or draw a feature" not in dock.long.hint
-    assert "read-only section through the feature" not in dock.note.text()
+    assert not dock.long.editable and not dock.symmetric.isEnabled() and not dock.reset_long.isEnabled()
+    assert dock.note.text() == AREA_SECTION_NOTE
+    before = [z for _s, z in dock.long.terrain]
+    after = [z for _s, z in dock.long.points]
+    assert len(before) == len(after) > 100
+    assert max(before) == pytest.approx(10.0) and min(after) == pytest.approx(8.0, abs=0.05)
+    assert after[0] == pytest.approx(10.0) and after[-1] == pytest.approx(10.0)   # it reaches past the outline
+    stations = [s for s, _z in dock.long.points]
+    assert stations[-1] - stations[0] > 19.0                    # along the longer side, west to east
+    assert dock.long.hint == AREA_SECTION_EMPTY_HINT            # what an empty section would say
 
 
 def two_part_dike(controller):
@@ -252,6 +255,17 @@ def test_the_symmetric_box_tells_the_plot_to_move_mirror_handles_together(tmp_pa
     assert dock.cross.symmetric
     dock.symmetric.setChecked(False)
     assert not dock.cross.symmetric
+
+
+def test_an_area_section_follows_the_features_own_line_and_a_path_has_none(tmp_path):
+    c = start_session(tmp_path)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 12, 29, 22), UTM)
+    own = line_through(20, 5, 20, 35).asWkb().data()                        # north to south, 30 m
+    c.update_feature(pond.id, section_line=own)
+    section = c.area_section(pond.id)
+    assert section["line"] == own and section["stations"][-1] == pytest.approx(30.0)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 35, 34, 35), UTM)
+    assert c.area_section(dike.id)["stations"] == () and c.area_section("gone")["line"] is None
 
 
 def test_the_cross_plot_explains_its_sides_only_for_a_path_it_can_edit(tmp_path):

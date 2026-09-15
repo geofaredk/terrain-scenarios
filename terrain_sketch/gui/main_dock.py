@@ -483,15 +483,12 @@ class MainDock(QgsDockWidget):
         """Undo or redo replaced the feature list underneath whatever the panel shows. A vertex
         edit or a brush stroke that extends a feature holds that feature's old outline and would
         put it straight back, so both stop; drawing a new feature does not depend on the list and
-        carries on. The Properties page reloads its fields, which otherwise keep the undone values.
+        carries on. (The Properties page follows every change on its own.)
         `_brush_extends`, not `_brush_fid`: an undo that removes the feature itself has already cleared
         the id (featuresChanged comes first), and the brush would then add the old outline as a new feature."""
         self.stop_editing()
         if self._brush_extends:
             self.end_drawing()
-        fid = self.feature_view.selected_id()
-        if self.pages.currentIndex() == PAGE_PROPERTIES and fid is not None and self.controller.find(fid) is not None:
-            self.properties.show_feature(fid)
 
     def _refresh_highlight(self) -> None:
         self._update_highlight(self.feature_view.selected_id())

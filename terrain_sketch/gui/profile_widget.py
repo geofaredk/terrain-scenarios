@@ -16,6 +16,7 @@ SHADE_ALPHA = 70        # the plot shades the same change as the map overlay, bu
 GRAB_PIXELS = 8
 HANDLE_RADIUS = 4
 NUDGE, NUDGE_FINE = 0.1, 0.01
+NUDGE_KEYS = (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right)
 
 
 class Kind(Enum):
@@ -27,8 +28,9 @@ class ProfileWidget(QWidget):
     """Draws the reference terrain, the design line and draggable handles.
 
     Dragging emits `profileChanged` continuously and `profileCommitted` on release, both with
-    the full point list. The widget owns no feature state: whoever drives it sets points and
-    applies the edits.
+    the full point list. The arrow keys work the same way: each press (and each auto-repeat while a
+    key is held) emits `profileChanged`, and letting go of the key commits once. The widget owns no
+    feature state: whoever drives it sets points and applies the edits.
     """
 
     profileChanged = pyqtSignal(object)     # ((x, z), ...) while dragging
@@ -46,6 +48,7 @@ class ProfileWidget(QWidget):
         self.selected = -1
         self._dragging = -1
         self._before: list | None = None
+        self._nudge_before: list | None = None   # the points before the arrow key now held
         self.setMinimumHeight(150)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -69,11 +72,13 @@ class ProfileWidget(QWidget):
         self.hint = hint
         self.selected = -1
         self._dragging = -1
+        self._nudge_before = None
         self.update()
 
     def clear(self, hint: str = PROFILE_EMPTY_HINT) -> None:
         self.points, self.terrain, self.hint, self.selected = [], [], hint, -1
         self._dragging, self._before = -1, None   # an undo can clear the plot under a drag
+        self._nudge_before = None
         self.update()
 
     def handle_at(self, position) -> int:
@@ -240,14 +245,34 @@ class ProfileWidget(QWidget):
         step = NUDGE_FINE if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else NUDGE
         deltas = {Qt.Key.Key_Up: (0.0, step), Qt.Key.Key_Down: (0.0, -step),
                   Qt.Key.Key_Left: (-step, 0.0), Qt.Key.Key_Right: (step, 0.0)}
-        if self.selected < 0 or not self.editable or event.key() not in deltas:
+        if not 0 <= self.selected < len(self.points) or not self.editable or event.key() not in deltas:
             event.ignore()
             return
+        if self._nudge_before is None:
+            self._nudge_before = list(self.points)
         dx, dz = deltas[event.key()]
         x, z = self.points[self.selected]
         self._move_handle(self.selected, (x + dx, z + dz))
-        self.profileCommitted.emit(tuple(self.points))
+        self.profileChanged.emit(tuple(self.points))
         event.accept()
+
+    def keyReleaseEvent(self, event):  # noqa: N802 — Qt override
+        """Commit a nudge when its key is let go. A held key sends a release with every auto-repeat
+        too, so those are skipped: a second of holding Up is one change, not thirty."""
+        if event.key() not in NUDGE_KEYS or event.isAutoRepeat():
+            event.ignore()
+            return
+        self._commit_nudge()
+        event.accept()
+
+    def focusOutEvent(self, event):  # noqa: N802 — Qt override
+        self._commit_nudge()   # the release never comes to a plot that lost focus while a key was held
+        super().focusOutEvent(event)
+
+    def _commit_nudge(self) -> None:
+        before, self._nudge_before = self._nudge_before, None
+        if before is not None and before != self.points:
+            self.profileCommitted.emit(tuple(self.points))
 
     def _move_handle(self, index: int, position) -> None:
         x, z = position

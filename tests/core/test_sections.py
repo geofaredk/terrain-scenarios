@@ -217,6 +217,15 @@ def test_a_terminus_dragged_hard_against_its_neighbour_keeps_the_side_slope():
     assert changes["slope_n"] == pytest.approx(3.0)
 
 
+def test_a_terminus_dragged_hard_against_the_edge_keeps_its_reach():
+    """A reach that rounds to 0.0 stops the slope at the edge — the slope kept by the test above
+    would then change nothing."""
+    f = dike(width=4.0, slope_n=3.0, reach=20.0)
+    changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (2.00001, -3.0)])
+    assert changes["reach"] == pytest.approx(20.0)
+    assert changes["slope_n"] == pytest.approx(3.0)
+
+
 def test_a_real_but_very_flat_slope_is_still_written():
     f = dike(width=4.0, slope_n=3.0, reach=20.0)
     changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (22.0, -0.5)])

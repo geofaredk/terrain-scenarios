@@ -132,6 +132,7 @@ class PropertiesPage(QWidget):
         self._highlight_for = {self.amount: "amount", self.width: "width", self.slope: "slope",
                                self.reach: "reach"}
         controller.featuresChanged.connect(self._refresh_problems)
+        controller.featuresChanged.connect(self._refresh_values)
         controller.featuresChanged.connect(self._refresh_volumes)
 
     def eventFilter(self, watched, event):  # noqa: N802 — Qt override
@@ -170,18 +171,8 @@ class PropertiesPage(QWidget):
         try:
             self.title.setText(_title(feature))
             self.summary.setText(TOOL_SUMMARIES[feature.tool])
-            # Only a profile the engine actually uses fixes the heights: on a multi-part path it
-            # is discarded, and Height/Depth is then the one control that still drives the result.
-            custom = feature.long_profile is not None and supports_long_profile(feature)
             self.amount_label.setText(label or "")
-            self.amount.setValue(feature.amount)
-            self.amount.setEnabled(not custom)
-            self.amount.setToolTip(AMOUNT_IS_CUSTOM if custom else self._amount_tip)
-            self.width.setValue(feature.width)
-            self.slope.setValue(feature.slope_n)
-            self.reach.setValue(feature.reach)
-            self.slope_position.setCurrentIndex(1 if feature.slopes_inside else 0)
-            self.pixel_mode.setCurrentIndex(self.pixel_mode.findData(feature.pixel_mode.value))
+            self._load_values(feature)
             self.form.setRowVisible(self.amount, label is not None)
             self.form.setRowVisible(self.width, feature.mode is Mode.PATH)
             self.form.setRowVisible(self.slope, info.has_slopes)
@@ -195,6 +186,36 @@ class PropertiesPage(QWidget):
             self._loading = False
         self._refresh_problems()
         self._refresh_volumes()
+
+    def _load_values(self, feature) -> None:
+        """Show the feature's values in the fields — except in a field the user is still typing in:
+        a change from elsewhere (a profile drag, an undo) must not throw away what they typed."""
+        # Only a profile the engine actually uses fixes the heights: on a multi-part path it
+        # is discarded, and Height/Depth is then the one control that still drives the result.
+        custom = feature.long_profile is not None and supports_long_profile(feature)
+        for spin, value in ((self.amount, feature.amount), (self.width, feature.width),
+                            (self.slope, feature.slope_n), (self.reach, feature.reach)):
+            if not spin.lineEdit().isModified():
+                spin.setValue(value)
+        self.amount.setEnabled(not custom)
+        self.amount.setToolTip(AMOUNT_IS_CUSTOM if custom else self._amount_tip)
+        self.slope_position.setCurrentIndex(1 if feature.slopes_inside else 0)
+        self.pixel_mode.setCurrentIndex(self.pixel_mode.findData(feature.pixel_mode.value))
+
+    def _refresh_values(self) -> None:
+        """Keep the fields in step with the feature whenever the list changes: a cross-profile drag
+        moves the width, slope and reach, and an undo can change anything. Runs in a slot."""
+        try:
+            feature = self.controller.find(self._fid) if self._fid is not None else None
+            if feature is None:
+                return
+            self._loading = True
+            try:
+                self._load_values(feature)
+            finally:
+                self._loading = False
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _refresh_volumes(self) -> None:
         """Per-feature cut, fill and (for the tools that hold water) storage, plus the scenario

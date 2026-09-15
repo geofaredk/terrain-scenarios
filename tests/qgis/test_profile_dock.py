@@ -202,3 +202,21 @@ def test_undoing_the_shown_feature_during_a_drag_does_not_take_qgis_down(tmp_pat
     mouse(cross, QEvent.Type.MouseMove, handle + QPointF(20, -20))
     mouse(cross, QEvent.Type.MouseButtonRelease, handle + QPointF(20, -20))
     assert c.features == ()
+
+
+def test_the_properties_page_follows_a_cross_profile_drag(tmp_path):
+    """A drag moves the width, slope and reach. A page still showing the old values would write the
+    old width back with the next arrow step on any of them."""
+    from terrain_sketch.gui.properties_page import PropertiesPage
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    page = PropertiesPage(c)
+    page.show_feature(dike.id)
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    dock.cross.profileCommitted.emit(((0.0, 0.0), (2.5, 0.0), (7.0, -1.2)))
+    updated = c.feature(dike.id)
+    assert (updated.width, updated.slope_n, updated.reach) == pytest.approx((5.0, 3.75, 4.5))
+    assert page.width.value() == pytest.approx(5.0) and page.reach.value() == pytest.approx(4.5)
+    assert page.slope.value() == pytest.approx(3.8)            # shown to its one decimal
+    assert c.feature(dike.id).slope_n == pytest.approx(3.75)   # and not written back rounded

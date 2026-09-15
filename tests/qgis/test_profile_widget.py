@@ -21,10 +21,22 @@ def widget_with(points, kind=Kind.CROSS, size=(400, 200), **kw):
     return w
 
 
-def key(widget, which, modifiers=Qt.KeyboardModifier.NoModifier):
+def key(widget, which, modifiers=Qt.KeyboardModifier.NoModifier, release=True):
+    """Press and let go of a key, as a tap does; the press event is returned."""
     event = QKeyEvent(QEvent.Type.KeyPress, which, modifiers)
     widget.keyPressEvent(event)
+    if release:
+        widget.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, which, modifiers))
     return event
+
+
+def hold(widget, which, repeats):
+    """Hold a key down: one press, then auto-repeated press and release pairs, then the real release."""
+    widget.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, which, Qt.KeyboardModifier.NoModifier))
+    for _ in range(repeats):
+        widget.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, which, Qt.KeyboardModifier.NoModifier, "", True))
+        widget.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, which, Qt.KeyboardModifier.NoModifier, "", True))
+    widget.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, which, Qt.KeyboardModifier.NoModifier))
 
 
 def select(widget, x, z):
@@ -111,10 +123,10 @@ def test_the_long_profile_keeps_its_end_stations_fixed():
     assert w.points[-1][0] == 30.0 and w.points[-1][1] > 12.0   # height moved, station did not
 
 
-def test_the_arrow_keys_nudge_the_selected_handle_and_commit_it():
-    """Every keypress commits straight to the working DEM, so this path is worth pinning down."""
+def test_the_arrow_keys_nudge_the_selected_handle_and_commit_when_let_go():
     w = widget_with([(0.0, 0.0), (2.0, 0.0), (12.0, -3.0)])
-    committed = []
+    during, committed = [], []
+    w.profileChanged.connect(during.append)
     w.profileCommitted.connect(committed.append)
 
     ignored = key(w, Qt.Key.Key_Up)                     # nothing selected yet
@@ -122,10 +134,12 @@ def test_the_arrow_keys_nudge_the_selected_handle_and_commit_it():
 
     select(w, 12.0, -3.0)
     assert committed == []                              # a click that moves nothing commits nothing
-    accepted = key(w, Qt.Key.Key_Up)
+    accepted = key(w, Qt.Key.Key_Up, release=False)
     assert accepted.isAccepted()
     assert w.points[2][1] == pytest.approx(-3.0 + NUDGE)
-    assert len(committed) == 1 and committed[-1] == tuple(w.points)
+    assert len(during) == 1 and committed == []         # shown while the key is down…
+    w.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_Up, Qt.KeyboardModifier.NoModifier))
+    assert len(committed) == 1 and committed[-1] == tuple(w.points)   # …committed when it is let go
 
     key(w, Qt.Key.Key_Down)
     assert w.points[2][1] == pytest.approx(-3.0)
@@ -134,6 +148,45 @@ def test_the_arrow_keys_nudge_the_selected_handle_and_commit_it():
     key(w, Qt.Key.Key_Left)
     assert w.points[2][0] == pytest.approx(12.0 + NUDGE_FINE - NUDGE)
     assert len(committed) == 4
+
+
+def test_holding_an_arrow_key_is_one_change_not_one_per_repeat():
+    """Auto-repeat sends about thirty presses a second, and each commit is a recompute, a file write
+    and an undo step."""
+    w = widget_with([(0.0, 0.0), (2.0, 0.0), (12.0, -3.0)])
+    during, committed = [], []
+    w.profileChanged.connect(during.append)
+    w.profileCommitted.connect(committed.append)
+    select(w, 12.0, -3.0)
+    hold(w, Qt.Key.Key_Up, repeats=9)
+    assert w.points[2][1] == pytest.approx(-3.0 + 10 * NUDGE)
+    assert len(during) == 10 and len(committed) == 1 and committed[0] == tuple(w.points)
+
+
+def test_a_nudge_is_committed_when_the_plot_loses_focus_before_the_key_is_let_go():
+    from qgis.PyQt.QtGui import QFocusEvent
+    w = widget_with([(0.0, 0.0), (2.0, 0.0), (12.0, -3.0)])
+    committed = []
+    w.profileCommitted.connect(committed.append)
+    select(w, 12.0, -3.0)
+    key(w, Qt.Key.Key_Down, release=False)
+    w.focusOutEvent(QFocusEvent(QEvent.Type.FocusOut))
+    assert len(committed) == 1
+    w.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_Down, Qt.KeyboardModifier.NoModifier))
+    assert len(committed) == 1                          # the late release commits nothing more
+
+
+def test_a_nudge_the_plot_was_reloaded_under_is_not_committed():
+    """An undo can reload or clear the plot while a key is held; the release must not commit points
+    that belonged to the profile before."""
+    w = widget_with([(0.0, 0.0), (2.0, 0.0), (12.0, -3.0)])
+    committed = []
+    w.profileCommitted.connect(committed.append)
+    select(w, 12.0, -3.0)
+    key(w, Qt.Key.Key_Up, release=False)
+    w.set_profile([(0.0, 0.0), (2.0, 0.0), (12.0, -3.0)])
+    w.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_Up, Qt.KeyboardModifier.NoModifier))
+    assert committed == []
 
 
 def test_the_arrow_keys_are_ignored_in_a_read_only_plot_and_for_other_keys():

@@ -72,7 +72,7 @@ def set_cross_section(feature, side: int, points) -> dict:
         run = last[0] - (interior[-1][0] if interior else edge)
         rise = abs(last[1] - (interior[-1][1] if interior else 0.0))
         changes["slope_n"] = _slope_n(run, rise, feature.slope_n)
-        changes["reach"] = round(last[0] - edge, 4)
+        changes["reach"] = _reach(last[0] - edge, feature.reach)
     else:
         # No terminal slope: all points after edge are breaks. Derive slope_n and reach.
         # Filter out breaks at distance 0 (at the edge itself) and collapse duplicates.
@@ -102,6 +102,15 @@ def _slope_n(run: float, rise: float, current: float) -> float:
     if rise <= 1e-9:
         return 0.0
     rounded = round(run / rise, 4)
+    return rounded if rounded > 0.0 else current
+
+
+def _reach(distance: float, current: float) -> float:
+    """The slope's reach from the terminus's distance beyond the edge, rounded like the slope.
+
+    A reach of 0.0 stops the slope at the edge, so a terminus dragged hard against the edge rounds to
+    nothing only by accident — the same drag `_slope_n` guards against — and keeps the reach it had."""
+    rounded = round(distance, 4)
     return rounded if rounded > 0.0 else current
 
 

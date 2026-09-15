@@ -406,5 +406,5 @@ def test_the_default_section_of_parts_side_by_side_runs_through_one_of_them():
     from osgeo import ogr
     assert ogr.CreateGeometryFromWkb(line).Intersects(ogr.CreateGeometryFromWkb(strips))
     start, end = line_points(line)
-    assert start[0] == pytest.approx(end[0]) and start[1] < end[1]          # still along the longer side, south to north
+    assert start[0] == pytest.approx(end[0]) and start[1] < end[1]          # along the longer side, south to north
     assert start[1] == pytest.approx(2.0 - 5.0) and end[1] == pytest.approx(32.0 + 5.0)

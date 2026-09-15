@@ -1,5 +1,6 @@
 """The 3D view (spec §8.5): the modified DEM as the project's terrain, a new 3D view, and the
 terrain the user had put back afterwards."""
+import sys
 from unittest import mock
 
 from qgis.core import QgsFlatTerrainProvider, QgsProject, QgsRasterDemTerrainProvider
@@ -136,6 +137,29 @@ def test_the_button_opens_a_3d_view_through_the_interface(tmp_path):
     iface.createNewMapCanvas3D.assert_called_once()
     assert isinstance(terrain(), QgsRasterDemTerrainProvider)
     assert VIEW_3D_NOT_OPENED not in messages(iface)
+
+
+def test_the_3d_types_are_loaded_before_the_interface_hands_back_a_3d_view(tmp_path, monkeypatch):
+    """The interface returns a Qgs3DMapCanvas, a type from qgis._3d. Without that module loaded,
+    converting the result to Python dereferences a null type and QGIS crashes — no except catches it."""
+    monkeypatch.delitem(sys.modules, "qgis._3d", raising=False)
+    iface, _c, dock = panel(tmp_path)
+    loaded = []
+    iface.createNewMapCanvas3D.side_effect = lambda *_args: loaded.append("qgis._3d" in sys.modules)
+    dock.view_3d_button.click()
+    assert loaded == [True]
+
+
+def test_without_the_3d_types_the_interface_is_not_asked_for_a_3d_view(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "qgis._3d", None)          # importing it fails
+    iface, _c, dock = panel(tmp_path)
+    triggered = []
+    action = QAction("New 3D Map View", iface.mainWindow())
+    action.setObjectName("mActionNew3DMapCanvas")
+    action.triggered.connect(lambda: triggered.append(True))
+    dock.view_3d_button.click()
+    iface.createNewMapCanvas3D.assert_not_called()
+    assert triggered == [True] and VIEW_3D_NOT_OPENED not in messages(iface)
 
 
 def test_without_the_interface_call_qgis_own_menu_action_is_used(tmp_path):

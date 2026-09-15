@@ -1,6 +1,7 @@
 """The Terrain Sketch panel: DEM, feature list, tool gallery and feature properties."""
 from __future__ import annotations
 
+import importlib
 import os
 import traceback
 
@@ -61,6 +62,17 @@ def _action_button(action) -> QToolButton:
     button.setAutoRaise(True)
     button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
     return button
+
+
+def _3d_types_loaded() -> bool:
+    """Whether QGIS's 3D Python types are loaded. `createNewMapCanvas3D` hands back a Qgs3DMapCanvas,
+    a type from qgis._3d, which qgis.gui does not import: converting the result without it dereferences
+    a null type and QGIS crashes, past any except."""
+    try:
+        importlib.import_module("qgis._3d")
+    except ImportError:
+        return False
+    return True
 
 
 def _has_text_history(spin, redo: bool) -> bool:
@@ -729,7 +741,7 @@ class MainDock(QgsDockWidget):
             if not self.controller.show_in_3d():
                 return
             try:
-                if self.iface.createNewMapCanvas3D(self.tr("Terrain Sketch 3D")) is not None:
+                if _3d_types_loaded() and self.iface.createNewMapCanvas3D(self.tr("Terrain Sketch 3D")) is not None:
                     return
             except Exception:  # noqa: BLE001 — a QGIS built without 3D; the menu action may still work
                 QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Warning)

@@ -80,6 +80,7 @@ class MainDock(QgsDockWidget):
         controller.before_discard = self._offer_save_before_discard
         self.edit_tool = None
         self._brush_fid = None
+        self._brush_extends = False       # set with _brush_fid, but kept when that feature goes
         self.highlight = QgsRubberBand(iface.mapCanvas(), Qgis.GeometryType.Line)
         self.highlight.setStrokeColor(QgsMapToolEdit.digitizingStrokeColor())
         self.highlight.setFillColor(Qt.GlobalColor.transparent)
@@ -207,7 +208,7 @@ class MainDock(QgsDockWidget):
 
     def end_drawing(self) -> None:
         """Stop a drawing in progress and give the canvas its previous map tool back."""
-        tool, self.draw_tool, self._brush_fid = self.draw_tool, None, None
+        tool, self.draw_tool, self._brush_fid, self._brush_extends = self.draw_tool, None, None, False
         self._release_tool(tool)
 
     def stop_editing(self) -> None:
@@ -351,10 +352,11 @@ class MainDock(QgsDockWidget):
         canvas = self.iface.mapCanvas()
         if method is Method.BRUSH:
             self._brush_fid = self._brush_target(tool, mode)
+            self._brush_extends = self._brush_fid is not None
             try:
                 initial = self._to_canvas(self.controller.feature_geometry(self._brush_fid)) if self._brush_fid else None
             except QgsCsException:
-                self._brush_fid = None
+                self._brush_fid, self._brush_extends = None, False
                 self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
                 return
             self.draw_tool = BrushTool(canvas, self.gallery.brush_radius(), initial)
@@ -462,9 +464,11 @@ class MainDock(QgsDockWidget):
         """Undo or redo replaced the feature list underneath whatever the panel shows. A vertex
         edit or a brush stroke that extends a feature holds that feature's old outline and would
         put it straight back, so both stop; drawing a new feature does not depend on the list and
-        carries on. The Properties page reloads its fields, which otherwise keep the undone values."""
+        carries on. The Properties page reloads its fields, which otherwise keep the undone values.
+        `_brush_extends`, not `_brush_fid`: an undo that removes the feature itself has already cleared
+        the id (featuresChanged comes first), and the brush would then add the old outline as a new feature."""
         self.stop_editing()
-        if self._brush_fid is not None:
+        if self._brush_extends:
             self.end_drawing()
         fid = self.feature_view.selected_id()
         if self.pages.currentIndex() == PAGE_PROPERTIES and fid is not None and self.controller.find(fid) is not None:

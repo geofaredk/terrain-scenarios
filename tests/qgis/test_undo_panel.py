@@ -133,6 +133,23 @@ def test_undo_stops_a_brush_that_extends_a_feature(tmp_path):
     assert dock.draw_tool is None and dock._brush_fid is None
 
 
+def test_undo_that_removes_the_feature_a_brush_extends_stops_the_brush(tmp_path):
+    """The undo removes the pond itself. The brush still holds the pond's outline, and finishing it
+    must not bring the undone pond back as a new feature."""
+    _iface, c, dock = panel(tmp_path)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
+    dock.feature_view.select_id(pond.id)
+    dock.gallery.select_tool(Tool.LOWER_FLAT)
+    dock.gallery.select_mode(Mode.AREA)
+    dock.gallery.method_buttons[Method.BRUSH].click()
+    brush = dock.draw_tool
+    assert brush is not None and dock._brush_fid == pond.id
+    dock.undo_button.click()                               # undoes the Add of the pond
+    assert c.features == () and dock.draw_tool is None
+    brush.finish()                                         # a click that was already on its way
+    assert c.features == ()
+
+
 def test_undo_reloads_the_properties_page(tmp_path):
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)

@@ -1,4 +1,6 @@
 import pytest
+from qgis.PyQt.QtCore import QEvent, QPointF, Qt
+from qgis.PyQt.QtGui import QMouseEvent
 
 from qgis_helpers import UTM, line_layer, line_through, sample, square, start_session
 from terrain_sketch.core.tools import Mode, Tool
@@ -176,3 +178,27 @@ def test_a_custom_long_profile_disables_the_height_field(tmp_path):
     c.update_feature(dike.id, long_profile=((0.0, 14.0), (29.0, 14.0)))
     page.show_feature(dike.id)
     assert not page.amount.isEnabled() and "fixed" in page.amount.toolTip()
+
+
+def mouse(widget, kind, point):
+    event = QMouseEvent(kind, point, point, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                        Qt.KeyboardModifier.NoModifier)
+    {QEvent.Type.MouseButtonPress: widget.mousePressEvent, QEvent.Type.MouseMove: widget.mouseMoveEvent,
+     QEvent.Type.MouseButtonRelease: widget.mouseReleaseEvent}[kind](event)
+
+
+def test_undoing_the_shown_feature_during_a_drag_does_not_take_qgis_down(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    cross = dock.cross
+    cross.resize(400, 200)
+    handle = cross._to_screen(*cross.points[1])
+    mouse(cross, QEvent.Type.MouseButtonPress, handle)
+    assert cross._dragging == 1
+    c.undo_stack.undo()                            # Ctrl+Z in the Profiles panel undoes the Add
+    assert c.features == () and cross.points == []
+    mouse(cross, QEvent.Type.MouseMove, handle + QPointF(20, -20))
+    mouse(cross, QEvent.Type.MouseButtonRelease, handle + QPointF(20, -20))
+    assert c.features == ()

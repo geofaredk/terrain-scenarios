@@ -173,3 +173,19 @@ def test_a_plot_without_break_points_refuses_to_add_or_remove_them():
     press(w, start.x(), start.y() - 20, kind=QEvent.Type.MouseMove)
     press(w, start.x(), start.y() - 20, kind=QEvent.Type.MouseButtonRelease)
     assert len(committed) == 1 and w.points[3][1] > 2.0
+
+
+def test_clearing_the_plot_mid_drag_ends_the_drag():
+    """Ctrl+Z during a drag can remove the shown feature, which clears the plot under the mouse.
+    The next mouse move and release happen inside Qt, where an IndexError would abort QGIS."""
+    w = widget_with([(0.0, 0.0), (2.0, 0.0), (12.0, -3.0)])
+    committed = []
+    w.profileCommitted.connect(committed.append)
+    start = w._to_screen(2.0, 0.0)
+    press(w, start.x(), start.y())
+    assert w._dragging == 1
+    w.clear()
+    assert w._dragging == -1 and w._before is None
+    press(w, start.x() + 20, start.y() - 20, kind=QEvent.Type.MouseMove)
+    press(w, start.x() + 20, start.y() - 20, kind=QEvent.Type.MouseButtonRelease)
+    assert w.points == [] and committed == []

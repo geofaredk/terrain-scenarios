@@ -73,6 +73,7 @@ class ProfileWidget(QWidget):
 
     def clear(self, hint: str = PROFILE_EMPTY_HINT) -> None:
         self.points, self.terrain, self.hint, self.selected = [], [], hint, -1
+        self._dragging, self._before = -1, None   # an undo can clear the plot under a drag
         self.update()
 
     def handle_at(self, position) -> int:
@@ -209,7 +210,7 @@ class ProfileWidget(QWidget):
         self.update()
 
     def mouseMoveEvent(self, event):  # noqa: N802 — Qt override
-        if self._dragging < 0:
+        if not 0 <= self._dragging < len(self.points):
             return
         self._move_handle(self._dragging, self._to_data(event.position()))
         self.profileChanged.emit(tuple(self.points))

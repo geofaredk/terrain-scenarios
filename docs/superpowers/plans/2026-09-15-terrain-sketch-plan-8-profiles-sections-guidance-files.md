@@ -27,8 +27,8 @@
 Every claim below about QGIS or Qt behaviour was probed headless against QGIS 4.2.2. The three product decisions marked **(user)** were put to the user before the prototype was built.
 
 - **Scope.** Everything in the Plan 7 addendum's two Plan 8 tables, except the items listed at the end of this plan with a reason. The spec's v1 items still missing — the area section and its "Draw section line", the pixel-mode picture, tool-specific labels, panel state and `<scenario>_files/` — are all here.
-- **The cross profile shows the whole cross-section (user).** A path's plot runs from the end of the left slope to the end of the right one, centre line at 0, left at negative offsets as seen looking along the drawing direction; "Left" and "Right" are written in the plot. No handle crosses the centre, the two crest edges always move together (width is one value), and while Symmetric is ticked every handle with a mirror image takes it along. `set_whole_cross_section` reads each side as `set_cross_section` always has; width, slope and reach are single values, so each comes from the side where it changed (right when both did), and with Symmetric the side whose break points changed is copied. An area keeps its one-sided edge profile: it has no sides and no break points.
-- **The end-cap sliver is fixed in the engine.** A cell exactly on the extended axis past an end cap belonged to neither side and always took the right-hand shape — a one-cell notch into a left-hand berm (probed). `stations_offsets` now gives such a cell offset 0, and `_path_values` gives it whichever side the combine rule keeps (max for raise tools, min for lower), among the sides whose reach covers it. Only cells at an end are affected; a bend is not.
+- **The cross profile shows the whole cross-section (user).** A path's plot runs from the end of the left slope to the end of the right one, centre line at 0, left at negative offsets as seen looking along the drawing direction; "Left" and "Right" are written in the plot. No handle crosses the centre, the two crest edges always move together (width is one value), and while Symmetric is ticked every handle with a mirror image takes it along. `set_whole_cross_section` reads each side as `set_cross_section` always has, except that a side whose points are still the ones the plot was given keeps what the feature has; width, slope and reach are single values, so each comes from the side where it changed (right when both did), and with Symmetric the side whose break points changed is copied. A side whose breaks run past the reach has no slope-end handle (`cross_section` draws none), so its last point is read as a break and its slope and reach are kept — the Task 3 review found that reading it as the slope's end let an edit on the other side rewrite the slope and drop the berm (probed). Crest edges only move sideways. An area keeps its one-sided edge profile: it has no sides and no break points.
+- **The end-cap sliver is fixed in the engine.** A cell exactly on the extended axis past an end cap belonged to neither side and always took the right-hand shape — a one-cell notch into a left-hand berm (probed). `stations_offsets` now gives such a cell offset 0, and `_path_values` gives it whichever side the combine rule keeps (max for raise tools, min for lower), among the sides whose reach covers it. Only cells at an end are affected; a bend is not. The end test allows 1e-9 m, because a cell's station and the path's length are summed differently and can differ in the last bit (probed).
 - **An arrow key commits once, when it is let go.** Each press and auto-repeat moves the handle and previews; the key's release — not an auto-repeated one — commits, as does losing focus while it is held. A reload of the plot under a held key drops the pending commit. Holding Up for a second is now one recompute, one file write and one undo step instead of about thirty.
 - **A reach that rounds to 0 keeps the reach it had**, like the slope already did, so a terminus dragged hard against the edge no longer silently cancels the slope.
 - **The Properties page follows every change, except in a field the user is typing in.** It reloads its values on `featuresChanged` (so a cross-profile drag's width, slope and reach show up, and the next arrow step no longer writes the old width back); a spin box whose line edit `isModified()` keeps its typed text. That same rule fixes the Undo button throwing away a typed value: the undo happens, and the typed value is still there to confirm with Enter. `MainDock._history_restored` no longer reloads the page itself.
@@ -6029,10 +6029,29 @@ def test_straight_past_an_end_the_axis_follows_the_side_the_combine_rule_keeps()
 
     lowered = make_grid(flat(10.0))
     apply_feature(feature(Tool.LOWER_PATH, Mode.PATH, axis, amount=2.0, width=3.0, slope_n=2.0, reach=10.0,
-                          cross_right=((2.0, 0.0),)), lowered)        # a lower tool keeps the deeper side
+                          cross_left=((2.0, 0.0),)), lowered)         # a lower tool keeps the deeper side
     cut = lowered.data.astype(float)
-    np.testing.assert_allclose(cut[19, beyond], cut[20, beyond])
-    assert (cut[19, beyond] < cut[18, beyond]).any()
+    np.testing.assert_allclose(cut[19, beyond], cut[18, beyond])
+    assert (cut[19, beyond] < cut[20, beyond]).any()
+
+
+def test_the_axis_past_the_far_end_is_found_even_when_the_lengths_differ_in_the_last_bit():
+    """The station of a cell past the end and the path's length are summed differently; on some paths
+    the station falls one bit short of the length, and the far end kept its notch."""
+    bent = line_wkb([(4.034, 4.192), (10.5, 20.5), (29.5, 20.5)])
+    grid = make_grid(flat(10.0))
+    apply_feature(feature(Tool.RAISE_PATH, Mode.PATH, bent, amount=2.0, width=3.0, slope_n=2.0, reach=10.0,
+                          cross_left=((2.0, 0.0),)), grid)
+    after = grid.data.astype(float)
+    beyond = slice(31, 36)
+    np.testing.assert_allclose(after[19, beyond], after[18, beyond])
+
+
+def test_a_point_straight_ahead_of_an_end_is_on_neither_side():
+    from terrain_sketch.core.stations import stations_offsets
+    coords = np.array([[0.0, 0.0], [10.0, 0.0]])
+    station, offset = stations_offsets(coords, np.array([15.0, -3.0, 5.0, 5.0]), np.array([0.0, 0.0, 2.0, -2.0]))
+    assert list(offset) == [0.0, 0.0, -2.0, 2.0] and list(station) == [10.0, 0.0, 5.0, 5.0]
 ```
 
 **File:** `tests/core/test_sections.py`
@@ -6308,6 +6327,38 @@ def test_symmetric_copies_the_edited_side_whichever_side_it_is():
     assert set_whole_cross_section(f, right_berm, symmetric=True)["cross_left"] == ((4.0, -1.0),)
     unticked = set_whole_cross_section(f, left_berm, symmetric=False)
     assert unticked["cross_left"] == ((4.0, -1.0),) and unticked["cross_right"] == ()
+
+
+def test_editing_one_side_leaves_a_side_with_breaks_past_its_reach_as_it_was():
+    """A berm beyond the reach leaves that side without a slope-end handle. Reading its last berm as the
+    slope's end rewrote the slope and the reach and dropped the berm while the user edited the other side."""
+    f = dike(width=4.0, slope_n=3.0, reach=5.0, cross_right=((2.0, -0.5), (8.0, -1.0)))
+    points = list(whole_cross_section(f))
+    assert points[-1] == (10.0, -1.0)                               # the berm is the last handle
+    points[0] = (-10.0, -8.0 / 3.0)                                 # the left slope's end, 3 m further out
+    changes = set_whole_cross_section(f, points)
+    assert changes["cross_right"] == f.cross_right and changes["cross_left"] == ()
+    assert changes["slope_n"] == pytest.approx(3.0) and changes["reach"] == pytest.approx(8.0)
+
+
+def test_a_side_whose_breaks_run_past_its_reach_keeps_its_slope_when_edited():
+    f = dike(width=4.0, slope_n=3.0, reach=5.0, cross_right=((2.0, -0.5), (8.0, -1.0)))
+    changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (4.0, -0.5), (10.0, -1.4)])
+    assert changes["cross_right"] == ((2.0, -0.5), (8.0, -1.4))
+    assert "slope_n" not in changes and "reach" not in changes
+
+
+def test_the_side_that_was_not_edited_does_not_change_the_shared_values():
+    f = dike(width=4.0, slope_n=0.0, reach=10.0, cross_right=((3.0, -1.0),))
+    points = list(whole_cross_section(f))
+    points[-1] = (6.0, -1.5)                                        # drag the right berm
+    changes = set_whole_cross_section(f, points)
+    assert changes["cross_right"] == ((4.0, -1.5),) and changes["reach"] == pytest.approx(10.0)
+    # a stored value halfway between two four-decimal numbers still counts as unchanged on the other side
+    odd = dike(width=4.0, slope_n=3.0, reach=40.34765)
+    moved = list(whole_cross_section(odd))
+    moved[0] = (moved[0][0] - 3.0, moved[0][1] - 1.0)
+    assert set_whole_cross_section(odd, moved)["reach"] == pytest.approx(43.34765, abs=1e-4)
 ```
 
 **File:** `tests/qgis/test_profile_dock.py`
@@ -6566,6 +6617,20 @@ def test_the_symmetric_box_tells_the_plot_to_move_mirror_handles_together(tmp_pa
     assert dock.cross.symmetric
     dock.symmetric.setChecked(False)
     assert not dock.cross.symmetric
+
+
+def test_the_cross_plot_explains_its_sides_only_for_a_path_it_can_edit(tmp_path):
+    from terrain_sketch.gui.help_texts import CROSS_SIDES_TIP
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 25, 25, 35), UTM)
+    band = c.add_drawn(Tool.ADD, Mode.PATH, line_through(5, 5, 34, 5), UTM)
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    assert dock.cross.toolTip() == CROSS_SIDES_TIP
+    for other in (pond.id, band.id, None):
+        dock.show_feature(other)
+        assert dock.cross.toolTip() == "", other
 ```
 
 **File:** `tests/qgis/test_profile_widget.py`
@@ -6835,6 +6900,17 @@ def test_the_two_crest_edges_move_together():
     drag(w, 2.0, 0.0, 3.0, 0.0)
     assert w.points[1][0] == pytest.approx(-w.points[2][0]) and w.points[2][0] == pytest.approx(3.0, abs=0.1)
     assert w.points[1][1] == w.points[2][1] == 0.0                # the crest stays level
+
+
+def test_the_crest_stays_level_while_an_edge_is_dragged_or_nudged():
+    w = whole(left=((-12.0, -3.0),))
+    drag(w, 2.0, 0.0, 3.0, 1.5)                                   # dragged up and out
+    assert w.points[1][1] == w.points[2][1] == 0.0
+    committed = []
+    w.profileCommitted.connect(committed.append)
+    select(w, *w.points[2])
+    key(w, Qt.Key.Key_Up)
+    assert w.points[2][1] == 0.0 and committed == []               # nothing to commit
 
 
 def test_no_handle_crosses_the_centre_line():
@@ -7388,7 +7464,8 @@ def _path_values(feature, info, drawn, view: DemGrid, long_profile):
     # side the combine rule would keep, as if both side shapes were built there, instead of always the
     # right-hand one — a visible step when the two sides differ.
     length = float(vertex_stations(coords)[-1])
-    axis = (offset == 0.0) & ~core & ((station <= 0.0) | (station >= length))
+    # (the stations and the length are summed in different ways, so the far end can be one bit short)
+    axis = (offset == 0.0) & ~core & ((station <= 0.0) | (station >= length - 1e-9))
     if axis.any():
         keep = np.maximum if info.combine is Combine.MAX else np.minimum
         unused = -np.inf if info.combine is Combine.MAX else np.inf
@@ -7490,7 +7567,7 @@ from .stations import vertex_stations
 from .tools import TOOL_INFO, Mode
 
 SAMPLES = 200
-SAME = 5e-5   # values written back at four decimals: closer than this is the same value
+SAME = 1e-4   # values are written back at four decimals, so closer than this is the same value
 
 
 def cross_section(feature, side: int = 1) -> tuple:
@@ -7535,14 +7612,20 @@ def set_cross_section(feature, side: int, points) -> dict:
     if feature.mode is Mode.PATH:
         changes["width"] = max(2.0 * edge, 0.1)
 
-    # Only treat the final point as a slope terminus when the feature has a terminal slope
-    # AND that point lies strictly beyond the last break; otherwise all points after the
-    # edge are break points.
+    # The final point is the slope's end only if the plot drew one: `cross_section` adds it when the
+    # reach goes past the last break. With breaks beyond the reach there is none, and reading the last
+    # break as the slope's end would rewrite the slope and the reach and drop that break.
     has_terminal_slope = feature.slope_n > 0.0
     last_break_distance = pts[-2][0] if len(pts) > 2 else edge
-    last_point_is_terminus = has_terminal_slope and pts[-1][0] > last_break_distance
+    stored = feature.cross_right if side >= 0 else feature.cross_left
+    drew_terminus = side_limit(stored, feature.slope_n, feature.reach) > max([0.0] + [float(d) for d, _ in stored])
+    last_point_is_terminus = has_terminal_slope and drew_terminus and pts[-1][0] > last_break_distance
 
-    if last_point_is_terminus:
+    if has_terminal_slope and not drew_terminus:
+        # every point after the edge is a break; the slope and its reach are not on the plot to change
+        if breaks_key is not None:
+            changes[breaks_key] = tuple((d - edge, z) for d, z in pts[2:] if d > edge)
+    elif last_point_is_terminus:
         interior, last = pts[2:-1], pts[-1]
         if breaks_key is not None:
             changes[breaks_key] = tuple((d - edge, z) for d, z in interior)
@@ -7581,18 +7664,24 @@ def whole_cross_section(feature) -> tuple:
 def set_whole_cross_section(feature, points, symmetric: bool = False) -> dict:
     """Turn an edited whole cross profile back into feature fields.
 
-    Each side is read the way `set_cross_section` reads one. Width, side slope and reach are single
-    values shared by both sides, so each is taken from the side where it changed. With `symmetric`,
-    the break points of the side that was edited are copied to the other side."""
+    Each side is read the way `set_cross_section` reads one, but a side whose points are still the ones
+    the plot was given is left as the feature has it: reading it back could only add rounding. Width,
+    side slope and reach are single values shared by both sides, so each is taken from the side where it
+    changed (the right when both did). With `symmetric`, the break points of the side that was edited
+    are copied to the other side."""
     pts = [(float(x), float(z)) for x, z in points]
-    from_right = set_cross_section(feature, 1, [(0.0, 0.0)] + sorted(p for p in pts if p[0] > 0.0))
-    from_left = set_cross_section(feature, -1, [(0.0, 0.0)] + sorted((-x, z) for x, z in pts if x < 0.0))
-    changes = {"cross_left": from_left["cross_left"], "cross_right": from_right["cross_right"]}
+    sides = {}
+    for side, key, own in ((1, "cross_right", sorted(p for p in pts if p[0] > 0.0)),
+                           (-1, "cross_left", sorted((-x, z) for x, z in pts if x < 0.0))):
+        if _same_points(own, cross_section(feature, side=side)[1:]):
+            sides[key] = {}
+        else:
+            sides[key] = set_cross_section(feature, side, [(0.0, 0.0)] + own)
+    changes = {key: read.get(key, getattr(feature, key)) for key, read in sides.items()}
     for key in ("width", "slope_n", "reach"):
         current = getattr(feature, key)
-        left_moved = abs(from_left[key] - current) > SAME
-        right_moved = abs(from_right[key] - current) > SAME
-        changes[key] = from_left[key] if left_moved and not right_moved else from_right[key]
+        left, right = sides["cross_left"].get(key, current), sides["cross_right"].get(key, current)
+        changes[key] = left if abs(left - current) > SAME and abs(right - current) <= SAME else right
     if symmetric:
         if _same_points(changes["cross_right"], feature.cross_right) \
                 and not _same_points(changes["cross_left"], feature.cross_left):
@@ -8051,7 +8140,6 @@ class ProfileDock(QgsDockWidget):
         self._loading = False
 
         self.cross = ProfileWidget(Kind.CROSS)
-        self.cross.setToolTip(CROSS_SIDES_TIP)
         self.long = ProfileWidget(Kind.LONG)
         self.symmetric = QCheckBox(self.tr("Symmetric"))
         self.symmetric.setChecked(True)
@@ -8103,6 +8191,7 @@ class ProfileDock(QgsDockWidget):
         """Load a feature's profiles, or clear both panels when there is no selection."""
         self._fid = fid
         if fid is None or not self.controller.has_dem:
+            self.cross.setToolTip("")
             self.cross.clear()
             self.long.clear()
             self.note.clear()
@@ -8121,6 +8210,7 @@ class ProfileDock(QgsDockWidget):
         try:
             info = TOOL_INFO[feature.tool]
             is_path = feature.mode is Mode.PATH
+            self.cross.setToolTip(CROSS_SIDES_TIP if is_path and info.has_slopes else "")   # it is about sides
             # A path shows both sides around its centre line; an area shows its one edge slope, and
             # takes no break points: the engine discards an area's (spec 5.4).
             if is_path:
@@ -8515,9 +8605,10 @@ class ProfileWidget(QWidget):
                 x = min(x, -MIN_HALF_WIDTH) if self.points[index][0] < 0.0 else max(x, MIN_HALF_WIDTH)
             elif self.kind is Kind.CROSS:
                 x = max(x, 0.0)
+        if index in self._edges():
+            z = self.points[index][1]           # the crest stays level: its edges only move sideways
         if partner is not None:
-            edge = partner in self._edges()     # the crest stays level: an edge's partner keeps its height
-            self.points[partner] = (-x, self.points[partner][1] if edge else z)
+            self.points[partner] = (-x, z)
         self.points[index] = (x, z)
         self.update()
 
@@ -8640,8 +8731,8 @@ def _interpolate(x: float, xs, zs) -> float:
 ```
 - [ ] **Step 4: Run the tests**
 
-Run: `scripts/test.sh tests/core/test_operations.py tests/core/test_sections.py tests/qgis/test_profile_dock.py tests/qgis/test_profile_widget.py tests/qgis/test_undo.py` → Expected: `119 passed`
-Run: `scripts/test.sh` → Expected: `480 passed`
+Run: `scripts/test.sh tests/core/test_operations.py tests/core/test_sections.py tests/qgis/test_profile_dock.py tests/qgis/test_profile_widget.py tests/qgis/test_undo.py` → Expected: `126 passed`
+Run: `scripts/test.sh` → Expected: `487 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -8993,6 +9084,38 @@ def test_symmetric_copies_the_edited_side_whichever_side_it_is():
     assert unticked["cross_left"] == ((4.0, -1.0),) and unticked["cross_right"] == ()
 
 
+def test_editing_one_side_leaves_a_side_with_breaks_past_its_reach_as_it_was():
+    """A berm beyond the reach leaves that side without a slope-end handle. Reading its last berm as the
+    slope's end rewrote the slope and the reach and dropped the berm while the user edited the other side."""
+    f = dike(width=4.0, slope_n=3.0, reach=5.0, cross_right=((2.0, -0.5), (8.0, -1.0)))
+    points = list(whole_cross_section(f))
+    assert points[-1] == (10.0, -1.0)                               # the berm is the last handle
+    points[0] = (-10.0, -8.0 / 3.0)                                 # the left slope's end, 3 m further out
+    changes = set_whole_cross_section(f, points)
+    assert changes["cross_right"] == f.cross_right and changes["cross_left"] == ()
+    assert changes["slope_n"] == pytest.approx(3.0) and changes["reach"] == pytest.approx(8.0)
+
+
+def test_a_side_whose_breaks_run_past_its_reach_keeps_its_slope_when_edited():
+    f = dike(width=4.0, slope_n=3.0, reach=5.0, cross_right=((2.0, -0.5), (8.0, -1.0)))
+    changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (4.0, -0.5), (10.0, -1.4)])
+    assert changes["cross_right"] == ((2.0, -0.5), (8.0, -1.4))
+    assert "slope_n" not in changes and "reach" not in changes
+
+
+def test_the_side_that_was_not_edited_does_not_change_the_shared_values():
+    f = dike(width=4.0, slope_n=0.0, reach=10.0, cross_right=((3.0, -1.0),))
+    points = list(whole_cross_section(f))
+    points[-1] = (6.0, -1.5)                                        # drag the right berm
+    changes = set_whole_cross_section(f, points)
+    assert changes["cross_right"] == ((4.0, -1.5),) and changes["reach"] == pytest.approx(10.0)
+    # a stored value halfway between two four-decimal numbers still counts as unchanged on the other side
+    odd = dike(width=4.0, slope_n=3.0, reach=40.34765)
+    moved = list(whole_cross_section(odd))
+    moved[0] = (moved[0][0] - 3.0, moved[0][1] - 1.0)
+    assert set_whole_cross_section(odd, moved)["reach"] == pytest.approx(43.34765, abs=1e-4)
+
+
 def rotated_rectangle(length, breadth, degrees, centre=(20.0, 20.0)):
     c, s = np.cos(np.radians(degrees)), np.sin(np.radians(degrees))
     corners = [(-length / 2, -breadth / 2), (length / 2, -breadth / 2), (length / 2, breadth / 2),
@@ -9324,6 +9447,20 @@ def test_an_area_section_follows_the_features_own_line_and_a_path_has_none(tmp_p
     assert section["line"] == own and section["stations"][-1] == pytest.approx(30.0)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 35, 34, 35), UTM)
     assert c.area_section(dike.id)["stations"] == () and c.area_section("gone")["line"] is None
+
+
+def test_the_cross_plot_explains_its_sides_only_for_a_path_it_can_edit(tmp_path):
+    from terrain_sketch.gui.help_texts import CROSS_SIDES_TIP
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 25, 25, 35), UTM)
+    band = c.add_drawn(Tool.ADD, Mode.PATH, line_through(5, 5, 34, 5), UTM)
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    assert dock.cross.toolTip() == CROSS_SIDES_TIP
+    for other in (pond.id, band.id, None):
+        dock.show_feature(other)
+        assert dock.cross.toolTip() == "", other
 ```
 
 **File:** `tests/qgis/test_scenario_file.py`
@@ -9859,7 +9996,7 @@ from .stations import vertex_stations
 from .tools import TOOL_INFO, Mode
 
 SAMPLES = 200
-SAME = 5e-5   # values written back at four decimals: closer than this is the same value
+SAME = 1e-4   # values are written back at four decimals, so closer than this is the same value
 
 
 def cross_section(feature, side: int = 1) -> tuple:
@@ -9904,14 +10041,20 @@ def set_cross_section(feature, side: int, points) -> dict:
     if feature.mode is Mode.PATH:
         changes["width"] = max(2.0 * edge, 0.1)
 
-    # Only treat the final point as a slope terminus when the feature has a terminal slope
-    # AND that point lies strictly beyond the last break; otherwise all points after the
-    # edge are break points.
+    # The final point is the slope's end only if the plot drew one: `cross_section` adds it when the
+    # reach goes past the last break. With breaks beyond the reach there is none, and reading the last
+    # break as the slope's end would rewrite the slope and the reach and drop that break.
     has_terminal_slope = feature.slope_n > 0.0
     last_break_distance = pts[-2][0] if len(pts) > 2 else edge
-    last_point_is_terminus = has_terminal_slope and pts[-1][0] > last_break_distance
+    stored = feature.cross_right if side >= 0 else feature.cross_left
+    drew_terminus = side_limit(stored, feature.slope_n, feature.reach) > max([0.0] + [float(d) for d, _ in stored])
+    last_point_is_terminus = has_terminal_slope and drew_terminus and pts[-1][0] > last_break_distance
 
-    if last_point_is_terminus:
+    if has_terminal_slope and not drew_terminus:
+        # every point after the edge is a break; the slope and its reach are not on the plot to change
+        if breaks_key is not None:
+            changes[breaks_key] = tuple((d - edge, z) for d, z in pts[2:] if d > edge)
+    elif last_point_is_terminus:
         interior, last = pts[2:-1], pts[-1]
         if breaks_key is not None:
             changes[breaks_key] = tuple((d - edge, z) for d, z in interior)
@@ -9950,18 +10093,24 @@ def whole_cross_section(feature) -> tuple:
 def set_whole_cross_section(feature, points, symmetric: bool = False) -> dict:
     """Turn an edited whole cross profile back into feature fields.
 
-    Each side is read the way `set_cross_section` reads one. Width, side slope and reach are single
-    values shared by both sides, so each is taken from the side where it changed. With `symmetric`,
-    the break points of the side that was edited are copied to the other side."""
+    Each side is read the way `set_cross_section` reads one, but a side whose points are still the ones
+    the plot was given is left as the feature has it: reading it back could only add rounding. Width,
+    side slope and reach are single values shared by both sides, so each is taken from the side where it
+    changed (the right when both did). With `symmetric`, the break points of the side that was edited
+    are copied to the other side."""
     pts = [(float(x), float(z)) for x, z in points]
-    from_right = set_cross_section(feature, 1, [(0.0, 0.0)] + sorted(p for p in pts if p[0] > 0.0))
-    from_left = set_cross_section(feature, -1, [(0.0, 0.0)] + sorted((-x, z) for x, z in pts if x < 0.0))
-    changes = {"cross_left": from_left["cross_left"], "cross_right": from_right["cross_right"]}
+    sides = {}
+    for side, key, own in ((1, "cross_right", sorted(p for p in pts if p[0] > 0.0)),
+                           (-1, "cross_left", sorted((-x, z) for x, z in pts if x < 0.0))):
+        if _same_points(own, cross_section(feature, side=side)[1:]):
+            sides[key] = {}
+        else:
+            sides[key] = set_cross_section(feature, side, [(0.0, 0.0)] + own)
+    changes = {key: read.get(key, getattr(feature, key)) for key, read in sides.items()}
     for key in ("width", "slope_n", "reach"):
         current = getattr(feature, key)
-        left_moved = abs(from_left[key] - current) > SAME
-        right_moved = abs(from_right[key] - current) > SAME
-        changes[key] = from_left[key] if left_moved and not right_moved else from_right[key]
+        left, right = sides["cross_left"].get(key, current), sides["cross_right"].get(key, current)
+        changes[key] = left if abs(left - current) > SAME and abs(right - current) <= SAME else right
     if symmetric:
         if _same_points(changes["cross_right"], feature.cross_right) \
                 and not _same_points(changes["cross_left"], feature.cross_left):
@@ -11073,7 +11222,6 @@ class ProfileDock(QgsDockWidget):
         self._loading = False
 
         self.cross = ProfileWidget(Kind.CROSS)
-        self.cross.setToolTip(CROSS_SIDES_TIP)
         self.long = ProfileWidget(Kind.LONG)
         self.symmetric = QCheckBox(self.tr("Symmetric"))
         self.symmetric.setChecked(True)
@@ -11125,6 +11273,7 @@ class ProfileDock(QgsDockWidget):
         """Load a feature's profiles, or clear both panels when there is no selection."""
         self._fid = fid
         if fid is None or not self.controller.has_dem:
+            self.cross.setToolTip("")
             self.cross.clear()
             self.long.clear()
             self.note.clear()
@@ -11143,6 +11292,7 @@ class ProfileDock(QgsDockWidget):
         try:
             info = TOOL_INFO[feature.tool]
             is_path = feature.mode is Mode.PATH
+            self.cross.setToolTip(CROSS_SIDES_TIP if is_path and info.has_slopes else "")   # it is about sides
             # A path shows both sides around its centre line; an area shows its one edge slope, and
             # takes no break points: the engine discards an area's (spec 5.4).
             if is_path:
@@ -11667,8 +11817,8 @@ def _round6(values) -> str:
 ```
 - [ ] **Step 4: Run the tests**
 
-Run: `scripts/test.sh tests/core/test_feature.py tests/core/test_sections.py tests/qgis/test_profile_dock.py tests/qgis/test_scenario_file.py` → Expected: `75 passed`
-Run: `scripts/test.sh` → Expected: `486 passed`
+Run: `scripts/test.sh tests/core/test_feature.py tests/core/test_sections.py tests/qgis/test_profile_dock.py tests/qgis/test_scenario_file.py` → Expected: `79 passed`
+Run: `scripts/test.sh` → Expected: `493 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -11858,7 +12008,7 @@ from .stations import vertex_stations
 from .tools import TOOL_INFO, Mode
 
 SAMPLES = 200
-SAME = 5e-5   # values written back at four decimals: closer than this is the same value
+SAME = 1e-4   # values are written back at four decimals, so closer than this is the same value
 
 
 def cross_section(feature, side: int = 1) -> tuple:
@@ -11903,14 +12053,20 @@ def set_cross_section(feature, side: int, points) -> dict:
     if feature.mode is Mode.PATH:
         changes["width"] = max(2.0 * edge, 0.1)
 
-    # Only treat the final point as a slope terminus when the feature has a terminal slope
-    # AND that point lies strictly beyond the last break; otherwise all points after the
-    # edge are break points.
+    # The final point is the slope's end only if the plot drew one: `cross_section` adds it when the
+    # reach goes past the last break. With breaks beyond the reach there is none, and reading the last
+    # break as the slope's end would rewrite the slope and the reach and drop that break.
     has_terminal_slope = feature.slope_n > 0.0
     last_break_distance = pts[-2][0] if len(pts) > 2 else edge
-    last_point_is_terminus = has_terminal_slope and pts[-1][0] > last_break_distance
+    stored = feature.cross_right if side >= 0 else feature.cross_left
+    drew_terminus = side_limit(stored, feature.slope_n, feature.reach) > max([0.0] + [float(d) for d, _ in stored])
+    last_point_is_terminus = has_terminal_slope and drew_terminus and pts[-1][0] > last_break_distance
 
-    if last_point_is_terminus:
+    if has_terminal_slope and not drew_terminus:
+        # every point after the edge is a break; the slope and its reach are not on the plot to change
+        if breaks_key is not None:
+            changes[breaks_key] = tuple((d - edge, z) for d, z in pts[2:] if d > edge)
+    elif last_point_is_terminus:
         interior, last = pts[2:-1], pts[-1]
         if breaks_key is not None:
             changes[breaks_key] = tuple((d - edge, z) for d, z in interior)
@@ -11949,18 +12105,24 @@ def whole_cross_section(feature) -> tuple:
 def set_whole_cross_section(feature, points, symmetric: bool = False) -> dict:
     """Turn an edited whole cross profile back into feature fields.
 
-    Each side is read the way `set_cross_section` reads one. Width, side slope and reach are single
-    values shared by both sides, so each is taken from the side where it changed. With `symmetric`,
-    the break points of the side that was edited are copied to the other side."""
+    Each side is read the way `set_cross_section` reads one, but a side whose points are still the ones
+    the plot was given is left as the feature has it: reading it back could only add rounding. Width,
+    side slope and reach are single values shared by both sides, so each is taken from the side where it
+    changed (the right when both did). With `symmetric`, the break points of the side that was edited
+    are copied to the other side."""
     pts = [(float(x), float(z)) for x, z in points]
-    from_right = set_cross_section(feature, 1, [(0.0, 0.0)] + sorted(p for p in pts if p[0] > 0.0))
-    from_left = set_cross_section(feature, -1, [(0.0, 0.0)] + sorted((-x, z) for x, z in pts if x < 0.0))
-    changes = {"cross_left": from_left["cross_left"], "cross_right": from_right["cross_right"]}
+    sides = {}
+    for side, key, own in ((1, "cross_right", sorted(p for p in pts if p[0] > 0.0)),
+                           (-1, "cross_left", sorted((-x, z) for x, z in pts if x < 0.0))):
+        if _same_points(own, cross_section(feature, side=side)[1:]):
+            sides[key] = {}
+        else:
+            sides[key] = set_cross_section(feature, side, [(0.0, 0.0)] + own)
+    changes = {key: read.get(key, getattr(feature, key)) for key, read in sides.items()}
     for key in ("width", "slope_n", "reach"):
         current = getattr(feature, key)
-        left_moved = abs(from_left[key] - current) > SAME
-        right_moved = abs(from_right[key] - current) > SAME
-        changes[key] = from_left[key] if left_moved and not right_moved else from_right[key]
+        left, right = sides["cross_left"].get(key, current), sides["cross_right"].get(key, current)
+        changes[key] = left if abs(left - current) > SAME and abs(right - current) <= SAME else right
     if symmetric:
         if _same_points(changes["cross_right"], feature.cross_right) \
                 and not _same_points(changes["cross_left"], feature.cross_left):
@@ -13921,7 +14083,6 @@ class ProfileDock(QgsDockWidget):
         self._loading = False
 
         self.cross = ProfileWidget(Kind.CROSS)
-        self.cross.setToolTip(CROSS_SIDES_TIP)
         self.long = ProfileWidget(Kind.LONG)
         self.symmetric = QCheckBox(self.tr("Symmetric"))
         self.symmetric.setChecked(True)
@@ -13979,6 +14140,7 @@ class ProfileDock(QgsDockWidget):
         """Load a feature's profiles, or clear both panels when there is no selection."""
         self._fid = fid
         if fid is None or not self.controller.has_dem:
+            self.cross.setToolTip("")
             self.cross.clear()
             self.long.clear()
             self.note.clear()
@@ -13997,6 +14159,7 @@ class ProfileDock(QgsDockWidget):
         try:
             info = TOOL_INFO[feature.tool]
             is_path = feature.mode is Mode.PATH
+            self.cross.setToolTip(CROSS_SIDES_TIP if is_path and info.has_slopes else "")   # it is about sides
             # A path shows both sides around its centre line; an area shows its one edge slope, and
             # takes no break points: the engine discards an area's (spec 5.4).
             if is_path:
@@ -14107,7 +14270,7 @@ class ProfileDock(QgsDockWidget):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_section_line.py` → Expected: `8 passed`
-Run: `scripts/test.sh` → Expected: `494 passed`
+Run: `scripts/test.sh` → Expected: `501 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -15480,7 +15643,7 @@ def _title(feature) -> str:
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_guidance.py tests/qgis/test_illustrations.py tests/qgis/test_panels.py` → Expected: `34 passed`
-Run: `scripts/test.sh` → Expected: `500 passed`
+Run: `scripts/test.sh` → Expected: `507 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -16541,7 +16704,7 @@ class TerrainSketchPlugin:
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_dock_plugin.py tests/qgis/test_settings.py` → Expected: `32 passed`
-Run: `scripts/test.sh` → Expected: `505 passed`
+Run: `scripts/test.sh` → Expected: `512 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -19295,7 +19458,7 @@ def _write_tif(path: str, array: np.ndarray, grid: DemGrid, info: DemInfo, extra
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_scenario_files.py tests/qgis/test_scenario_panel.py` → Expected: `35 passed`
-Run: `scripts/test.sh` → Expected: `516 passed`
+Run: `scripts/test.sh` → Expected: `523 passed`
 
 - [ ] **Step 5: Commit**
 

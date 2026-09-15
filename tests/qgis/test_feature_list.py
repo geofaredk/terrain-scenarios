@@ -1,7 +1,8 @@
 from qgis.core import QgsGeometry, QgsPointXY
-from qgis.PyQt.QtCore import QModelIndex, Qt
+from qgis.PyQt.QtCore import QEvent, QModelIndex, QPointF, Qt
+from qgis.PyQt.QtGui import QMouseEvent
 from qgis.PyQt.QtTest import QTest
-from qgis.PyQt.QtWidgets import QStyleOptionViewItem
+from qgis.PyQt.QtWidgets import QAbstractItemView, QStyleOptionViewItem
 
 from qgis_helpers import UTM, line_through, start_session
 from terrain_sketch.core.tools import Mode, Tool
@@ -46,11 +47,21 @@ def test_a_row_says_what_the_feature_is_and_what_it_moves(tmp_path):
     assert model.index(0).data(SUBTITLE_ROLE) == "Raise path"
 
 
+def test_the_view_installs_the_row_delegate_on_its_own(tmp_path):
+    """main_dock.py builds a FeatureListView with no delegate of its own — the view must install
+    FeatureRowDelegate itself, or the production panel paints with Qt's stock delegate (no picture,
+    no subtitle, no warning, no chevron — and DecorationRole no longer carries the warning icon
+    either, so it would show nothing at all) and hit-tests the checkbox in the wrong place."""
+    c = start_session(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    view = FeatureListView(FeatureListModel(c))
+    assert isinstance(view.itemDelegate(), FeatureRowDelegate)
+
+
 def test_clicking_a_row_opens_it_but_clicking_its_checkbox_only_toggles_it(tmp_path):
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    view = FeatureListView(FeatureListModel(c))
-    view.setItemDelegate(FeatureRowDelegate(view))
+    view = FeatureListView(FeatureListModel(c))    # no setItemDelegate here — exercised as main_dock.py builds it
     view.resize(300, 120)
     opened = []
     view.rowOpened.connect(opened.append)
@@ -60,6 +71,50 @@ def test_clicking_a_row_opens_it_but_clicking_its_checkbox_only_toggles_it(tmp_p
     box = FeatureRowDelegate.checkbox_rect(rect)
     QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=box.center())       # the checkbox
     assert opened == [dike.id] and not c.feature(dike.id).enabled
+
+
+def test_pressing_space_over_the_current_row_toggles_it(tmp_path):
+    """The stock delegate's Key_Space/Key_Select checkbox toggle has nothing to do with the mouse
+    hit-test our editorEvent override disables, and must keep working."""
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    view = FeatureListView(FeatureListModel(c))
+    view.resize(300, 120)
+    view.setCurrentIndex(view.model().index(0))
+    assert c.feature(dike.id).enabled
+    QTest.keyClick(view, Qt.Key.Key_Space)
+    assert not c.feature(dike.id).enabled
+
+
+def test_double_clicking_a_row_starts_editing_and_the_release_does_not_reopen_it(tmp_path):
+    """A genuine double click is delivered as press, release, press, doubleclick, release. The
+    first release is an ordinary click and opens the row, same as any single click; it is the
+    *second* release — the one landing once the row has already entered rename — that must not
+    also emit rowOpened (it used to, misfiring the moment a rename starts)."""
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    view = FeatureListView(FeatureListModel(c))
+    view.resize(300, 120)
+    opened = []
+    view.rowOpened.connect(opened.append)
+    rect = view.visualRect(view.model().index(0))
+    pos = rect.center()
+
+    def send(kind):
+        event = QMouseEvent(kind, QPointF(pos), QPointF(pos), Qt.MouseButton.LeftButton,
+                            Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+        {QEvent.Type.MouseButtonPress: view.mousePressEvent,
+         QEvent.Type.MouseButtonRelease: view.mouseReleaseEvent,
+         QEvent.Type.MouseButtonDblClick: view.mouseDoubleClickEvent}[kind](event)
+
+    send(QEvent.Type.MouseButtonPress)
+    send(QEvent.Type.MouseButtonRelease)
+    assert opened == [dike.id]                                          # the first click's release opens it
+    send(QEvent.Type.MouseButtonPress)
+    send(QEvent.Type.MouseButtonDblClick)
+    assert view.state() == QAbstractItemView.State.EditingState
+    send(QEvent.Type.MouseButtonRelease)                                # the release that completes the double click
+    assert opened == [dike.id]                                          # must not have opened it a second time
 
 
 def test_selection_survives_edits_and_list_changes(tmp_path):

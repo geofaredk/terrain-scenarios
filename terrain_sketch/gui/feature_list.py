@@ -6,7 +6,7 @@ import traceback
 
 from qgis.core import Qgis, QgsApplication, QgsMessageLog
 from qgis.PyQt.QtCore import QAbstractListModel, QItemSelectionModel, QMimeData, QModelIndex, QRect, QSize, Qt, pyqtSignal
-from qgis.PyQt.QtGui import QPalette
+from qgis.PyQt.QtGui import QMouseEvent, QPalette
 from qgis.PyQt.QtWidgets import (QAbstractItemView, QApplication, QListView, QStyle, QStyleOptionButton,
                                  QStyleOptionViewItem, QStyledItemDelegate)
 
@@ -169,9 +169,14 @@ class FeatureRowDelegate(QStyledItemDelegate):
         return QSize(width, max(text_height, PICTURE_SIZE.height()) + 2 * PADDING)
 
     def editorEvent(self, event, model, option, index):  # noqa: N802 — Qt override
-        """The view's mouseReleaseEvent is the one place that toggles the checkbox (see
-        checkbox_rect); disable Qt's own click-to-toggle so a click cannot flip it twice."""
-        return False
+        """The view's mouseReleaseEvent is the one place that toggles the checkbox on a mouse
+        click (see checkbox_rect): the base implementation hit-tests its own, differently
+        positioned checkbox rect, and letting both run could flip the state twice on one click.
+        Anything that is not a mouse event — in particular the Key_Space/Key_Select toggle the
+        base implementation also handles — is unaffected and still works."""
+        if isinstance(event, QMouseEvent):
+            return False
+        return super().editorEvent(event, model, option, index)
 
     def paint(self, painter, option, index):  # noqa: N802 — Qt override
         try:
@@ -267,6 +272,7 @@ class FeatureListView(QListView):
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.setItemDelegate(FeatureRowDelegate(self))
         self._remembered = None
         model.modelAboutToBeReset.connect(self._remember)
         model.modelReset.connect(self._restore)
@@ -286,6 +292,8 @@ class FeatureListView(QListView):
     def mouseReleaseEvent(self, event):  # noqa: N802 — Qt override
         index = self.indexAt(event.pos())
         super().mouseReleaseEvent(event)
+        if self.state() == QAbstractItemView.State.EditingState:
+            return          # this release completed a double-click into rename, not a plain open
         if not index.isValid() or event.button() != Qt.MouseButton.LeftButton:
             return
         rect = self.visualRect(index)

@@ -97,6 +97,7 @@ class ProfileDock(QgsDockWidget):
             self.long.clear()
             self.note.clear()
             self._set_enabled(False)
+            self._show_section_buttons(False)
             return
         feature = self.controller.find(fid)
         if feature is not None and feature.mode is Mode.PATH:

@@ -94,6 +94,9 @@ def test_the_profiles_panel_offers_the_section_buttons_for_an_area_only(tmp_path
     assert c.find(pond.id).section_line is None
     dock.show_feature(dike.id)
     assert dock.draw_section.isHidden() and dock.reset_section.isHidden() and not dock.reset_long.isHidden()
+    dock.show_feature(pond.id)
+    dock.show_feature(None)                                      # nothing selected: no area's buttons left behind
+    assert dock.draw_section.isHidden() and dock.reset_section.isHidden() and not dock.reset_long.isHidden()
 
 
 def test_draw_section_line_puts_a_line_tool_on_the_map_and_stores_what_is_drawn(tmp_path):

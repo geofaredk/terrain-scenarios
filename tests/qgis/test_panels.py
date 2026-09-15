@@ -59,7 +59,8 @@ def test_properties_show_the_tool_fields_and_apply_changes(tmp_path):
 
 def test_every_panel_icon_exists_in_the_qgis_theme():
     """getThemeIcon returns a null icon for an unknown name, and the button then renders blank."""
-    for name in (*METHOD_ICONS.values(), EDIT_ICON):
+    from terrain_sketch.gui.main_dock import PROFILES_ICON
+    for name in (*METHOD_ICONS.values(), EDIT_ICON, PROFILES_ICON):
         assert not QgsApplication.getThemeIcon(name).isNull(), name
 
 

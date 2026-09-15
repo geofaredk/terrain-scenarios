@@ -61,9 +61,8 @@ class TerrainSketchPlugin:
         if self.dock is not None:
             if not checked:
                 self.dock.stop_tools()
+                self.dock.profiles_button.setChecked(False)   # hides the Profiles panel; it opens only from there
             self.dock.setUserVisible(checked)
-        if self.profiles is not None:
-            self.profiles.setUserVisible(checked)
 
     def _create_dock(self) -> bool:
         problems = gdal_problems()
@@ -83,6 +82,9 @@ class TerrainSketchPlugin:
             settings.restore_dock(name, dock, window)
             dock.dockLocationChanged.connect(lambda _area, n=name, d=dock: settings.save_dock(n, d, window))
             dock.topLevelChanged.connect(lambda _floating, n=name, d=dock: settings.save_dock(n, d, window))
+        # hidden until the Profiles button in the panel shows it; hide(), not setUserVisible(False), which does
+        # nothing to a panel the window has not shown yet
+        self.profiles.hide()
         return True
 
     def _remember_docks(self) -> None:

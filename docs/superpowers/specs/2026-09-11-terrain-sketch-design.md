@@ -234,6 +234,7 @@ These apply to the polygon, or to the corridor polygon for paths. Side slopes ar
 1. **Header row:**
    - The DEM picker (`QgsMapLayerComboBox`, raster only).
    - Scenario actions (icon buttons with tooltips): New, Open…, Save, Save as…, Export DEM…, 3D view.
+   - A **Profiles** toggle button that shows and hides the bottom dock, which is hidden until it is used (added 2026-09-15).
 2. **Feature list** (`feature_list.py`):
    - Each row has a checkbox (enabled), a tool icon, a name, and a warning icon when flagged.
    - Drag to reorder.

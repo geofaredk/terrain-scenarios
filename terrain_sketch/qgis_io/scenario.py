@@ -243,7 +243,7 @@ def _from_ogr(row) -> tuple[int, TerrainFeature]:
     params = json.loads(row.GetField("params") or "{}")
     cross = json.loads(row.GetField("cross_profile") or "{}")
     long_profile = row.GetField("long_profile")
-    section_line = row.GetField("section_line")
+    section_line = _section_line(row.GetField("section_line"))
     feature = TerrainFeature(
         # A fresh id, never one derived from the row: two files both have a row 1, and a panel
         # still showing feature 1 of the old scenario must not silently retarget the new one.
@@ -257,10 +257,21 @@ def _from_ogr(row) -> tuple[int, TerrainFeature]:
         cross_left=tuple(tuple(p) for p in cross.get("left", ())),
         cross_right=tuple(tuple(p) for p in cross.get("right", ())),
         long_profile=None if not long_profile else tuple(tuple(p) for p in json.loads(long_profile)),
-        section_line=None if not section_line else bytes(ogr.CreateGeometryFromWkt(section_line).ExportToWkb()),
+        section_line=section_line,
         **{k: params[k] for k in PARAM_FIELDS if k in params},
     )
     return int(row.GetField("order") or 0), feature
+
+
+def _section_line(wkt: str | None) -> bytes | None:
+    """A feature's own section line as WKB, or None for the default line — also when the text cannot be read:
+    the line only decides what the Profiles panel shows, so it must not refuse the whole scenario."""
+    if not wkt:
+        return None
+    try:
+        return bytes(ogr.CreateGeometryFromWkt(wkt).ExportToWkb())
+    except (RuntimeError, AttributeError):      # GDAL exceptions on; without them a bad text gives None
+        return None
 
 
 def _write_meta(source, meta: ScenarioMeta) -> ScenarioMeta:

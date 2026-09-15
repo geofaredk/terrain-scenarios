@@ -251,3 +251,19 @@ def test_a_dem_on_a_crs_without_an_epsg_code_is_described_and_written_with_its_c
     assert srs is not None                         # QGIS draws the outlines in the right place
     assert srs.GetName() == "Local survey grid"
     source = None
+
+
+def test_a_section_line_that_cannot_be_read_goes_back_to_the_default_line(tmp_path):
+    """The line only decides what the Profiles panel shows; it must not refuse the whole scenario."""
+    c = start_session(tmp_path)
+    path = str(tmp_path / "scenario.gpkg")
+    save(path, two_features(c), dem_meta(c.info, c.stack.original))
+    source = ogr.Open(path, 1)
+    layer = source.GetLayerByName(FEATURES_LAYER)
+    for row in layer:
+        if row.GetField("section_line"):
+            row.SetField("section_line", "LINESTRING (1 2, oops")
+            layer.SetFeature(row)
+    source.Close()
+    loaded, _meta = load(path)
+    assert len(loaded) == 2 and all(f.section_line is None for f in loaded)

@@ -1,6 +1,7 @@
 """Values of the selected feature; every change is applied to the terrain immediately."""
 from __future__ import annotations
 
+import html
 import traceback
 
 from qgis.core import Qgis, QgsMessageLog
@@ -20,6 +21,7 @@ from .help_texts import (AMOUNT_IS_CUSTOM, FIELD_TIPS, FLAG_TEXTS, NO_VOLUME_YET
 DIAGRAM = QSize(200, 96)
 TOOL_PICTURE = QSize(120, 64)
 PIXEL_ICON = QSize(32, 32)
+PIXEL_PICTURE = 72   # each of the three pictures in the Pixels to change tooltip
 
 
 def _spin(minimum: float, maximum: float, step: float, suffix: str, decimals: int) -> QgsDoubleSpinBox:
@@ -46,6 +48,7 @@ class PropertiesPage(QWidget):
         self.summary = QLabel()
         self.summary.setWordWrap(True)
         self.amount_label = QLabel()
+        self.amount_label.setWordWrap(True)   # "Height above the highest point" must not set the panel's width
         self.amount = _spin(0.0, 100.0, 0.1, " m", 2)
         # one source of truth: show_feature swaps between this and AMOUNT_IS_CUSTOM, so the
         # concrete example has to live here or it is lost the moment a feature is selected
@@ -161,12 +164,23 @@ class PropertiesPage(QWidget):
             mode = PixelMode(self.pixel_mode.itemData(index))
             self.pixel_mode.setItemIcon(index, illustrations.icon(f"pixels_{mode.value}",
                                                                   PIXEL_ICON, self.palette()))
+        self.pixel_mode.setToolTip(self._pixel_modes_tip())
+
+    def _pixel_modes_tip(self) -> str:
+        """The field's tip with the three pixel modes side by side under it (spec §7.2), drawn in the
+        current theme's colours like every other picture on the page."""
+        size = PIXEL_PICTURE
+        pictures = "".join(
+            f'<td align="center"><img src="{illustrations.data_uri(f"pixels_{mode.value}", size, self.palette())}"'
+            f' width="{size}" height="{size}"/></td>' for mode in PixelMode)
+        names = "".join(f'<td align="center">{html.escape(PIXEL_MODE_LABELS[mode])}</td>' for mode in PixelMode)
+        return f"<p>{html.escape(FIELD_TIPS['pixel_mode'])}</p><table><tr>{pictures}</tr><tr>{names}</tr></table>"
 
     def show_feature(self, fid: str) -> None:
         self._fid = fid
         feature = self.controller.feature(fid)
         info = TOOL_INFO[feature.tool]
-        label = amount_label(feature.tool)
+        label = amount_label(feature.tool, feature.mode)
         self._loading = True
         try:
             self.title.setText(_title(feature))

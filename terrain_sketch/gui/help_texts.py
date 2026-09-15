@@ -14,7 +14,7 @@ and keep working unchanged.
 from __future__ import annotations
 
 from ..core.operations import FLAG_BAD_GEOMETRY, FLAG_NO_PIXELS, FLAG_NODATA_REFERENCE, FLAG_OUTSIDE
-from ..core.tools import PixelMode, Tool
+from ..core.tools import Mode, PixelMode, Tool
 
 TOOL_LABELS = {
     Tool.INTERPOLATE: "Interpolate",
@@ -106,13 +106,25 @@ VIEW_3D_NO_LAYER = ("The Modified DEM layer is no longer in the project, so ther
                     "Press Start to create it again.")
 
 
-def amount_label(tool: Tool) -> str | None:
-    """Label of the amount field, or None when the tool has no amount."""
-    if tool is Tool.INTERPOLATE:
-        return None
-    if tool in (Tool.LOWER_PATH, Tool.LOWER_FLAT, Tool.SUBTRACT):
-        return "Depth"
-    return "Height"
+# The amount field says what it is measured from (spec §7.2): a height "above the path" and one "above
+# the highest point" are different numbers for the same dike, and a bare "Height" let users set the wrong one.
+AMOUNT_LABELS = {
+    (Tool.RAISE_PATH, Mode.PATH): "Height above the path",
+    (Tool.LOWER_PATH, Mode.PATH): "Depth below the path",
+    (Tool.RAISE_FLAT, Mode.PATH): "Height above the highest point",
+    (Tool.RAISE_FLAT, Mode.AREA): "Height above the highest edge",
+    (Tool.LOWER_FLAT, Mode.PATH): "Depth below the lowest point",
+    (Tool.LOWER_FLAT, Mode.AREA): "Depth below the lowest edge",
+    (Tool.ADD, Mode.PATH): "Height added",
+    (Tool.ADD, Mode.AREA): "Height added",
+    (Tool.SUBTRACT, Mode.PATH): "Depth removed",
+    (Tool.SUBTRACT, Mode.AREA): "Depth removed",
+}
+
+
+def amount_label(tool: Tool, mode: Mode) -> str | None:
+    """Label of the amount field, or None when the tool has no amount (Interpolate)."""
+    return AMOUNT_LABELS.get((tool, mode))
 
 PROFILE_EMPTY_HINT = "Select or draw a feature to edit its shape here."
 CUSTOM_PROFILE_NOTE = ("Custom long profile: the heights are fixed and no longer follow the "

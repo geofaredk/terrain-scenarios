@@ -44,14 +44,14 @@ def test_properties_show_the_tool_fields_and_apply_changes(tmp_path):
     page = PropertiesPage(c)
     page.show_feature(dike.id)
     assert all(w.toolTip() for w in (page.amount, page.width, page.slope, page.reach, page.slope_position))
-    assert page.amount_label.text() == "Height"
+    assert page.amount_label.text() == "Height above the path"
     assert page.form.isRowVisible(page.width) and page.form.isRowVisible(page.slope)
     assert not page.form.isRowVisible(page.slope_position)
     page.amount.setValue(2.5)
     assert c.feature(dike.id).amount == 2.5 and sample(c.layers.working, 20, 20) == pytest.approx(12.5)
     pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
     page.show_feature(pond.id)
-    assert page.amount_label.text() == "Depth" and not page.form.isRowVisible(page.width)
+    assert page.amount_label.text() == "Depth below the lowest edge" and not page.form.isRowVisible(page.width)
     assert page.form.isRowVisible(page.slope_position) and page.slope_position.currentData() is True
     page.pixel_mode.setCurrentIndex(page.pixel_mode.findData(PixelMode.ALL_TOUCHED.value))
     assert c.feature(pond.id).pixel_mode is PixelMode.ALL_TOUCHED

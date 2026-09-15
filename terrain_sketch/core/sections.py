@@ -4,9 +4,13 @@ Pure geometry and sampling — the widgets draw what these return and hand back 
 """
 from __future__ import annotations
 
-import numpy as np
+import math
 
-from .geometry import is_line, line_coords, split_parts
+import numpy as np
+from osgeo import ogr
+from scipy.spatial import ConvexHull, QhullError
+
+from .geometry import is_line, line_coords, line_wkb, polygon_rings, split_parts
 from .grid import DemGrid
 from .operations import NoReferenceError, path_coords, rule_profile
 from .profiles import side_dz, side_limit
@@ -14,6 +18,7 @@ from .stations import vertex_stations
 from .tools import TOOL_INFO, Mode
 
 SAMPLES = 200
+SAME = 1e-4   # values are written back at four decimals, so closer than this is the same value
 
 
 def cross_section(feature, side: int = 1) -> tuple:
@@ -58,21 +63,27 @@ def set_cross_section(feature, side: int, points) -> dict:
     if feature.mode is Mode.PATH:
         changes["width"] = max(2.0 * edge, 0.1)
 
-    # Only treat the final point as a slope terminus when the feature has a terminal slope
-    # AND that point lies strictly beyond the last break; otherwise all points after the
-    # edge are break points.
+    # The final point is the slope's end only if the plot drew one: `cross_section` adds it when the
+    # reach goes past the last break. With breaks beyond the reach there is none, and reading the last
+    # break as the slope's end would rewrite the slope and the reach and drop that break.
     has_terminal_slope = feature.slope_n > 0.0
     last_break_distance = pts[-2][0] if len(pts) > 2 else edge
-    last_point_is_terminus = has_terminal_slope and pts[-1][0] > last_break_distance
+    stored = feature.cross_right if side >= 0 else feature.cross_left
+    drew_terminus = side_limit(stored, feature.slope_n, feature.reach) > max([0.0] + [float(d) for d, _ in stored])
+    last_point_is_terminus = has_terminal_slope and drew_terminus and pts[-1][0] > last_break_distance
 
-    if last_point_is_terminus:
+    if has_terminal_slope and not drew_terminus:
+        # every point after the edge is a break; the slope and its reach are not on the plot to change
+        if breaks_key is not None:
+            changes[breaks_key] = tuple((d - edge, z) for d, z in pts[2:] if d > edge)
+    elif last_point_is_terminus:
         interior, last = pts[2:-1], pts[-1]
         if breaks_key is not None:
             changes[breaks_key] = tuple((d - edge, z) for d, z in interior)
         run = last[0] - (interior[-1][0] if interior else edge)
         rise = abs(last[1] - (interior[-1][1] if interior else 0.0))
         changes["slope_n"] = _slope_n(run, rise, feature.slope_n)
-        changes["reach"] = round(last[0] - edge, 4)
+        changes["reach"] = _reach(last[0] - edge, feature.reach)
     else:
         # No terminal slope: all points after edge are breaks. Derive slope_n and reach.
         # Filter out breaks at distance 0 (at the edge itself) and collapse duplicates.
@@ -92,6 +103,58 @@ def set_cross_section(feature, side: int, points) -> dict:
     return changes
 
 
+def whole_cross_section(feature) -> tuple:
+    """A path's cross profile across both sides, as a surveyor draws it: ((offset, dz), ...) from the
+    end of the left slope to the end of the right one, left of the centre line at negative offsets.
+    Left and right are as seen looking along the path in the direction it was drawn."""
+    left = cross_section(feature, side=-1)[1:]
+    right = cross_section(feature, side=1)[1:]
+    return tuple((-x, z) for x, z in reversed(left)) + right
+
+
+def set_whole_cross_section(feature, points, symmetric: bool = False) -> dict:
+    """Turn an edited whole cross profile back into feature fields.
+
+    Each side is read the way `set_cross_section` reads one, but a side whose points are still the ones
+    the plot was given is left as the feature has it: reading it back could only add rounding. Width,
+    side slope and reach are single values shared by both sides, so each is taken from the side where it
+    changed (the right when both did). With `symmetric`, the break points of a side whose breaks changed
+    are copied to the other side (the right's when both did); an edit that moves no break point, such as
+    a slope's end, leaves both sides' breaks as they are."""
+    pts = [(float(x), float(z)) for x, z in points]
+    sides = {}
+    for side, key, own in ((1, "cross_right", sorted(p for p in pts if p[0] > 0.0)),
+                           (-1, "cross_left", sorted((-x, z) for x, z in pts if x < 0.0))):
+        if _same_points(own, cross_section(feature, side=side)[1:]):
+            sides[key] = {}
+        else:
+            sides[key] = set_cross_section(feature, side, [(0.0, 0.0)] + own)
+    changes = {key: read.get(key, getattr(feature, key)) for key, read in sides.items()}
+    for key in ("width", "slope_n", "reach"):
+        current = getattr(feature, key)
+        left, right = sides["cross_left"].get(key, current), sides["cross_right"].get(key, current)
+        changes[key] = left if abs(left - current) > SAME and abs(right - current) <= SAME else right
+    if symmetric:
+        # compared where the handles are on the plot: breaks are stored from the crest edge, so moving the
+        # edges alone changes every stored offset without moving a single break handle
+        edge, old_edge = changes["width"] / 2.0, feature.width / 2.0
+        right_same = _same_points([(edge + d, z) for d, z in changes["cross_right"]],
+                                  [(old_edge + d, z) for d, z in feature.cross_right])
+        left_same = _same_points([(edge + d, z) for d, z in changes["cross_left"]],
+                                 [(old_edge + d, z) for d, z in feature.cross_left])
+        if right_same and not left_same:
+            changes["cross_right"] = changes["cross_left"]
+        elif not right_same:
+            changes["cross_left"] = changes["cross_right"]
+    return changes
+
+
+def _same_points(a, b) -> bool:
+    """Whether two break lists are equal to within the rounding a round trip through the plot adds."""
+    return len(a) == len(b) and all(abs(ax - bx) <= SAME and abs(az - bz) <= SAME
+                                    for (ax, az), (bx, bz) in zip(a, b))
+
+
 def _slope_n(run: float, rise: float, current: float) -> float:
     """The terminal slope 1:n from a run over a rise, rounded to the stored four decimals.
 
@@ -102,6 +165,15 @@ def _slope_n(run: float, rise: float, current: float) -> float:
     if rise <= 1e-9:
         return 0.0
     rounded = round(run / rise, 4)
+    return rounded if rounded > 0.0 else current
+
+
+def _reach(distance: float, current: float) -> float:
+    """The slope's reach from the terminus's distance beyond the edge, rounded like the slope.
+
+    A reach of 0.0 stops the slope at the edge, so a terminus dragged hard against the edge rounds to
+    nothing only by accident — the same drag `_slope_n` guards against — and keeps the reach it had."""
+    rounded = round(distance, 4)
     return rounded if rounded > 0.0 else current
 
 
@@ -155,6 +227,67 @@ def long_section(feature, grid: DemGrid, terrain: DemGrid | None = None) -> dict
     except NoReferenceError:
         design = ()
     return {"stations": tuple(stations), "terrain": heights, "design": design, "custom": False}
+
+
+def default_section_line(feature, cell_size: float) -> bytes | None:
+    """The line an area's section runs along until the user draws one (spec §5.4): through the
+    centroid (or, when a line there would miss the outline, through a point inside it), along the
+    longer side of the smallest rotated rectangle around the outline, and on past
+    the outline — beyond the reach of outside slopes — so the section shows the ground around it.
+    Runs west to east (or south to north). None for a path, or an outline too thin to have a longer side."""
+    parts = [p for p in split_parts(feature.geometry_wkb) if not is_line(p)] if feature.mode is Mode.AREA else []
+    if not parts:
+        return None
+    points = np.vstack([polygon_rings(p)[0] for p in parts])
+    try:
+        hull = points[ConvexHull(points).vertices]
+    except (QhullError, ValueError):
+        return None
+    along, best = None, None
+    for a, b in zip(hull, np.roll(hull, -1, axis=0)):
+        edge = b - a
+        size = float(np.hypot(*edge))
+        if size == 0.0:
+            continue
+        u = edge / size
+        v = np.array([-u[1], u[0]])
+        span_u, span_v = np.ptp(hull @ u), np.ptp(hull @ v)
+        if best is None or span_u * span_v < best:
+            best, along = span_u * span_v, (u if span_u >= span_v else v)
+    if along[0] < 0.0 or (along[0] == 0.0 and along[1] < 0.0):
+        along = -along
+    outline = ogr.CreateGeometryFromWkb(bytes(feature.geometry_wkb))
+    outside = TOOL_INFO[feature.tool].has_slopes and feature.slope_n > 0.0 and not feature.slopes_inside
+    line = None
+    # The centroid of parts side by side, or of a C shape, can lie where a line through it misses the
+    # outline altogether; a point on the surface is always inside it
+    for point in (outline.Centroid(), outline.PointOnSurface()):
+        centre = np.array(point.GetPoints()[0][:2])
+        t = (points - centre) @ along
+        margin = (feature.reach if outside else 0.0) + max(5.0 * cell_size, 0.1 * float(np.ptp(t)))
+        line = line_wkb([centre + (t.min() - margin) * along, centre + (t.max() + margin) * along])
+        if outline.Intersects(ogr.CreateGeometryFromWkb(line)):
+            break
+    return line
+
+
+def section_along(line: bytes, before: DemGrid, after: DemGrid) -> dict:
+    """Terrain before and after a feature along `line`: `{"stations", "before", "after"}`, stations in
+    metres from the line's start. A station on nodata or off the grid takes the nearest valid cell within
+    3 cells (`DemGrid.sample`); only a station farther than that from valid terrain is left out."""
+    empty = {"stations": (), "before": (), "after": ()}
+    lines = [line_coords(p) for p in split_parts(line) if is_line(p)]
+    coords = max(lines, key=_length, default=np.zeros((0, 2)))
+    if len(coords) < 2 or _length(coords) <= 0.0:
+        return empty
+    stations = np.linspace(0.0, _length(coords), SAMPLES)
+    xs, ys = _walk(coords, stations)
+    rows = [(float(s), before.sample(x, y), after.sample(x, y)) for s, x, y in zip(stations, xs, ys)]
+    rows = [row for row in rows if not (math.isnan(row[1]) or math.isnan(row[2]))]
+    if not rows:
+        return empty
+    out = tuple(zip(*rows))
+    return {"stations": out[0], "before": out[1], "after": out[2]}
 
 
 def _length(coords: np.ndarray) -> float:

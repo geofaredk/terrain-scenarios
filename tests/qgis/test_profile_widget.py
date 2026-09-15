@@ -21,10 +21,22 @@ def widget_with(points, kind=Kind.CROSS, size=(400, 200), **kw):
     return w
 
 
-def key(widget, which, modifiers=Qt.KeyboardModifier.NoModifier):
+def key(widget, which, modifiers=Qt.KeyboardModifier.NoModifier, release=True):
+    """Press and let go of a key, as a tap does; the press event is returned."""
     event = QKeyEvent(QEvent.Type.KeyPress, which, modifiers)
     widget.keyPressEvent(event)
+    if release:
+        widget.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, which, modifiers))
     return event
+
+
+def hold(widget, which, repeats):
+    """Hold a key down: one press, then auto-repeated press and release pairs, then the real release."""
+    widget.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, which, Qt.KeyboardModifier.NoModifier))
+    for _ in range(repeats):
+        widget.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, which, Qt.KeyboardModifier.NoModifier, "", True))
+        widget.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, which, Qt.KeyboardModifier.NoModifier, "", True))
+    widget.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, which, Qt.KeyboardModifier.NoModifier))
 
 
 def select(widget, x, z):
@@ -111,10 +123,10 @@ def test_the_long_profile_keeps_its_end_stations_fixed():
     assert w.points[-1][0] == 30.0 and w.points[-1][1] > 12.0   # height moved, station did not
 
 
-def test_the_arrow_keys_nudge_the_selected_handle_and_commit_it():
-    """Every keypress commits straight to the working DEM, so this path is worth pinning down."""
+def test_the_arrow_keys_nudge_the_selected_handle_and_commit_when_let_go():
     w = widget_with([(0.0, 0.0), (2.0, 0.0), (12.0, -3.0)])
-    committed = []
+    during, committed = [], []
+    w.profileChanged.connect(during.append)
     w.profileCommitted.connect(committed.append)
 
     ignored = key(w, Qt.Key.Key_Up)                     # nothing selected yet
@@ -122,10 +134,12 @@ def test_the_arrow_keys_nudge_the_selected_handle_and_commit_it():
 
     select(w, 12.0, -3.0)
     assert committed == []                              # a click that moves nothing commits nothing
-    accepted = key(w, Qt.Key.Key_Up)
+    accepted = key(w, Qt.Key.Key_Up, release=False)
     assert accepted.isAccepted()
     assert w.points[2][1] == pytest.approx(-3.0 + NUDGE)
-    assert len(committed) == 1 and committed[-1] == tuple(w.points)
+    assert len(during) == 1 and committed == []         # shown while the key is down…
+    w.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_Up, Qt.KeyboardModifier.NoModifier))
+    assert len(committed) == 1 and committed[-1] == tuple(w.points)   # …committed when it is let go
 
     key(w, Qt.Key.Key_Down)
     assert w.points[2][1] == pytest.approx(-3.0)
@@ -134,6 +148,45 @@ def test_the_arrow_keys_nudge_the_selected_handle_and_commit_it():
     key(w, Qt.Key.Key_Left)
     assert w.points[2][0] == pytest.approx(12.0 + NUDGE_FINE - NUDGE)
     assert len(committed) == 4
+
+
+def test_holding_an_arrow_key_is_one_change_not_one_per_repeat():
+    """Auto-repeat sends about thirty presses a second, and each commit is a recompute, a file write
+    and an undo step."""
+    w = widget_with([(0.0, 0.0), (2.0, 0.0), (12.0, -3.0)])
+    during, committed = [], []
+    w.profileChanged.connect(during.append)
+    w.profileCommitted.connect(committed.append)
+    select(w, 12.0, -3.0)
+    hold(w, Qt.Key.Key_Up, repeats=9)
+    assert w.points[2][1] == pytest.approx(-3.0 + 10 * NUDGE)
+    assert len(during) == 10 and len(committed) == 1 and committed[0] == tuple(w.points)
+
+
+def test_a_nudge_is_committed_when_the_plot_loses_focus_before_the_key_is_let_go():
+    from qgis.PyQt.QtGui import QFocusEvent
+    w = widget_with([(0.0, 0.0), (2.0, 0.0), (12.0, -3.0)])
+    committed = []
+    w.profileCommitted.connect(committed.append)
+    select(w, 12.0, -3.0)
+    key(w, Qt.Key.Key_Down, release=False)
+    w.focusOutEvent(QFocusEvent(QEvent.Type.FocusOut))
+    assert len(committed) == 1
+    w.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_Down, Qt.KeyboardModifier.NoModifier))
+    assert len(committed) == 1                          # the late release commits nothing more
+
+
+def test_a_nudge_the_plot_was_reloaded_under_is_not_committed():
+    """An undo can reload or clear the plot while a key is held; the release must not commit points
+    that belonged to the profile before."""
+    w = widget_with([(0.0, 0.0), (2.0, 0.0), (12.0, -3.0)])
+    committed = []
+    w.profileCommitted.connect(committed.append)
+    select(w, 12.0, -3.0)
+    key(w, Qt.Key.Key_Up, release=False)
+    w.set_profile([(0.0, 0.0), (2.0, 0.0), (12.0, -3.0)])
+    w.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_Up, Qt.KeyboardModifier.NoModifier))
+    assert committed == []
 
 
 def test_the_arrow_keys_are_ignored_in_a_read_only_plot_and_for_other_keys():
@@ -189,3 +242,94 @@ def test_clearing_the_plot_mid_drag_ends_the_drag():
     press(w, start.x() + 20, start.y() - 20, kind=QEvent.Type.MouseMove)
     press(w, start.x() + 20, start.y() - 20, kind=QEvent.Type.MouseButtonRelease)
     assert w.points == [] and committed == []
+
+
+def whole(width=4.0, left=(), right=((12.0, -3.0),)):
+    """A mirrored plot: left-side points (negative), the two crest edges, right-side points."""
+    edge = width / 2.0
+    points = [*left, (-edge, 0.0), (edge, 0.0), *right]
+    return widget_with(points, mirrored=True)
+
+
+def drag(widget, x, z, to_x, to_z):
+    start, end = widget._to_screen(x, z), widget._to_screen(to_x, to_z)
+    press(widget, start.x(), start.y())
+    press(widget, end.x(), end.y(), kind=QEvent.Type.MouseMove)
+    press(widget, end.x(), end.y(), kind=QEvent.Type.MouseButtonRelease)
+
+
+def test_the_two_crest_edges_move_together():
+    w = whole(left=((-12.0, -3.0),))
+    drag(w, 2.0, 0.0, 3.0, 0.0)
+    assert w.points[1][0] == pytest.approx(-w.points[2][0]) and w.points[2][0] == pytest.approx(3.0, abs=0.1)
+    assert w.points[1][1] == w.points[2][1] == 0.0                # the crest stays level
+
+
+def test_the_crest_stays_level_while_an_edge_is_dragged_or_nudged():
+    w = whole(left=((-12.0, -3.0),))
+    drag(w, 2.0, 0.0, 3.0, 1.5)                                   # dragged up and out
+    assert w.points[1][1] == w.points[2][1] == 0.0
+    committed = []
+    w.profileCommitted.connect(committed.append)
+    select(w, *w.points[2])
+    key(w, Qt.Key.Key_Up)
+    assert w.points[2][1] == 0.0 and committed == []               # nothing to commit
+
+
+def test_no_handle_crosses_the_centre_line():
+    w = whole(left=((-12.0, -3.0),))
+    drag(w, -2.0, 0.0, 5.0, 0.0)                                  # the left edge dragged far to the right
+    assert w.points[1][0] < 0.0 < w.points[2][0]
+    assert w.points[2][0] <= 12.0
+
+
+def test_with_symmetric_on_a_handle_takes_its_mirror_image_along():
+    w = whole(left=((-12.0, -3.0),))
+    w.symmetric = True
+    drag(w, 12.0, -3.0, 14.0, -4.0)
+    assert w.points[0][0] == pytest.approx(-w.points[3][0]) and w.points[0][1] == pytest.approx(w.points[3][1])
+    w.symmetric = False
+    drag(w, 14.0, w.points[3][1], 10.0, -2.0)
+    assert w.points[0][0] != pytest.approx(-w.points[3][0])       # off: only the dragged side moves
+
+
+def test_a_handle_without_a_mirror_image_moves_alone_even_when_symmetric():
+    w = whole(left=((-12.0, -3.0),), right=((6.0, -1.0), (12.0, -3.0)))
+    w.symmetric = True
+    before = list(w.points)
+    drag(w, 6.0, -1.0, 7.0, -1.5)
+    assert w.points[:3] == before[:3]
+
+
+def test_the_arrow_keys_move_both_crest_edges():
+    w = whole(left=((-12.0, -3.0),))
+    select(w, 2.0, 0.0)
+    key(w, Qt.Key.Key_Right)
+    assert w.points[2][0] == pytest.approx(2.0 + NUDGE) and w.points[1][0] == pytest.approx(-2.0 - NUDGE)
+
+
+def test_the_crest_edges_cannot_be_removed_and_nothing_is_added_on_the_crest():
+    w = whole(left=((-12.0, -3.0),))
+    committed = []
+    w.profileCommitted.connect(committed.append)
+    edge = w._to_screen(2.0, 0.0)
+    press(w, edge.x(), edge.y(), button=Qt.MouseButton.RightButton)
+    crest = w._to_screen(0.5, 0.0)
+    press(w, crest.x(), crest.y(), kind=QEvent.Type.MouseButtonDblClick)
+    assert len(w.points) == 4 and committed == []
+    slope = w._to_screen(7.0, -1.5)
+    press(w, slope.x(), slope.y(), kind=QEvent.Type.MouseButtonDblClick)
+    assert len(w.points) == 5 and len(committed) == 1              # a berm on a slope is fine
+
+
+def test_a_reload_keeps_the_selected_handle_only_where_it_still_is():
+    """A commit reloads the plot with the handle where the user left it, and the next arrow key must find
+    it. An undo can reload a profile with as many points but another shape, where the same index is
+    another handle."""
+    w = widget_with([(0.0, 0.0), (2.0, 0.0), (6.0, -1.0), (12.0, -3.0)])
+    select(w, 6.0, -1.0)
+    key(w, Qt.Key.Key_Right)
+    w.set_profile([(0.0, 0.0), (2.0, 0.0), (6.1, -1.0), (12.0, -3.0)])     # the commit's reload
+    assert w.selected == 2
+    w.set_profile([(0.0, 0.0), (2.0, 0.0), (3.0, -0.2), (12.0, -3.0)])     # an undo to another shape
+    assert w.selected == -1

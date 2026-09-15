@@ -3,7 +3,7 @@ from qgis.PyQt.QtGui import QFocusEvent, QPalette
 
 from qgis_helpers import UTM, line_through, square, start_session
 from terrain_sketch.core.tools import Mode, PixelMode, Tool
-from terrain_sketch.gui.help_texts import TOOL_DESCRIPTIONS, TOOL_EXAMPLES
+from terrain_sketch.gui.help_texts import PIXEL_MODE_LABELS, TOOL_DESCRIPTIONS, TOOL_EXAMPLES
 from terrain_sketch.gui.properties_page import PropertiesPage
 from terrain_sketch.gui.tool_gallery import ToolGallery
 
@@ -109,3 +109,72 @@ def test_the_about_group_can_be_collapsed_and_remembers_its_name(tmp_path):
     assert page.about.objectName() == "TerrainSketchAboutTool"
     page.about.setCollapsed(True)
     assert page.about.isCollapsed()
+
+
+def test_the_amount_label_says_what_the_height_or_depth_is_measured_from():
+    """"Height" alone let users measure a flat pad from the ground under it rather than from its
+    highest point (spec §7.2: the label depends on the tool)."""
+    from terrain_sketch.core.tools import TOOL_INFO
+    from terrain_sketch.gui.help_texts import amount_label
+    labels = {}
+    for tool in Tool:
+        for mode in TOOL_INFO[tool].modes:
+            labels[(tool, mode)] = amount_label(tool, mode)
+    assert labels.pop((Tool.INTERPOLATE, Mode.PATH)) is None and labels.pop((Tool.INTERPOLATE, Mode.AREA)) is None
+    for (tool, _mode), label in labels.items():
+        lowers = tool in (Tool.LOWER_PATH, Tool.LOWER_FLAT, Tool.SUBTRACT)
+        assert label.startswith("Depth" if lowers else "Height"), label
+        assert len(label.split()) > 1, label                     # never the bare word
+    assert "highest" in labels[(Tool.RAISE_FLAT, Mode.PATH)] and "lowest" in labels[(Tool.LOWER_FLAT, Mode.AREA)]
+    assert labels[(Tool.RAISE_PATH, Mode.PATH)] != labels[(Tool.RAISE_FLAT, Mode.PATH)]
+
+
+def test_the_pixels_tooltip_shows_the_three_modes_side_by_side_in_the_theme(tmp_path):
+    import base64
+    from qgis.PyQt.QtGui import QImage
+    c = start_session(tmp_path)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
+    page = PropertiesPage(c)
+    page.show_feature(pond.id)
+    tip = page.pixel_mode.toolTip()
+    images = tip.split('src="data:image/png;base64,')[1:]
+    assert len(images) == 3
+    for mode in PixelMode:
+        assert f">{PIXEL_MODE_LABELS[mode]}<" in tip
+    first = QImage.fromData(base64.b64decode(images[0].split('"')[0]))
+    assert not first.isNull() and first.width() == 72
+
+    dark = QPalette()
+    dark.setColor(QPalette.ColorRole.Mid, Qt.GlobalColor.white)
+    dark.setColor(QPalette.ColorRole.Highlight, Qt.GlobalColor.yellow)
+    page.setPalette(dark)                                       # the theme changes
+    assert page.pixel_mode.toolTip() != tip
+
+
+def test_a_picture_that_cannot_be_drawn_does_not_take_qgis_down(tmp_path, monkeypatch):
+    """The theme changing and a field taking focus both redraw pictures from inside a Qt handler."""
+    from terrain_sketch.gui import illustrations
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    page = PropertiesPage(c)
+    page.show_feature(dike.id)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("an SVG that cannot be read")
+
+    monkeypatch.setattr(illustrations, "pixmap", broken)
+    page.changeEvent(QEvent(QEvent.Type.PaletteChange))
+    page.eventFilter(page.width, QFocusEvent(QEvent.Type.FocusIn))
+
+
+def test_the_amount_labels_and_summaries_name_what_the_engine_measures_from():
+    """An area's level is the highest or lowest point of its outline, as the About text says; a raised or
+    lowered path follows the straight grade between the ground at its ends, not every bump in between."""
+    from terrain_sketch.gui.help_texts import TOOL_SUMMARIES, amount_label
+    for tool in (Tool.RAISE_FLAT, Tool.LOWER_FLAT):
+        assert amount_label(tool, Mode.AREA) == amount_label(tool, Mode.PATH)
+        assert "point" in amount_label(tool, Mode.AREA) and "edge" not in amount_label(tool, Mode.AREA)
+    for tool, change in ((Tool.RAISE_PATH, "plus the height"), (Tool.LOWER_PATH, "minus the depth")):
+        summary = TOOL_SUMMARIES[tool]
+        assert "straight grade between the ground at" in summary and change in summary
+        assert "following the terrain" not in summary

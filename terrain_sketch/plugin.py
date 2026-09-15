@@ -7,6 +7,7 @@ from qgis.core import QgsProject
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QAction, QIcon
 
+from .gui import settings
 from .gui.controller import SketchController
 from .gui.main_dock import MainDock
 from .gui.profile_dock import ProfileDock
@@ -33,6 +34,7 @@ class TerrainSketchPlugin:
         self.iface.addPluginToRasterMenu(MENU, self.action)
 
     def unload(self):
+        self._remember_docks()
         if self.profiles is not None:
             self.profiles.shutdown()
             self.iface.removeDockWidget(self.profiles)
@@ -72,6 +74,19 @@ class TerrainSketchPlugin:
         self.profiles = ProfileDock(self.controller, self.iface.mainWindow())
         self.dock = MainDock(self.iface, self.controller, self.profiles, self.iface.mainWindow())
         self.dock.closedStateChanged.connect(lambda closed: self.action.setChecked(not closed))
-        self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
-        self.iface.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.profiles)
+        window = self.iface.mainWindow()
+        # Both panels go back where the user last had them (spec §7.1); QGIS does not do this for a
+        # plugin's panels, which are created long after it restored its own window layout.
+        for name, dock, default in (("main_dock", self.dock, Qt.DockWidgetArea.RightDockWidgetArea),
+                                    ("profile_dock", self.profiles, Qt.DockWidgetArea.BottomDockWidgetArea)):
+            self.iface.addDockWidget(settings.dock_area(name, default), dock)
+            settings.restore_dock(name, dock, window)
+            dock.dockLocationChanged.connect(lambda _area, n=name, d=dock: settings.save_dock(n, d, window))
+            dock.topLevelChanged.connect(lambda _floating, n=name, d=dock: settings.save_dock(n, d, window))
         return True
+
+    def _remember_docks(self) -> None:
+        window = self.iface.mainWindow()
+        for name, dock in (("main_dock", self.dock), ("profile_dock", self.profiles)):
+            if dock is not None:
+                settings.save_dock(name, dock, window)

@@ -230,3 +230,24 @@ def test_ctrl_z_after_a_field_undid_its_own_text_undoes_the_last_change(tmp_path
     assert c.find(dike.id).amount == pytest.approx(1.1)
     press(spin, QKeySequence.StandardKey.Undo)
     assert c.find(dike.id).amount == 1.0 and qgis_undo == []
+
+
+def test_the_undo_button_leaves_a_value_the_user_is_still_typing(tmp_path):
+    """The button takes no focus, so the field keeps it and its typed text. Undo changes the feature;
+    the typed value is still there to confirm with Enter, not silently thrown away."""
+    iface, c, dock = panel(tmp_path)
+    _window, _qgis_undo = in_a_window(iface, dock)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.select_id(dike.id)
+    c.update_feature(dike.id, width=dike.width + 1.0)
+    spin = dock.properties.amount
+    spin.setFocus()
+    spin_event_loop(10)
+    spin.selectAll()
+    QTest.keyClicks(spin, "2")                             # typed, not yet committed
+    dock.undo_button.click()
+    assert c.find(dike.id).width == dike.width                   # the width change was undone
+    assert dock.properties.width.value() == pytest.approx(dike.width)
+    assert spin.lineEdit().text() == "2 m"
+    QTest.keyClick(spin, Qt.Key.Key_Return)
+    assert c.find(dike.id).amount == 2.0

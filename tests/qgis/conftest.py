@@ -5,10 +5,24 @@ import pytest
 from qgis.core import QgsApplication, QgsProject, QgsSettings
 
 from terrain_sketch.gui import settings as plugin_settings
+from terrain_sketch.gui.controller import SketchController
 
 QgsApplication.setPrefixPath(os.environ.get("QGIS_PREFIX_PATH", "/Applications/QGIS-final-4_2_2.app"), True)
 QGIS_APP = QgsApplication([], True)
 QGIS_APP.initQgis()
+
+# Every controller listens to the one QgsProject. Without letting go after each test, the controllers of
+# every earlier test would still answer the next test's project signals.
+_controllers = []
+_controller_init = SketchController.__init__
+
+
+def _tracked_init(self, *args, **kwargs):
+    _controller_init(self, *args, **kwargs)
+    _controllers.append(self)
+
+
+SketchController.__init__ = _tracked_init
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +41,7 @@ def no_modal_dialogs(monkeypatch):
         return QMessageBox.StandardButton.NoButton
 
     monkeypatch.setattr(QMessageBox, "question", staticmethod(question))
+    monkeypatch.setattr(QMessageBox, "exec", lambda _box: QMessageBox.StandardButton.Cancel)   # no button clicked
     monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: ("", "")))
     monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: ("", "")))
 
@@ -37,6 +52,8 @@ def clean_project(no_modal_dialogs):
     _clear_plugin_settings()
     yield
     QgsProject.instance().clear()
+    while _controllers:
+        _controllers.pop().shutdown()
     _clear_plugin_settings()
 
 

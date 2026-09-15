@@ -14,7 +14,7 @@ and keep working unchanged.
 from __future__ import annotations
 
 from ..core.operations import FLAG_BAD_GEOMETRY, FLAG_NO_PIXELS, FLAG_NODATA_REFERENCE, FLAG_OUTSIDE
-from ..core.tools import PixelMode, Tool
+from ..core.tools import Mode, PixelMode, Tool
 
 TOOL_LABELS = {
     Tool.INTERPOLATE: "Interpolate",
@@ -30,10 +30,12 @@ TOOL_SUMMARIES = {
     Tool.INTERPOLATE: "A straight grade between the terrain at the start and end of the path, or a smooth "
                       "surface between the corners of an area. Example: cut through an embankment that "
                       "blocks a flow path, or fill an old ditch.",
-    Tool.RAISE_PATH: "Adds material along the path, following the terrain uphill or downhill; it never "
-                     "removes material. Example: a wall or emergency dike along a river bank.",
-    Tool.LOWER_PATH: "Removes material along the path, following the terrain; it never adds material. "
-                     "Example: a ditch or swale that drains a road towards a pond.",
+    Tool.RAISE_PATH: "Adds material along the path: a straight grade between the ground at the path's ends, "
+                     "plus the height; it never removes material. Example: a wall or emergency dike along a "
+                     "river bank.",
+    Tool.LOWER_PATH: "Removes material along the path: a straight grade between the ground at the path's ends, "
+                     "minus the depth; it never adds material. Example: a ditch or swale that drains a road "
+                     "towards a pond.",
     Tool.RAISE_FLAT: "A level top at the highest point of the path or outline plus the height. "
                      "Example: a flat dam, or building footprints.",
     Tool.LOWER_FLAT: "A level bottom at the lowest point of the path or outline minus the depth. "
@@ -80,6 +82,8 @@ EXPORT_DONE = "Exported the modified DEM to {}"
 EXPORT_INTEGER_NOTE = ("Your DEM stores whole numbers; the export keeps decimals (32-bit float), so changes "
                        "smaller than a metre are not rounded away.")
 EXPORT_NOT_ADDED = "The exported DEM could not be added to the project: {} cannot be read as a raster."
+EXPORT_ADD_FAILED = ("The exported DEM {} could not be added to the project; see the 'Terrain Sketch' log tab "
+                     "for details.")
 
 # What Undo and Redo will do, shown as "Undo Add Dike 1" in their buttons' tooltips.
 UNDO_ADD = "Add {}"
@@ -92,6 +96,7 @@ UNDO_SHAPE = "Edit the shape of {}"
 UNDO_PROFILE = "Change the profile of {}"
 UNDO_SETTINGS = "Change the settings of {}"
 UNDO_DUPLICATE = "Duplicate {}"
+UNDO_SECTION_LINE = "Move the section line of {}"
 COPY_NAME = "{} (copy)"
 
 VIEW_3D_TIP = ("Show the modified DEM in a new 3D view. It is the project's terrain, but only a temporary one, "
@@ -103,24 +108,43 @@ VIEW_3D_NO_LAYER = ("The Modified DEM layer is no longer in the project, so ther
                     "Press Start to create it again.")
 
 
-def amount_label(tool: Tool) -> str | None:
-    """Label of the amount field, or None when the tool has no amount."""
-    if tool is Tool.INTERPOLATE:
-        return None
-    if tool in (Tool.LOWER_PATH, Tool.LOWER_FLAT, Tool.SUBTRACT):
-        return "Depth"
-    return "Height"
+# The amount field says what it is measured from (spec §7.2): a height "above the path" and one "above
+# the highest point" are different numbers for the same dike, and a bare "Height" let users set the wrong one.
+AMOUNT_LABELS = {
+    (Tool.RAISE_PATH, Mode.PATH): "Height above the path",
+    (Tool.LOWER_PATH, Mode.PATH): "Depth below the path",
+    (Tool.RAISE_FLAT, Mode.PATH): "Height above the highest point",
+    (Tool.RAISE_FLAT, Mode.AREA): "Height above the highest point",
+    (Tool.LOWER_FLAT, Mode.PATH): "Depth below the lowest point",
+    (Tool.LOWER_FLAT, Mode.AREA): "Depth below the lowest point",
+    (Tool.ADD, Mode.PATH): "Height added",
+    (Tool.ADD, Mode.AREA): "Height added",
+    (Tool.SUBTRACT, Mode.PATH): "Depth removed",
+    (Tool.SUBTRACT, Mode.AREA): "Depth removed",
+}
+
+
+def amount_label(tool: Tool, mode: Mode) -> str | None:
+    """Label of the amount field, or None when the tool has no amount (Interpolate)."""
+    return AMOUNT_LABELS.get((tool, mode))
 
 PROFILE_EMPTY_HINT = "Select or draw a feature to edit its shape here."
 CUSTOM_PROFILE_NOTE = ("Custom long profile: the heights are fixed and no longer follow the "
                        "terrain underneath. Use Reset to rule to go back.")
-AREA_LONG_SECTION_HINT = "A section through an area arrives in a later version."
-AREA_LONG_SECTION_NOTE = ("An area has no long profile to edit. A section through the feature "
-                          "arrives in a later version; until then, use the cross profile on the "
-                          "left to shape its sides.")
+AREA_SECTION_EMPTY_HINT = "There is no terrain to show along this feature's section line."
+AREA_SECTION_NOTE = ("A section through the area along the dashed line on the map: dashed here is the ground "
+                     "before this feature, solid is the result. Shape the sides with the cross profile on the left.")
+DRAW_SECTION_TIP = "Draw the line on the map that this section runs along."
+RESET_SECTION_TIP = "Put the section line back through the middle of the area, along its longer side."
+SECTION_LINE_HINT = ("Click to draw the section line. Right-click or press Enter to finish, Backspace removes the "
+                     "last point, Esc cancels.")
 MULTIPART_LONG_SECTION_NOTE = ("This feature has more than one part, so its long profile follows "
                                "the tool rule and cannot be edited by hand. Use Height or Depth in "
                                "the panel above to drive its shape.")
+CROSS_SIDES_TIP = ("A section across the path, looking along it in the direction it was drawn: its left side "
+                   "on the left. Drag the crest edges to change the width, and the ends of the slopes to change "
+                   "their steepness and reach; double-click to add a break point, such as a berm, and "
+                   "right-click to remove one.")
 SYMMETRIC_TIP = ("While this is ticked, break points are mirrored to the other side of the path. "
                  "Width and side slope are single values that always apply to both sides.")
 AMOUNT_IS_CUSTOM = ("The long profile was edited by hand, so its heights are fixed. Use "
@@ -234,7 +258,24 @@ SCENARIO_DEM_DIFFERS = ("This scenario was made on a DEM with a different {}.\n\
                         "the result before using it.\n\n"
                         "Choose No to keep your current work, then pick the DEM the scenario was made "
                         "for and press Start before opening it.")
+DEM_NOT_READABLE = "{} cannot be read as a raster, so Terrain Sketch cannot start on it."
+SCENARIO_OTHER_DEM = ("This scenario was made on {dem}, which differs from the DEM you are using in {differences}."
+                      "\n\nStart on {dem} and open the scenario there? Your current DEM stays in the project.")
+FILES_NOT_MOVED = ("Terrain Sketch could not put its working rasters in {folder} ({error}), so a QGIS project "
+                   "saved now will not find them next time. They are kept in a temporary folder meanwhile.")
+FILES_ARE_THE_DEM = ("Terrain Sketch did not put its working rasters in {folder}: this session's DEM is one of "
+                     "the files there, and your DEM is never changed. They are kept in a temporary folder "
+                     "meanwhile, so a QGIS project saved now will not find them next time.")
+FILES_KEPT_IN_OLD_FOLDER = ("Terrain Sketch could not put its working rasters in {folder}, nor in a temporary "
+                            "folder, so they stay in {old_folder} until this session ends. That folder is put "
+                            "back to its saved scenario then.")
+FILES_NOT_RELEASED = ("Terrain Sketch could not move its working rasters out of {folder}, where the next features "
+                      "would have been written over the saved scenario's, so nothing was changed.")
+FILES_NOT_RESTORED = ("Terrain Sketch could not put the rasters in {folder} back to the saved scenario ({error}); "
+                      "they may show changes that were not saved.")
 SCENARIO_NOT_APPLIED = ("The scenario could not be applied to this DEM, so it was not opened. "
                         "Your current features are unchanged.")
+SCENARIO_NOT_APPLIED_ON_ITS_DEM = ("The scenario could not be applied to its DEM, so it was not opened. "
+                                   "Terrain Sketch has started on that DEM without any features.")
 UNSAVED_BEFORE_CLOSING = ("Terrain Sketch is closing this scenario, and it has changes that are not "
                           "saved. Save them now?")

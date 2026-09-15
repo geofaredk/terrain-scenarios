@@ -1,14 +1,16 @@
 """The feature list's context menu (spec §7.2): Rename, Duplicate, Zoom to, Delete."""
+from dataclasses import replace
 from unittest import mock
 
 import numpy as np
 from qgis.core import QgsProject
-from qgis.PyQt.QtCore import QCoreApplication, QEvent
+from qgis.PyQt.QtCore import QCoreApplication, QEvent, QMimeData, QModelIndex, Qt
 from qgis.PyQt.QtWidgets import QAbstractItemView, QMenu
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_through, square, start_session
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.controller import SketchController
+from terrain_sketch.gui.feature_list import MIME_TYPE
 from terrain_sketch.gui.help_texts import COPY_NAME, UNDO_DUPLICATE
 from terrain_sketch.gui.main_dock import PAGE_PROPERTIES, MainDock
 
@@ -46,8 +48,7 @@ def test_a_duplicate_copies_everything_turned_off_right_after_the_original(tmp_p
     copy = c.duplicate_feature(dike.id)
     assert [f.id for f in c.features] == [dike.id, copy.id, pond.id]
     assert copy.id != dike.id and copy.name == COPY_NAME.format(dike.name)
-    for field in ("tool", "mode", "geometry_wkb", "amount", "width", "cross_right", "pixel_mode"):
-        assert getattr(copy, field) == getattr(dike, field), field
+    assert replace(copy, id=dike.id, name=dike.name, enabled=dike.enabled) == dike   # every other field
     assert not copy.enabled
     assert np.array_equal(c.stack.working.data, before)          # the map does not change until it is ticked on
     c.set_enabled(copy.id, True)
@@ -63,6 +64,14 @@ def test_duplicating_twice_keeps_names_unique(tmp_path):
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     first, second = c.duplicate_feature(dike.id), c.duplicate_feature(dike.id)
     assert len({dike.name, first.name, second.name}) == 3
+
+
+def test_copies_of_one_feature_stay_in_the_order_they_were_made(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 8, 25, 16), UTM)
+    first, second = c.duplicate_feature(dike.id), c.duplicate_feature(dike.id)
+    assert [f.id for f in c.features] == [dike.id, first.id, second.id, pond.id]
 
 
 def test_duplicating_a_feature_that_has_gone_does_nothing(tmp_path):
@@ -121,3 +130,15 @@ def test_a_context_menu_is_deleted_once_it_has_closed(tmp_path):
             dock._context_menu(position)
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     assert len(dock.findChildren(QMenu)) == menus
+
+
+def test_a_drop_of_features_the_list_does_not_have_changes_nothing(tmp_path):
+    """A drag that started before the list changed carries ids that are no longer there; the drop
+    runs inside Qt, where reorder()'s ValueError would abort QGIS."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 8, 25, 16), UTM)
+    data = QMimeData()
+    data.setData(MIME_TYPE, "\n".join([pond.id, "a feature that was deleted"]).encode())
+    assert dock.model.dropMimeData(data, Qt.DropAction.MoveAction, 0, 0, QModelIndex()) is False
+    assert [f.id for f in c.features] == [dike.id, pond.id]

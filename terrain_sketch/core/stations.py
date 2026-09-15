@@ -12,7 +12,9 @@ def vertex_stations(coords: np.ndarray) -> np.ndarray:
 
 def stations_offsets(coords: np.ndarray, X: np.ndarray, Y: np.ndarray):
     """For every point: station of the nearest point on the polyline and the signed
-    distance to it (positive right of the direction of travel, negative left)."""
+    distance to it (positive right of the direction of travel, negative left). A point on the line
+    through its nearest segment — on the path, or straight ahead past one of its ends — is on neither
+    side and gets 0."""
     X = np.asarray(X, dtype=float)
     Y = np.asarray(Y, dtype=float)
     best = np.full(X.shape, np.inf)
@@ -29,6 +31,6 @@ def stations_offsets(coords: np.ndarray, X: np.ndarray, Y: np.ndarray):
         best = np.where(better, d2, best)
         station = np.where(better, cum + t * length, station)
         cross = dx * (Y - ay) - dy * (X - ax)  # > 0: left of travel (y axis up)
-        side = np.where(better, np.where(cross > 0.0, -1.0, 1.0), side)
+        side = np.where(better, np.sign(-cross), side)
         cum += length
     return station, side * np.sqrt(best)

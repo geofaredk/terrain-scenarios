@@ -7,7 +7,7 @@ from qgis.core import QgsProject, QgsRasterLayer
 from qgis_helpers import CELL, UTM, X0, Y0, fake_iface, line_through
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.help_texts import EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED
+from terrain_sketch.gui.help_texts import EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED
 from terrain_sketch.gui.main_dock import MainDock
 
 
@@ -105,3 +105,35 @@ def test_a_float_dem_gets_no_integer_note(tmp_path, monkeypatch):
     path = export(dock, tmp_path)
     text, _widget = pushed(iface)
     assert EXPORT_INTEGER_NOTE not in text
+
+
+def test_two_messages_about_the_same_file_add_it_once(tmp_path):
+    """Exporting twice to one file leaves two messages, each with its own button."""
+    from qgis.PyQt.QtWidgets import QPushButton
+    iface, _c, dock = panel(tmp_path)
+    path = export(dock, tmp_path)
+    _text, first = pushed(iface)
+    export(dock, tmp_path)
+    _text, second = pushed(iface)
+    for widget in (first, second):
+        next(b for b in widget.findChildren(QPushButton) if b.text() == "Add to project").click()
+    assert len([l for l in QgsProject.instance().mapLayers().values() if l.source() == path]) == 1
+
+
+def test_an_unexpected_failure_adding_the_export_points_to_the_log(tmp_path):
+    from unittest import mock
+    _iface, _c, dock = panel(tmp_path)
+    path = export(dock, tmp_path)
+    heard = []
+    dock._show_message = lambda level, text: heard.append(text)
+    with mock.patch.object(QgsProject, "addMapLayer", side_effect=RuntimeError("layer registry refused")):
+        dock._add_export(path)
+    assert heard == [EXPORT_ADD_FAILED.format(path)]
+
+
+def test_export_is_an_icon_button_like_the_other_file_actions(tmp_path):
+    from qgis.PyQt.QtCore import Qt
+    _iface, _c, dock = panel(tmp_path)
+    assert dock.export_button.toolButtonStyle() == dock.save_scenario_button.toolButtonStyle() \
+        == Qt.ToolButtonStyle.ToolButtonIconOnly
+    assert dock.export_button.toolTip().startswith("Export DEM…\n")

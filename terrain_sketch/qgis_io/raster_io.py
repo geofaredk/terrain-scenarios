@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
 
 import numpy as np
@@ -13,6 +14,7 @@ from ..core.grid import DemGrid, Window
 gdal.UseExceptions()
 
 WARN_CELLS = 50_000_000
+WORKING_NAME, CHANGE_NAME = "working_dem.tif", "change.tif"
 DEFAULT_NODATA = -9999.0
 _CREATE_OPTIONS = ["COMPRESS=LZW", "TILED=YES", "BIGTIFF=IF_SAFER"]
 
@@ -75,13 +77,36 @@ class WorkingFiles:
     def __init__(self, folder: str, original: DemGrid, info: DemInfo):
         os.makedirs(folder, exist_ok=True)
         self.folder = folder
-        self.working_path = os.path.join(folder, "working_dem.tif")
-        self.change_path = os.path.join(folder, "change.tif")
+        self.working_path = os.path.join(folder, WORKING_NAME)
+        self.change_path = os.path.join(folder, CHANGE_NAME)
         self._original = original
         self._info = info
         _write_tif(self.working_path, _for_output(original.data, original.valid, info.nodata), original, info)
         _write_tif(self.change_path, _for_output(np.zeros(original.data.shape), original.valid, info.nodata),
                    original, info)
+
+    def move_to(self, folder: str) -> None:
+        """Copy both files into `folder` and write there from now on. The old files are left for the caller
+        to remove. Each copy is made under a temporary name and only then put in place, so a copy that fails
+        half way — a full disk — neither changes the files in use nor leaves a truncated raster in `folder`,
+        nor the folder itself when this made it and it is empty."""
+        existed = os.path.isdir(folder)
+        os.makedirs(folder, exist_ok=True)
+        moves = [(source, os.path.join(folder, name)) for source, name in
+                 ((self.working_path, WORKING_NAME), (self.change_path, CHANGE_NAME))]
+        try:
+            for source, target in moves:
+                shutil.copyfile(source, target + ".copying")
+        except BaseException:
+            for _source, target in moves:
+                if os.path.exists(target + ".copying"):
+                    os.remove(target + ".copying")
+            if not existed and not os.listdir(folder):
+                os.rmdir(folder)
+            raise
+        for _source, target in moves:
+            os.replace(target + ".copying", target)
+        self.folder, self.working_path, self.change_path = folder, moves[0][1], moves[1][1]
 
     def write(self, window: Window, working: DemGrid) -> None:
         """Write one window of the working DEM and its change into both files."""

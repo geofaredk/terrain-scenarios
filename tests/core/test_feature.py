@@ -16,6 +16,9 @@ def test_round_trip_through_json_dict():
                        long_profile=((0.0, 10.0), (1.4, 11.0)))
     d = json.loads(json.dumps(f.to_dict()))
     assert TerrainFeature.from_dict(d) == f
+    pond = TerrainFeature(id="b", name="Pond", tool=Tool.LOWER_FLAT, mode=Mode.AREA, geometry_wkb=TRIANGLE,
+                          section_line=line_wkb([(-1, 0.5), (2, 0.5)]))
+    assert TerrainFeature.from_dict(json.loads(json.dumps(pond.to_dict()))) == pond
 
 
 def test_new_feature_defaults():

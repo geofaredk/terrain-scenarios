@@ -1,11 +1,14 @@
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
 from helpers import feature, flat, make_grid, tilted
 from terrain_sketch.core.engine import FeatureStack
 from terrain_sketch.core.geometry import line_wkb, multi_wkb, polygon_wkb
-from terrain_sketch.core.sections import (cross_section, long_section, set_cross_section,
-                                          supports_long_profile)
+from terrain_sketch.core.sections import (cross_section, default_section_line, long_section, section_along,
+                                          set_cross_section, set_whole_cross_section, supports_long_profile,
+                                          whole_cross_section)
 from terrain_sketch.core.tools import Mode, Tool
 
 
@@ -217,7 +220,202 @@ def test_a_terminus_dragged_hard_against_its_neighbour_keeps_the_side_slope():
     assert changes["slope_n"] == pytest.approx(3.0)
 
 
+def test_a_terminus_dragged_hard_against_the_edge_keeps_its_reach():
+    """A reach that rounds to 0.0 stops the slope at the edge — the slope kept by the test above
+    would then change nothing."""
+    f = dike(width=4.0, slope_n=3.0, reach=20.0)
+    changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (2.00001, -3.0)])
+    assert changes["reach"] == pytest.approx(20.0)
+    assert changes["slope_n"] == pytest.approx(3.0)
+
+
 def test_a_real_but_very_flat_slope_is_still_written():
     f = dike(width=4.0, slope_n=3.0, reach=20.0)
     changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (22.0, -0.5)])
     assert changes["slope_n"] == pytest.approx(40.0)
+
+
+def test_the_whole_cross_section_runs_from_the_left_slope_to_the_right_one():
+    f = dike(width=4.0, slope_n=2.0, reach=10.0, cross_left=((2.0, -0.5),), cross_right=((4.0, -1.5),))
+    points = whole_cross_section(f)
+    assert points[0][0] == pytest.approx(-12.0) and points[-1][0] == pytest.approx(12.0)
+    assert (-4.0, -0.5) in points and (-2.0, 0.0) in points and (2.0, 0.0) in points and (6.0, -1.5) in points
+    assert [x for x, _z in points] == sorted(x for x, _z in points)
+    assert not any(x == 0.0 for x, _z in points)                # no centre handle: the crest runs across it
+
+
+def test_an_untouched_whole_section_writes_back_what_the_feature_has():
+    f = dike(width=4.5, slope_n=2.5, reach=12.0, cross_left=((2.0, -0.5),), cross_right=((4.0, -1.5), (6.0, -1.6)))
+    changes = set_whole_cross_section(f, whole_cross_section(f))
+    assert changes["width"] == pytest.approx(4.5)
+    assert changes["slope_n"] == pytest.approx(2.5) and changes["reach"] == pytest.approx(12.0)
+    for side in ("cross_left", "cross_right"):
+        assert len(changes[side]) == len(getattr(f, side))
+        for written, stored in zip(changes[side], getattr(f, side)):
+            assert written == pytest.approx(stored)
+
+
+def test_a_left_side_edit_changes_the_left_side_and_the_shared_slope():
+    f = dike(width=4.0, slope_n=3.0, reach=10.0)
+    points = list(whole_cross_section(f))
+    points[0] = (-14.0, -4.0)                                   # the left slope's end: 12 m out, 4 m down
+    changes = set_whole_cross_section(f, points)
+    assert changes["reach"] == pytest.approx(12.0) and changes["slope_n"] == pytest.approx(3.0)
+    assert changes["cross_left"] == () and changes["cross_right"] == ()
+
+
+def test_symmetric_copies_the_edited_side_whichever_side_it_is():
+    f = dike(width=4.0, slope_n=3.0, reach=10.0)
+    left_berm = [(-12.0, -3.0), (-6.0, -1.0), (-2.0, 0.0), (2.0, 0.0), (12.0, -10.0 / 3.0)]
+    assert set_whole_cross_section(f, left_berm, symmetric=True)["cross_right"] == ((4.0, -1.0),)
+    right_berm = [(-12.0, -10.0 / 3.0), (-2.0, 0.0), (2.0, 0.0), (6.0, -1.0), (12.0, -3.0)]
+    assert set_whole_cross_section(f, right_berm, symmetric=True)["cross_left"] == ((4.0, -1.0),)
+    unticked = set_whole_cross_section(f, left_berm, symmetric=False)
+    assert unticked["cross_left"] == ((4.0, -1.0),) and unticked["cross_right"] == ()
+
+
+def test_symmetric_keeps_both_sides_when_an_edit_moves_no_break_point():
+    """Only a side whose break points changed is copied. Copying right over left whenever the right side's
+    breaks were unchanged wiped a left-only berm with every slope-end or crest-edge drag."""
+    f = dike(width=4.0, slope_n=3.0, reach=10.0, cross_left=((2.0, -0.5),))
+    points = list(whole_cross_section(f))
+    x, z = points[-1]
+    points[-1] = (x + 1.0, z)                                        # the right slope's end, 1 m further out
+    changes = set_whole_cross_section(f, points, symmetric=True)
+    assert changes["cross_left"] == ((2.0, -0.5),) and changes["cross_right"] == ()
+    assert changes["reach"] == pytest.approx(11.0)
+
+
+def test_symmetric_copies_nothing_when_only_the_crest_edges_moved():
+    """Break points are stored from the crest edge, so widening the crest changes every side's stored
+    offsets while no break handle moves on the plot. That is not an edit of either side's breaks."""
+    f = dike(width=4.0, slope_n=3.0, reach=10.0, cross_left=((2.0, -0.5),), cross_right=((4.0, -1.0),))
+    points = list(whole_cross_section(f))
+    points = [(x - 1.0, z) if x == -2.0 else (x + 1.0, z) if x == 2.0 else (x, z) for x, z in points]
+    changes = set_whole_cross_section(f, points, symmetric=True)
+    assert changes["width"] == pytest.approx(6.0)
+    assert changes["cross_left"] == ((1.0, -0.5),) and changes["cross_right"] == ((3.0, -1.0),)
+
+
+def test_editing_one_side_leaves_a_side_with_breaks_past_its_reach_as_it_was():
+    """A berm beyond the reach leaves that side without a slope-end handle. Reading its last berm as the
+    slope's end rewrote the slope and the reach and dropped the berm while the user edited the other side."""
+    f = dike(width=4.0, slope_n=3.0, reach=5.0, cross_right=((2.0, -0.5), (8.0, -1.0)))
+    points = list(whole_cross_section(f))
+    assert points[-1] == (10.0, -1.0)                               # the berm is the last handle
+    points[0] = (-10.0, -8.0 / 3.0)                                 # the left slope's end, 3 m further out
+    changes = set_whole_cross_section(f, points)
+    assert changes["cross_right"] == f.cross_right and changes["cross_left"] == ()
+    assert changes["slope_n"] == pytest.approx(3.0) and changes["reach"] == pytest.approx(8.0)
+
+
+def test_a_side_whose_breaks_run_past_its_reach_keeps_its_slope_when_edited():
+    f = dike(width=4.0, slope_n=3.0, reach=5.0, cross_right=((2.0, -0.5), (8.0, -1.0)))
+    changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (4.0, -0.5), (10.0, -1.4)])
+    assert changes["cross_right"] == ((2.0, -0.5), (8.0, -1.4))
+    assert "slope_n" not in changes and "reach" not in changes
+
+
+def test_the_side_that_was_not_edited_does_not_change_the_shared_values():
+    f = dike(width=4.0, slope_n=0.0, reach=10.0, cross_right=((3.0, -1.0),))
+    points = list(whole_cross_section(f))
+    points[-1] = (6.0, -1.5)                                        # drag the right berm
+    changes = set_whole_cross_section(f, points)
+    assert changes["cross_right"] == ((4.0, -1.5),) and changes["reach"] == pytest.approx(10.0)
+    # a stored value halfway between two four-decimal numbers still counts as unchanged on the other side
+    odd = dike(width=4.0, slope_n=3.0, reach=40.34765)
+    moved = list(whole_cross_section(odd))
+    moved[0] = (moved[0][0] - 3.0, moved[0][1] - 1.0)
+    assert set_whole_cross_section(odd, moved)["reach"] == pytest.approx(43.34765, abs=1e-4)
+
+
+def rotated_rectangle(length, breadth, degrees, centre=(20.0, 20.0)):
+    c, s = np.cos(np.radians(degrees)), np.sin(np.radians(degrees))
+    corners = [(-length / 2, -breadth / 2), (length / 2, -breadth / 2), (length / 2, breadth / 2),
+               (-length / 2, breadth / 2)]
+    return polygon_wkb([(centre[0] + x * c - y * s, centre[1] + x * s + y * c) for x, y in corners])
+
+
+def line_points(wkb):
+    from osgeo import ogr
+    return np.array(ogr.CreateGeometryFromWkb(wkb).GetPoints())[:, :2]
+
+
+def test_the_default_section_runs_through_the_middle_along_the_longer_side():
+    pond = feature(Tool.LOWER_FLAT, Mode.AREA, rotated_rectangle(20.0, 6.0, 30.0), slopes_inside=True)
+    start, end = line_points(default_section_line(pond, cell_size=1.0))
+    direction = (end - start) / np.hypot(*(end - start))
+    assert direction == pytest.approx([np.cos(np.radians(30.0)), np.sin(np.radians(30.0))])
+    assert (start + end) / 2 == pytest.approx([20.0, 20.0])                 # through the centroid
+    assert np.hypot(*(end - start)) == pytest.approx(20.0 + 2 * 5.0)         # past the outline by five cells
+
+
+def test_the_default_section_reaches_past_outside_slopes_and_runs_west_to_east():
+    pad = feature(Tool.RAISE_FLAT, Mode.AREA, rotated_rectangle(20.0, 6.0, 180.0), slope_n=2.0, reach=8.0)
+    start, end = line_points(default_section_line(pad, cell_size=1.0))
+    assert start[0] < end[0]
+    assert np.hypot(*(end - start)) == pytest.approx(20.0 + 2 * (8.0 + 5.0))
+
+
+def test_a_path_has_no_default_section_line():
+    assert default_section_line(dike(), cell_size=1.0) is None
+
+
+def test_a_section_samples_before_and_after_and_leaves_out_what_is_off_the_grid():
+    grid = make_grid(flat(10.0))
+    pond = feature(Tool.LOWER_FLAT, Mode.AREA, polygon_wkb([(10, 15), (30, 15), (30, 25), (10, 25)]),
+                   amount=2.0, slopes_inside=False, slope_n=0.0, id="pond")
+    stack = FeatureStack(grid)
+    stack.update([pond])
+    line = line_wkb([(-10.0, 20.0), (35.0, 20.0)])                          # starts 10 m off the west edge
+    _window, before, after = stack.terrain_around("pond", grid.window_for_bbox(0, 19, 35, 21))
+    section = section_along(line, before, after)
+    assert section["stations"][0] > 6.0                                      # the first metres are off the grid
+    assert set(np.round(section["before"], 6)) == {10.0}
+    assert min(section["after"]) == pytest.approx(8.0) and section["after"][-1] == pytest.approx(10.0)
+
+
+def test_terrain_around_a_feature_is_before_and_after_it_alone():
+    grid = make_grid(flat(10.0))
+    pad = feature(Tool.RAISE_FLAT, Mode.AREA, polygon_wkb([(5, 5), (35, 5), (35, 35), (5, 35)]),
+                  amount=1.0, slope_n=0.0, id="pad")
+    pond = feature(Tool.LOWER_FLAT, Mode.AREA, polygon_wkb([(15, 15), (25, 15), (25, 25), (15, 25)]),
+                   amount=3.0, slope_n=0.0, id="pond")
+    stack = FeatureStack(grid)
+    stack.update([pad, pond])
+    window, before, after = stack.terrain_around("pond")
+    assert np.array_equal(before.data, stack.terrain_before("pond")[1].data)
+    assert before.sample(20.0, 20.0) == pytest.approx(11.0) and after.sample(20.0, 20.0) == pytest.approx(8.0)
+    _w, before_off, after_off = stack.terrain_around("pond", features=[pad, replace(pond, enabled=False)])
+    assert np.array_equal(before_off.data, after_off.data)                   # a feature turned off changes nothing
+
+
+def test_terrain_around_replays_earlier_features_along_the_whole_line_and_no_later_ones():
+    """The section line reaches past the area, so the ground it shows there must include what an earlier
+    feature built outside the area's footprint — and nothing a later one did."""
+    grid = make_grid(flat(10.0))
+    earlier = feature(Tool.RAISE_PATH, Mode.PATH, line_wkb([(5, 5), (5, 35)]), amount=1.0, slope_n=0.0,
+                      id="earlier")
+    pond = feature(Tool.LOWER_FLAT, Mode.AREA, polygon_wkb([(15, 15), (25, 15), (25, 25), (15, 25)]),
+                   amount=2.0, slope_n=0.0, id="pond")
+    later = feature(Tool.RAISE_PATH, Mode.PATH, line_wkb([(35, 5), (35, 35)]), amount=1.0, slope_n=0.0,
+                    id="later")
+    stack = FeatureStack(grid)
+    stack.update([earlier, pond, later])
+    _window, before, after = stack.terrain_around("pond", grid.window_for_bbox(0.5, 19.5, 39.5, 20.5))
+    assert before.sample(5.5, 20.0) == pytest.approx(11.0) and after.sample(5.5, 20.0) == pytest.approx(11.0)
+    assert before.sample(35.5, 20.0) == pytest.approx(10.0) and after.sample(35.5, 20.0) == pytest.approx(10.0)
+    assert before.sample(20.0, 20.0) == pytest.approx(10.0) and after.sample(20.0, 20.0) == pytest.approx(8.0)
+
+
+def test_the_default_section_of_parts_side_by_side_runs_through_one_of_them():
+    """The middle of two strips lies between them, where a line through it would miss both."""
+    strips = multi_wkb([polygon_wkb([(2, 2), (6, 2), (6, 32), (2, 32)]),
+                        polygon_wkb([(20, 2), (24, 2), (24, 32), (20, 32)])])
+    ponds = feature(Tool.LOWER_FLAT, Mode.AREA, strips, slopes_inside=True)
+    line = default_section_line(ponds, cell_size=1.0)
+    from osgeo import ogr
+    assert ogr.CreateGeometryFromWkb(line).Intersects(ogr.CreateGeometryFromWkb(strips))
+    start, end = line_points(line)
+    assert start[0] == pytest.approx(end[0]) and start[1] < end[1]          # along the longer side, south to north
+    assert start[1] == pytest.approx(2.0 - 5.0) and end[1] == pytest.approx(32.0 + 5.0)

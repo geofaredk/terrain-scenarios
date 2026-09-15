@@ -1,6 +1,7 @@
 """Values of the selected feature; every change is applied to the terrain immediately."""
 from __future__ import annotations
 
+import html
 import traceback
 
 from qgis.core import Qgis, QgsMessageLog
@@ -10,7 +11,7 @@ from qgis.PyQt.QtWidgets import QComboBox, QFormLayout, QLabel, QVBoxLayout, QWi
 
 from ..core.sections import supports_long_profile
 from ..core.tools import TOOL_INFO, Mode, PixelMode, reports_storage
-from . import illustrations
+from . import illustrations, settings
 from .controller import LOG_TAG
 from .help_texts import (AMOUNT_IS_CUSTOM, FIELD_TIPS, FLAG_TEXTS, NO_VOLUME_YET, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS,
                          SCENARIO_TOTALS, TOOL_DESCRIPTIONS, TOOL_EXAMPLES, TOOL_LABELS, TOOL_SUMMARIES,
@@ -20,6 +21,7 @@ from .help_texts import (AMOUNT_IS_CUSTOM, FIELD_TIPS, FLAG_TEXTS, NO_VOLUME_YET
 DIAGRAM = QSize(200, 96)
 TOOL_PICTURE = QSize(120, 64)
 PIXEL_ICON = QSize(32, 32)
+PIXEL_PICTURE = 72   # each of the three pictures in the Pixels to change tooltip
 
 
 def _spin(minimum: float, maximum: float, step: float, suffix: str, decimals: int) -> QgsDoubleSpinBox:
@@ -46,6 +48,7 @@ class PropertiesPage(QWidget):
         self.summary = QLabel()
         self.summary.setWordWrap(True)
         self.amount_label = QLabel()
+        self.amount_label.setWordWrap(True)   # "Height above the highest point" must not set the panel's width
         self.amount = _spin(0.0, 100.0, 0.1, " m", 2)
         # one source of truth: show_feature swaps between this and AMOUNT_IS_CUSTOM, so the
         # concrete example has to live here or it is lost the moment a feature is selected
@@ -69,7 +72,8 @@ class PropertiesPage(QWidget):
         self.form.addRow(self.tr("Slopes"), self.slope_position)
         self.form.addRow(self.tr("Pixels to change"), self.pixel_mode)
         self.about = QgsCollapsibleGroupBox(self.tr("About this tool"))
-        self.about.setObjectName("TerrainSketchAboutTool")  # QgsCollapsibleGroupBox saves state by name
+        self.about.setObjectName("TerrainSketchAboutTool")
+        settings.remember_collapsed("about_group", self.about)
         self.about_text = QLabel()
         self.about_text.setWordWrap(True)
         self.about_picture = QLabel()
@@ -85,6 +89,7 @@ class PropertiesPage(QWidget):
 
         self.volumes = QgsCollapsibleGroupBox(self.tr("Volumes"))
         self.volumes.setObjectName("TerrainSketchVolumes")
+        settings.remember_collapsed("volumes_group", self.volumes)
         self.fill_value = QLabel()
         self.fill_value.setWordWrap(True)
         self.fill_value.setToolTip(VOLUME_FILL_TIP)
@@ -132,17 +137,24 @@ class PropertiesPage(QWidget):
         self._highlight_for = {self.amount: "amount", self.width: "width", self.slope: "slope",
                                self.reach: "reach"}
         controller.featuresChanged.connect(self._refresh_problems)
+        controller.featuresChanged.connect(self._refresh_values)
         controller.featuresChanged.connect(self._refresh_volumes)
 
     def eventFilter(self, watched, event):  # noqa: N802 — Qt override
         """Highlight the part of the diagram that belongs to whichever field has focus."""
         if event.type() == QEvent.Type.FocusIn:
-            self._draw_diagram(self._highlight_for.get(watched))
+            try:
+                self._draw_diagram(self._highlight_for.get(watched))
+            except Exception:  # noqa: BLE001 — an event filter must never take QGIS down
+                QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
         return super().eventFilter(watched, event)
 
     def changeEvent(self, event):  # noqa: N802 — Qt override
         if event.type() == QEvent.Type.PaletteChange and self._fid is not None:
-            self._draw_pictures()
+            try:
+                self._draw_pictures()
+            except Exception:  # noqa: BLE001 — a Qt event handler must never take QGIS down
+                QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
         super().changeEvent(event)
 
     def _draw_diagram(self, highlight: str | None) -> None:
@@ -160,28 +172,29 @@ class PropertiesPage(QWidget):
             mode = PixelMode(self.pixel_mode.itemData(index))
             self.pixel_mode.setItemIcon(index, illustrations.icon(f"pixels_{mode.value}",
                                                                   PIXEL_ICON, self.palette()))
+        self.pixel_mode.setToolTip(self._pixel_modes_tip())
+
+    def _pixel_modes_tip(self) -> str:
+        """The field's tip with the three pixel modes side by side under it (spec §7.2), drawn in the
+        current theme's colours like every other picture on the page."""
+        size = PIXEL_PICTURE
+        pictures = "".join(
+            f'<td align="center"><img src="{illustrations.data_uri(f"pixels_{mode.value}", size, self.palette())}"'
+            f' width="{size}" height="{size}"/></td>' for mode in PixelMode)
+        names = "".join(f'<td align="center">{html.escape(PIXEL_MODE_LABELS[mode])}</td>' for mode in PixelMode)
+        return f"<p>{html.escape(FIELD_TIPS['pixel_mode'])}</p><table><tr>{pictures}</tr><tr>{names}</tr></table>"
 
     def show_feature(self, fid: str) -> None:
         self._fid = fid
         feature = self.controller.feature(fid)
         info = TOOL_INFO[feature.tool]
-        label = amount_label(feature.tool)
+        label = amount_label(feature.tool, feature.mode)
         self._loading = True
         try:
             self.title.setText(_title(feature))
             self.summary.setText(TOOL_SUMMARIES[feature.tool])
-            # Only a profile the engine actually uses fixes the heights: on a multi-part path it
-            # is discarded, and Height/Depth is then the one control that still drives the result.
-            custom = feature.long_profile is not None and supports_long_profile(feature)
             self.amount_label.setText(label or "")
-            self.amount.setValue(feature.amount)
-            self.amount.setEnabled(not custom)
-            self.amount.setToolTip(AMOUNT_IS_CUSTOM if custom else self._amount_tip)
-            self.width.setValue(feature.width)
-            self.slope.setValue(feature.slope_n)
-            self.reach.setValue(feature.reach)
-            self.slope_position.setCurrentIndex(1 if feature.slopes_inside else 0)
-            self.pixel_mode.setCurrentIndex(self.pixel_mode.findData(feature.pixel_mode.value))
+            self._load_values(feature)
             self.form.setRowVisible(self.amount, label is not None)
             self.form.setRowVisible(self.width, feature.mode is Mode.PATH)
             self.form.setRowVisible(self.slope, info.has_slopes)
@@ -195,6 +208,36 @@ class PropertiesPage(QWidget):
             self._loading = False
         self._refresh_problems()
         self._refresh_volumes()
+
+    def _load_values(self, feature) -> None:
+        """Show the feature's values in the fields — except in a field the user is still typing in:
+        a change from elsewhere (a profile drag, an undo) must not throw away what they typed."""
+        # Only a profile the engine actually uses fixes the heights: on a multi-part path it
+        # is discarded, and Height/Depth is then the one control that still drives the result.
+        custom = feature.long_profile is not None and supports_long_profile(feature)
+        for spin, value in ((self.amount, feature.amount), (self.width, feature.width),
+                            (self.slope, feature.slope_n), (self.reach, feature.reach)):
+            if not spin.lineEdit().isModified():
+                spin.setValue(value)
+        self.amount.setEnabled(not custom)
+        self.amount.setToolTip(AMOUNT_IS_CUSTOM if custom else self._amount_tip)
+        self.slope_position.setCurrentIndex(1 if feature.slopes_inside else 0)
+        self.pixel_mode.setCurrentIndex(self.pixel_mode.findData(feature.pixel_mode.value))
+
+    def _refresh_values(self) -> None:
+        """Keep the fields in step with the feature whenever the list changes: a cross-profile drag
+        moves the width, slope and reach, and an undo can change anything. Runs in a slot."""
+        try:
+            feature = self.controller.find(self._fid) if self._fid is not None else None
+            if feature is None:
+                return
+            self._loading = True
+            try:
+                self._load_values(feature)
+            finally:
+                self._loading = False
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _refresh_volumes(self) -> None:
         """Per-feature cut, fill and (for the tools that hold water) storage, plus the scenario

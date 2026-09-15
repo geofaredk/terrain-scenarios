@@ -193,7 +193,20 @@ def _path_values(feature, info, drawn, view: DemGrid, long_profile):
     dz_r, ext_r = side_dz(beyond, feature.cross_right, feature.slope_n, feature.reach, info.direction)
     left = offset < 0.0
     in_extent = np.where(left, ext_l, ext_r)
-    dz = np.where(core, 0.0, np.where(left, dz_l, dz_r))
+    dz = np.where(left, dz_l, dz_r)
+    # Past an end cap, a cell exactly on the extended axis belongs to neither side. It takes whichever
+    # side the combine rule would keep, as if both side shapes were built there, instead of always the
+    # right-hand one — a visible step when the two sides differ.
+    length = float(vertex_stations(coords)[-1])
+    # (the stations and the length are summed in different ways, so the far end can be one bit short)
+    axis = (offset == 0.0) & ~core & ((station <= 0.0) | (station >= length - 1e-9))
+    if axis.any():
+        keep = np.maximum if info.combine is Combine.MAX else np.minimum
+        unused = -np.inf if info.combine is Combine.MAX else np.inf
+        both = keep(np.where(ext_l, dz_l, unused), np.where(ext_r, dz_r, unused))
+        dz = np.where(axis & (ext_l | ext_r), both, dz)
+        in_extent = np.where(axis, ext_l | ext_r, in_extent)
+    dz = np.where(core, 0.0, dz)
     slope_cells = ~core & in_extent
     return _combine(info.combine, old, zline + dz), core | slope_cells
 

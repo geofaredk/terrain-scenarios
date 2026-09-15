@@ -46,8 +46,7 @@ class FeatureListModel(QAbstractListModel):
         fid = self._id_at(index)
         if fid is None:
             return None
-        features = {f.id: f for f in self.controller.features}
-        feature = features.get(fid)
+        feature = self.controller.find(fid)
         if feature is None:
             return None
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
@@ -97,6 +96,8 @@ class FeatureListModel(QAbstractListModel):
         if action != Qt.DropAction.MoveAction or not data.hasFormat(MIME_TYPE):
             return False
         moving = bytes(data.data(MIME_TYPE)).decode().split("\n")
+        if not set(moving) <= set(self._ids):
+            return False     # ids from another list, or from before a change: reorder() would raise in this Qt callback
         if row < 0:
             row = parent.row() if parent.isValid() else len(self._ids)
         before = [i for i in self._ids[:row] if i not in moving]

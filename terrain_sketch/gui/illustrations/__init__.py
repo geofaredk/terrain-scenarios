@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pathlib
 
-from qgis.PyQt.QtCore import QByteArray, QRectF, Qt
+from qgis.PyQt.QtCore import QBuffer, QByteArray, QIODevice, QRectF, Qt
 from qgis.PyQt.QtGui import QColor, QIcon, QPainter, QPalette, QPixmap
 from qgis.PyQt.QtSvg import QSvgRenderer
 
@@ -83,6 +83,16 @@ def pixmap(name: str, size, palette: QPalette, highlight: str | None = None) -> 
 
 def icon(name: str, size, palette: QPalette) -> QIcon:
     return QIcon(pixmap(name, size, palette))
+
+
+def data_uri(name: str, size, palette: QPalette) -> str:
+    """The illustration as a PNG `data:` URI, for an `<img>` in rich text such as a tooltip."""
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    pixmap(name, size, palette).save(buffer, "PNG")
+    buffer.close()
+    return "data:image/png;base64," + bytes(data.toBase64()).decode("ascii")
 
 
 def available() -> list[str]:

@@ -7,8 +7,8 @@ from qgis_helpers import UTM, dem_layer, fake_iface, line_through, square, start
 from terrain_sketch import classFactory
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.help_texts import (SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_REPLACE,
-                                           UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES)
+from terrain_sketch.gui.help_texts import (SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_OTHER_DEM,
+                                           SCENARIO_REPLACE, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES)
 from terrain_sketch.gui.main_dock import MainDock
 from terrain_sketch.qgis_io.scenario import dem_meta, load, save
 
@@ -121,6 +121,7 @@ def messages(iface) -> list[str]:
 
 def test_a_scenario_from_a_different_dem_is_only_opened_once_the_user_agrees(tmp_path):
     path = scenario_from_another_dem(tmp_path, np.full((30, 30), 10.0, np.float32))
+    (tmp_path / "other30" / "dem.tif").unlink()                  # its own DEM is gone, so it is this one or nothing
     _iface, c, dock = panel(tmp_path)
     mine = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
     dock.confirm_save = lambda text, can_cancel=True: False       # carry on without saving
@@ -368,3 +369,101 @@ def test_a_name_typed_without_gpkg_asks_before_replacing_that_scenario(tmp_path,
 
     dock.confirm = lambda text: True
     assert dock._save_dialog() == str(tmp_path / "flood.gpkg")
+
+
+def test_a_scenario_whose_dem_is_still_there_offers_to_start_on_that_dem(tmp_path):
+    path = scenario_from_another_dem(tmp_path, np.full((30, 30), 12.0, np.float32))
+    other_dem = str(tmp_path / "other30" / "dem.tif")
+    project = QgsProject.instance()
+    project.removeMapLayers([l.id() for l in project.mapLayers().values() if l.source() == other_dem])
+    _iface, c, dock = panel(tmp_path)
+    mine = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
+    asked = []
+    dock.confirm_save = lambda text, can_cancel=True: asked.append(text) or False     # discard my work
+    dock.ask_open_path = lambda: path
+    choices = []
+    dock.choose_dem = lambda text: choices.append(text) or None                       # cancel
+    dock.open_scenario_button.click()
+    assert choices == [SCENARIO_OTHER_DEM.format(dem="dem.tif", differences="size in pixels, extent")]
+    assert [f.id for f in c.features] == [mine.id] and c.info.path != other_dem
+
+    dock.choose_dem = lambda text: "scenario"
+    dock.open_scenario_button.click()
+    assert c.has_dem and c.info.path == other_dem and dock.dem_combo.currentLayer().source() == other_dem
+    assert len(c.features) == 1 and c.features[0].tool is Tool.RAISE_PATH and c.scenario_path == path
+    assert c.scenario_differences(path) == []
+    assert len(asked) == 2                          # asked about my unsaved work each time, never again by Start
+    rasters = [l for l in project.mapLayers().values() if l.source() == other_dem]
+    assert len(rasters) == 1 and project.mapLayersByName("dem")    # added once; the user's own DEM stays
+
+
+def test_starting_on_the_scenarios_dem_reuses_it_when_it_is_already_in_the_project(tmp_path):
+    path = scenario_from_another_dem(tmp_path, np.full((30, 30), 12.0, np.float32))   # its DEM is in the project
+    other_dem = str(tmp_path / "other30" / "dem.tif")
+    already = next(l for l in QgsProject.instance().mapLayers().values() if l.source() == other_dem)
+    _iface, c, dock = panel(tmp_path)
+    dock.ask_open_path = lambda: path
+    dock.choose_dem = lambda text: "scenario"
+    dock.open_scenario_button.click()
+    assert c.dem_layer_id == already.id()
+    assert len([l for l in QgsProject.instance().mapLayers().values() if l.source() == other_dem]) == 1
+
+
+def test_opening_on_this_dem_instead_keeps_the_session(tmp_path):
+    path = scenario_from_another_dem(tmp_path, np.full((30, 30), 12.0, np.float32))
+    _iface, c, dock = panel(tmp_path)
+    first = c.info.path
+    dock.ask_open_path = lambda: path
+    dock.choose_dem = lambda text: "current"
+    dock.open_scenario_button.click()
+    assert c.info.path == first and len(c.features) == 1 and c.scenario_path == path
+
+
+def test_the_dem_question_has_both_choices_and_cancel(tmp_path, monkeypatch):
+    from qgis.PyQt.QtWidgets import QMessageBox
+    _iface, _c, dock = panel(tmp_path)
+    for label, expected in (("Start on its DEM", "scenario"), ("Open on this DEM", "current"), ("Cancel", None)):
+        seen = []
+
+        def click(box, label=label):
+            seen.append(sorted(b.text() for b in box.buttons()))
+            next(b for b in box.buttons() if b.text() == label).click()
+            return 0
+        monkeypatch.setattr(QMessageBox, "exec", click)
+        assert dock._dem_choice_dialog("which DEM?") == expected
+        assert seen == [sorted(["Start on its DEM", "Open on this DEM", "Cancel"])]
+
+
+def test_a_dem_that_cannot_be_started_on_is_not_left_in_the_project(tmp_path):
+    from unittest import mock
+    from terrain_sketch.qgis_io.raster_io import DemError
+    path = scenario_from_another_dem(tmp_path, np.full((30, 30), 12.0, np.float32))
+    other_dem = str(tmp_path / "other30" / "dem.tif")
+    project = QgsProject.instance()
+    project.removeMapLayers([l.id() for l in project.mapLayers().values() if l.source() == other_dem])
+    _iface, c, dock = panel(tmp_path)
+    first = c.info.path
+    dock.ask_open_path = lambda: path
+    dock.choose_dem = lambda text: "scenario"
+    with mock.patch.object(c, "set_dem", side_effect=DemError("refused")):
+        dock.open_scenario_button.click()
+    assert not [l for l in project.mapLayers().values() if l.source() == other_dem]
+    assert c.info.path == first and c.scenario_path is None
+
+
+def test_a_scenario_that_fails_on_its_own_dem_does_not_claim_the_old_features_are_still_there(tmp_path):
+    """Starting on its DEM already closed the session the features belonged to."""
+    from unittest import mock
+    from terrain_sketch.gui.help_texts import SCENARIO_NOT_APPLIED, SCENARIO_NOT_APPLIED_ON_ITS_DEM
+    from terrain_sketch.qgis_io.scenario import ScenarioError
+    path = scenario_from_another_dem(tmp_path, np.full((30, 30), 12.0, np.float32))
+    iface, c, dock = panel(tmp_path)
+    c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
+    dock.confirm_save = lambda text, can_cancel=True: False                           # discard my work
+    dock.ask_open_path = lambda: path
+    dock.choose_dem = lambda text: "scenario"
+    with mock.patch.object(c, "open_scenario", side_effect=ScenarioError(SCENARIO_NOT_APPLIED)):
+        dock.open_scenario_button.click()
+    assert c.info.path == str(tmp_path / "other30" / "dem.tif") and c.features == ()
+    assert messages(iface)[-1] == SCENARIO_NOT_APPLIED_ON_ITS_DEM
+    assert "unchanged" not in SCENARIO_NOT_APPLIED_ON_ITS_DEM

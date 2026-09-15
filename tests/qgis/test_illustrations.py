@@ -144,7 +144,7 @@ def cell_fully_inside_polygon(cell_x, cell_y, polygon):
 
 def test_pixels_centre_fills_cells_whose_centre_is_inside():
     """Verify pixels_centre.svg fills only cells whose centre falls inside the outline."""
-    outline = [(18, 20), (48, 14), (52, 46), (22, 50)]
+    outline = [(12, 26), (43, 20), (44, 51), (11, 54)]
     svg_file = illustrations.HERE / "pixels_centre.svg"
     filled = parse_filled_cells_from_svg(svg_file)
 
@@ -159,7 +159,7 @@ def test_pixels_centre_fills_cells_whose_centre_is_inside():
 
 def test_pixels_all_touched_fills_all_cells_the_outline_crosses():
     """Verify pixels_all_touched.svg fills every cell the outline touches."""
-    outline = [(18, 20), (48, 14), (52, 46), (22, 50)]
+    outline = [(12, 26), (43, 20), (44, 51), (11, 54)]
     svg_file = illustrations.HERE / "pixels_all_touched.svg"
     filled = parse_filled_cells_from_svg(svg_file)
 
@@ -180,7 +180,7 @@ def test_pixels_all_touched_fills_all_cells_the_outline_crosses():
 
 def test_pixels_fully_inside_fills_only_cells_entirely_within_the_outline():
     """Verify pixels_fully_inside.svg fills only cells lying entirely within the outline."""
-    outline = [(18, 20), (48, 14), (52, 46), (22, 50)]
+    outline = [(12, 26), (43, 20), (44, 51), (11, 54)]
     svg_file = illustrations.HERE / "pixels_fully_inside.svg"
     filled = parse_filled_cells_from_svg(svg_file)
 
@@ -230,3 +230,62 @@ def test_the_add_and_subtract_bands_stay_parallel_to_the_terrain():
             on_surface = any(abs(x - sx) < 0.01 and abs(y - sy) < 0.01 for sx, sy in surface)
             assert on_surface or abs(height_at(ground, x) - y) < 1.0, \
                 f"{name} band vertex ({x}, {y}) is neither on its surface nor on the ground"
+
+
+
+def svg_source(name):
+    return (illustrations.HERE / f"{name}.svg").read_text()
+
+
+def filled_regions(source, colour):
+    return [path_points(d) for d, value in re.findall(r'<path\s+d="([^"]+)"[^>]*?\sfill="([^"]+)"', source)
+            if value == colour]
+
+
+def test_the_bands_of_the_raise_and_lower_tools_close_along_the_drawn_ground():
+    """A band closed with a straight base across a wavy ground leaves a gap where the ground dips
+    below the base, or covers the ground where it rises above."""
+    for name, colour in (("tool_raise_path", "{fill}"), ("tool_raise_flat", "{fill}"),
+                         ("tool_lower_path", "{cut}"), ("tool_lower_flat", "{cut}")):
+        source = svg_source(name)
+        ground = path_points(drawn_path(source, "stroke", "{terrain}"))
+        regions = filled_regions(source, colour)
+        assert regions, name
+        for region in regions:
+            xs = [x for x, _y in region]
+            vertices = {(round(x, 2), round(y, 2)) for x, y in region}
+            for gx, gy in ground:
+                if min(xs) < gx < max(xs):
+                    assert (gx, gy) in vertices, f"{name} band skips the ground vertex ({gx}, {gy})"
+
+
+def test_path_tools_follow_the_ground_between_the_ends_and_flat_tools_are_level():
+    """The four raise and lower pictures used to share one trapezoid; what tells them apart is
+    whether the built surface is level (flat) or runs from end to end with the ground (path)."""
+    def built_heights(name):
+        lines = [path_points(d) for d, value in
+                 re.findall(r'<path\s+d="([^"]+)"[^>]*?\sstroke="([^"]+)"', svg_source(name)) if value == "{line}"]
+        return [y for line in lines for _x, y in line[1:-1]]        # without the two end slopes' feet
+    for flat in ("tool_raise_flat", "tool_lower_flat"):
+        heights = built_heights(flat)
+        assert max(heights) - min(heights) < 0.01, flat
+    for path in ("tool_raise_path", "tool_lower_path"):
+        heights = built_heights(path)
+        assert max(heights) - min(heights) > 5.0, path
+
+
+def test_interpolate_shows_both_what_it_fills_and_what_it_cuts():
+    source = svg_source("tool_interpolate")
+    assert filled_regions(source, "{fill}") and filled_regions(source, "{cut}")
+
+
+def test_every_cell_centre_is_clear_of_the_outline_and_drawn_on_top_of_it():
+    """A centre dot under the outline cannot be seen to be inside or outside it."""
+    source = svg_source("pixels_centre")
+    outline = path_points(re.search(r'<path\s+d="([^"]+)"', source).group(1))
+    for cx, cy in re.findall(r'<circle cx="([\d.]+)" cy="([\d.]+)"', source):
+        px, py = float(cx), float(cy)
+        for (ax, ay), (bx, by) in zip(outline, outline[1:] + outline[:1]):
+            t = max(0.0, min(1.0, ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / ((bx - ax) ** 2 + (by - ay) ** 2)))
+            assert ((px - ax - t * (bx - ax)) ** 2 + (py - ay - t * (by - ay)) ** 2) ** 0.5 >= 3.0, (px, py)
+    assert source.index("<circle") > source.index("<path")

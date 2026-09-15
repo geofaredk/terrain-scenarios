@@ -16,7 +16,5 @@
   <line x1="8" y1="40" x2="56" y2="40" stroke="{terrain}" stroke-width="1"/>
   <line x1="56" y1="8" x2="56" y2="56" stroke="{terrain}" stroke-width="1"/>
   <line x1="8" y1="56" x2="56" y2="56" stroke="{terrain}" stroke-width="1"/>
-  <line x1="56" y1="8" x2="56" y2="56" stroke="{terrain}" stroke-width="1"/>
-  <line x1="8" y1="56" x2="56" y2="56" stroke="{terrain}" stroke-width="1"/>
-  <path d="M18 20 L48 14 L52 46 L22 50 Z" fill="none" stroke="{line}" stroke-width="2"/>
+  <path d="M12 26 L43 20 L44 51 L11 54 Z" fill="none" stroke="{line}" stroke-width="2"/>
 </svg>

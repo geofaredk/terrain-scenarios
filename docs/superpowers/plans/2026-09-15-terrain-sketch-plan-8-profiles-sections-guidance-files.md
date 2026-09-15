@@ -27,8 +27,8 @@
 Every claim below about QGIS or Qt behaviour was probed headless against QGIS 4.2.2. The three product decisions marked **(user)** were put to the user before the prototype was built.
 
 - **Scope.** Everything in the Plan 7 addendum's two Plan 8 tables, except the items listed at the end of this plan with a reason. The spec's v1 items still missing — the area section and its "Draw section line", the pixel-mode picture, tool-specific labels, panel state and `<scenario>_files/` — are all here.
-- **The cross profile shows the whole cross-section (user).** A path's plot runs from the end of the left slope to the end of the right one, centre line at 0, left at negative offsets as seen looking along the drawing direction; "Left" and "Right" are written in the plot. No handle crosses the centre, the two crest edges always move together (width is one value), and while Symmetric is ticked every handle with a mirror image takes it along. `set_whole_cross_section` reads each side as `set_cross_section` always has; width, slope and reach are single values, so each comes from the side where it changed (right when both did), and with Symmetric the side whose break points changed is copied. An area keeps its one-sided edge profile: it has no sides and no break points.
-- **The end-cap sliver is fixed in the engine.** A cell exactly on the extended axis past an end cap belonged to neither side and always took the right-hand shape — a one-cell notch into a left-hand berm (probed). `stations_offsets` now gives such a cell offset 0, and `_path_values` gives it whichever side the combine rule keeps (max for raise tools, min for lower), among the sides whose reach covers it. Only cells at an end are affected; a bend is not.
+- **The cross profile shows the whole cross-section (user).** A path's plot runs from the end of the left slope to the end of the right one, centre line at 0, left at negative offsets as seen looking along the drawing direction; "Left" and "Right" are written in the plot. No handle crosses the centre, the two crest edges always move together (width is one value), and while Symmetric is ticked every handle with a mirror image takes it along. `set_whole_cross_section` reads each side as `set_cross_section` always has, except that a side whose points are still the ones the plot was given keeps what the feature has; width, slope and reach are single values, so each comes from the side where it changed (right when both did), and with Symmetric the side whose break points changed is copied. A side whose breaks run past the reach has no slope-end handle (`cross_section` draws none), so its last point is read as a break and its slope and reach are kept — the Task 3 review found that reading it as the slope's end let an edit on the other side rewrite the slope and drop the berm (probed). Crest edges only move sideways. An area keeps its one-sided edge profile: it has no sides and no break points.
+- **The end-cap sliver is fixed in the engine.** A cell exactly on the extended axis past an end cap belonged to neither side and always took the right-hand shape — a one-cell notch into a left-hand berm (probed). `stations_offsets` now gives such a cell offset 0, and `_path_values` gives it whichever side the combine rule keeps (max for raise tools, min for lower), among the sides whose reach covers it. Only cells at an end are affected; a bend is not. The end test allows 1e-9 m, because a cell's station and the path's length are summed differently and can differ in the last bit (probed).
 - **An arrow key commits once, when it is let go.** Each press and auto-repeat moves the handle and previews; the key's release — not an auto-repeated one — commits, as does losing focus while it is held. A reload of the plot under a held key drops the pending commit. Holding Up for a second is now one recompute, one file write and one undo step instead of about thirty.
 - **A reach that rounds to 0 keeps the reach it had**, like the slope already did, so a terminus dragged hard against the edge no longer silently cancels the slope.
 - **The Properties page follows every change, except in a field the user is typing in.** It reloads its values on `featuresChanged` (so a cross-profile drag's width, slope and reach show up, and the next arrow step no longer writes the old width back); a spin box whose line edit `isModified()` keeps its typed text. That same rule fixes the Undo button throwing away a typed value: the undo happens, and the typed value is still there to confirm with Enter. `MainDock._history_restored` no longer reloads the page itself.
@@ -38,9 +38,9 @@ Every claim below about QGIS or Qt behaviour was probed headless against QGIS 4.
 - **The parameter diagram's reach bar stays as drawn.** It runs from the crest edge past the toe, which is what "max reach" means — the slope met the ground before its cap. The Plan 5 note read it as an overrun.
 - **The amount field names its reference**: "Height above the path", "Height above the highest point", "Depth below the lowest edge", "Height added"… The label word-wraps, so the longest one does not widen the panel (measured: 330 px either way). The pixel field's tooltip shows the three modes side by side as PNG `data:` images; Qt's rich text renders them (probed).
 - **Panel state lives under `terrain_sketch/` (spec §7.1).** QGIS restores its window layout long before a plugin creates its panels, so the plugin stores each panel's dock area, whether it floats, its docked width or height, and its floating geometry — on `dockLocationChanged`, `topLevelChanged` and unload — and restores them when it creates the panel. `QgsCollapsibleGroupBox` saves under its own `QgsCollapsibleGroupBox/…` key, which the plugin can neither find nor clear, so its own saving is turned off and `settings.remember_collapsed` keeps the state instead (a box that is not shown does not report a collapse, probed).
-- **Working rasters beside the scenario (user; spec §8.2 step 3).** Whenever the session has a scenario file — after Save, Save as or Open — the working and change GeoTIFFs live in `<scenario>_files/`, so a QGIS project saved with those layers finds them later; without one (New) they live in a temp folder. They move whenever that changes, so edits to another scenario never write over a scenario's own rasters. Moving copies the files, repoints the three layers with `setDataSource` (their styles and a 3D terrain on the Modified DEM layer survive, probed) and removes the old folder only when it was a temp one. A folder that cannot be written leaves the files where they were, with a message — the save itself has already happened. A session that ends removes only a temp folder.
+- **Working rasters beside the scenario (user; spec §8.2 step 3).** After Save, Save as or Open, the working and change GeoTIFFs live in `<scenario>_files/`, so a QGIS project saved with those layers finds them later; without a scenario file (New) they live in a temp folder. The folder a scenario owns only ever keeps that scenario's saved terrain once the session leaves it, which the Task 8 review showed the first version did not (probed: New and Open wrote the next terrain into the saved scenario's rasters; discarded edits stayed in them): New and Open first move the rasters off a scenario's folder into a temp one and only then replace the features (refusing, with a message, if they cannot move); leaving a scenario's folder that received edits since its scenario was saved or opened — New, Open, Save as, or the session ending — rewrites it from the scenario file; and a scenario folder that cannot be written falls back to a temp folder with a message (spec §9). Moving copies each file under a temporary name and then replaces, repoints the three layers with `setDataSource` (their styles and a 3D terrain on the Modified DEM layer survive, probed) and removes the old folder only when it was a temp one. Edits made after a save are shown from the scenario's folder while the session lasts; only a crash can leave them there.
 - **Save after opening on another DEM writes this DEM's record, as today (user).**
-- **Opening a scenario made on another DEM offers that DEM** when its file is still there: "Start on its DEM" (the layer already in the project that reads the file, or a new one; the unsaved-work question has been asked once already) or "Open on this DEM", or Cancel. When its file is gone, the Plan 6 question is unchanged.
+- **Opening a scenario made on another DEM offers that DEM** when its file is still there: "Start on its DEM" (the layer already in the project that reads the file, or a new one, removed again if the session cannot start on it; the unsaved-work question has been asked once already) or "Open on this DEM", or Cancel. When its file is gone, the Plan 6 question is unchanged.
 - **Loose ends.** The test suite shuts down every `SketchController` a test made (`shutdown` is safe twice); `FeatureListModel.data` looks one feature up instead of building a dict; a drop of unknown ids is ignored instead of raising in Qt; copies of one feature stay in the order they were made; a Start whose working files fail in any way removes its folder; the export message adds a file already in the project only once and names the log for an unexpected failure; Export DEM… is an icon button like the other file actions; `load`/`load_meta` share one reader; a save back to the scenario's own file keeps its created date whatever the path's spelling.
 
 ## File Structure
@@ -6029,10 +6029,29 @@ def test_straight_past_an_end_the_axis_follows_the_side_the_combine_rule_keeps()
 
     lowered = make_grid(flat(10.0))
     apply_feature(feature(Tool.LOWER_PATH, Mode.PATH, axis, amount=2.0, width=3.0, slope_n=2.0, reach=10.0,
-                          cross_right=((2.0, 0.0),)), lowered)        # a lower tool keeps the deeper side
+                          cross_left=((2.0, 0.0),)), lowered)         # a lower tool keeps the deeper side
     cut = lowered.data.astype(float)
-    np.testing.assert_allclose(cut[19, beyond], cut[20, beyond])
-    assert (cut[19, beyond] < cut[18, beyond]).any()
+    np.testing.assert_allclose(cut[19, beyond], cut[18, beyond])
+    assert (cut[19, beyond] < cut[20, beyond]).any()
+
+
+def test_the_axis_past_the_far_end_is_found_even_when_the_lengths_differ_in_the_last_bit():
+    """The station of a cell past the end and the path's length are summed differently; on some paths
+    the station falls one bit short of the length, and the far end kept its notch."""
+    bent = line_wkb([(4.034, 4.192), (10.5, 20.5), (29.5, 20.5)])
+    grid = make_grid(flat(10.0))
+    apply_feature(feature(Tool.RAISE_PATH, Mode.PATH, bent, amount=2.0, width=3.0, slope_n=2.0, reach=10.0,
+                          cross_left=((2.0, 0.0),)), grid)
+    after = grid.data.astype(float)
+    beyond = slice(31, 36)
+    np.testing.assert_allclose(after[19, beyond], after[18, beyond])
+
+
+def test_a_point_straight_ahead_of_an_end_is_on_neither_side():
+    from terrain_sketch.core.stations import stations_offsets
+    coords = np.array([[0.0, 0.0], [10.0, 0.0]])
+    station, offset = stations_offsets(coords, np.array([15.0, -3.0, 5.0, 5.0]), np.array([0.0, 0.0, 2.0, -2.0]))
+    assert list(offset) == [0.0, 0.0, -2.0, 2.0] and list(station) == [10.0, 0.0, 5.0, 5.0]
 ```
 
 **File:** `tests/core/test_sections.py`
@@ -6308,6 +6327,38 @@ def test_symmetric_copies_the_edited_side_whichever_side_it_is():
     assert set_whole_cross_section(f, right_berm, symmetric=True)["cross_left"] == ((4.0, -1.0),)
     unticked = set_whole_cross_section(f, left_berm, symmetric=False)
     assert unticked["cross_left"] == ((4.0, -1.0),) and unticked["cross_right"] == ()
+
+
+def test_editing_one_side_leaves_a_side_with_breaks_past_its_reach_as_it_was():
+    """A berm beyond the reach leaves that side without a slope-end handle. Reading its last berm as the
+    slope's end rewrote the slope and the reach and dropped the berm while the user edited the other side."""
+    f = dike(width=4.0, slope_n=3.0, reach=5.0, cross_right=((2.0, -0.5), (8.0, -1.0)))
+    points = list(whole_cross_section(f))
+    assert points[-1] == (10.0, -1.0)                               # the berm is the last handle
+    points[0] = (-10.0, -8.0 / 3.0)                                 # the left slope's end, 3 m further out
+    changes = set_whole_cross_section(f, points)
+    assert changes["cross_right"] == f.cross_right and changes["cross_left"] == ()
+    assert changes["slope_n"] == pytest.approx(3.0) and changes["reach"] == pytest.approx(8.0)
+
+
+def test_a_side_whose_breaks_run_past_its_reach_keeps_its_slope_when_edited():
+    f = dike(width=4.0, slope_n=3.0, reach=5.0, cross_right=((2.0, -0.5), (8.0, -1.0)))
+    changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (4.0, -0.5), (10.0, -1.4)])
+    assert changes["cross_right"] == ((2.0, -0.5), (8.0, -1.4))
+    assert "slope_n" not in changes and "reach" not in changes
+
+
+def test_the_side_that_was_not_edited_does_not_change_the_shared_values():
+    f = dike(width=4.0, slope_n=0.0, reach=10.0, cross_right=((3.0, -1.0),))
+    points = list(whole_cross_section(f))
+    points[-1] = (6.0, -1.5)                                        # drag the right berm
+    changes = set_whole_cross_section(f, points)
+    assert changes["cross_right"] == ((4.0, -1.5),) and changes["reach"] == pytest.approx(10.0)
+    # a stored value halfway between two four-decimal numbers still counts as unchanged on the other side
+    odd = dike(width=4.0, slope_n=3.0, reach=40.34765)
+    moved = list(whole_cross_section(odd))
+    moved[0] = (moved[0][0] - 3.0, moved[0][1] - 1.0)
+    assert set_whole_cross_section(odd, moved)["reach"] == pytest.approx(43.34765, abs=1e-4)
 ```
 
 **File:** `tests/qgis/test_profile_dock.py`
@@ -6566,6 +6617,20 @@ def test_the_symmetric_box_tells_the_plot_to_move_mirror_handles_together(tmp_pa
     assert dock.cross.symmetric
     dock.symmetric.setChecked(False)
     assert not dock.cross.symmetric
+
+
+def test_the_cross_plot_explains_its_sides_only_for_a_path_it_can_edit(tmp_path):
+    from terrain_sketch.gui.help_texts import CROSS_SIDES_TIP
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 25, 25, 35), UTM)
+    band = c.add_drawn(Tool.ADD, Mode.PATH, line_through(5, 5, 34, 5), UTM)
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    assert dock.cross.toolTip() == CROSS_SIDES_TIP
+    for other in (pond.id, band.id, None):
+        dock.show_feature(other)
+        assert dock.cross.toolTip() == "", other
 ```
 
 **File:** `tests/qgis/test_profile_widget.py`
@@ -6835,6 +6900,17 @@ def test_the_two_crest_edges_move_together():
     drag(w, 2.0, 0.0, 3.0, 0.0)
     assert w.points[1][0] == pytest.approx(-w.points[2][0]) and w.points[2][0] == pytest.approx(3.0, abs=0.1)
     assert w.points[1][1] == w.points[2][1] == 0.0                # the crest stays level
+
+
+def test_the_crest_stays_level_while_an_edge_is_dragged_or_nudged():
+    w = whole(left=((-12.0, -3.0),))
+    drag(w, 2.0, 0.0, 3.0, 1.5)                                   # dragged up and out
+    assert w.points[1][1] == w.points[2][1] == 0.0
+    committed = []
+    w.profileCommitted.connect(committed.append)
+    select(w, *w.points[2])
+    key(w, Qt.Key.Key_Up)
+    assert w.points[2][1] == 0.0 and committed == []               # nothing to commit
 
 
 def test_no_handle_crosses_the_centre_line():
@@ -7388,7 +7464,8 @@ def _path_values(feature, info, drawn, view: DemGrid, long_profile):
     # side the combine rule would keep, as if both side shapes were built there, instead of always the
     # right-hand one — a visible step when the two sides differ.
     length = float(vertex_stations(coords)[-1])
-    axis = (offset == 0.0) & ~core & ((station <= 0.0) | (station >= length))
+    # (the stations and the length are summed in different ways, so the far end can be one bit short)
+    axis = (offset == 0.0) & ~core & ((station <= 0.0) | (station >= length - 1e-9))
     if axis.any():
         keep = np.maximum if info.combine is Combine.MAX else np.minimum
         unused = -np.inf if info.combine is Combine.MAX else np.inf
@@ -7490,7 +7567,7 @@ from .stations import vertex_stations
 from .tools import TOOL_INFO, Mode
 
 SAMPLES = 200
-SAME = 5e-5   # values written back at four decimals: closer than this is the same value
+SAME = 1e-4   # values are written back at four decimals, so closer than this is the same value
 
 
 def cross_section(feature, side: int = 1) -> tuple:
@@ -7535,14 +7612,20 @@ def set_cross_section(feature, side: int, points) -> dict:
     if feature.mode is Mode.PATH:
         changes["width"] = max(2.0 * edge, 0.1)
 
-    # Only treat the final point as a slope terminus when the feature has a terminal slope
-    # AND that point lies strictly beyond the last break; otherwise all points after the
-    # edge are break points.
+    # The final point is the slope's end only if the plot drew one: `cross_section` adds it when the
+    # reach goes past the last break. With breaks beyond the reach there is none, and reading the last
+    # break as the slope's end would rewrite the slope and the reach and drop that break.
     has_terminal_slope = feature.slope_n > 0.0
     last_break_distance = pts[-2][0] if len(pts) > 2 else edge
-    last_point_is_terminus = has_terminal_slope and pts[-1][0] > last_break_distance
+    stored = feature.cross_right if side >= 0 else feature.cross_left
+    drew_terminus = side_limit(stored, feature.slope_n, feature.reach) > max([0.0] + [float(d) for d, _ in stored])
+    last_point_is_terminus = has_terminal_slope and drew_terminus and pts[-1][0] > last_break_distance
 
-    if last_point_is_terminus:
+    if has_terminal_slope and not drew_terminus:
+        # every point after the edge is a break; the slope and its reach are not on the plot to change
+        if breaks_key is not None:
+            changes[breaks_key] = tuple((d - edge, z) for d, z in pts[2:] if d > edge)
+    elif last_point_is_terminus:
         interior, last = pts[2:-1], pts[-1]
         if breaks_key is not None:
             changes[breaks_key] = tuple((d - edge, z) for d, z in interior)
@@ -7581,18 +7664,24 @@ def whole_cross_section(feature) -> tuple:
 def set_whole_cross_section(feature, points, symmetric: bool = False) -> dict:
     """Turn an edited whole cross profile back into feature fields.
 
-    Each side is read the way `set_cross_section` reads one. Width, side slope and reach are single
-    values shared by both sides, so each is taken from the side where it changed. With `symmetric`,
-    the break points of the side that was edited are copied to the other side."""
+    Each side is read the way `set_cross_section` reads one, but a side whose points are still the ones
+    the plot was given is left as the feature has it: reading it back could only add rounding. Width,
+    side slope and reach are single values shared by both sides, so each is taken from the side where it
+    changed (the right when both did). With `symmetric`, the break points of the side that was edited
+    are copied to the other side."""
     pts = [(float(x), float(z)) for x, z in points]
-    from_right = set_cross_section(feature, 1, [(0.0, 0.0)] + sorted(p for p in pts if p[0] > 0.0))
-    from_left = set_cross_section(feature, -1, [(0.0, 0.0)] + sorted((-x, z) for x, z in pts if x < 0.0))
-    changes = {"cross_left": from_left["cross_left"], "cross_right": from_right["cross_right"]}
+    sides = {}
+    for side, key, own in ((1, "cross_right", sorted(p for p in pts if p[0] > 0.0)),
+                           (-1, "cross_left", sorted((-x, z) for x, z in pts if x < 0.0))):
+        if _same_points(own, cross_section(feature, side=side)[1:]):
+            sides[key] = {}
+        else:
+            sides[key] = set_cross_section(feature, side, [(0.0, 0.0)] + own)
+    changes = {key: read.get(key, getattr(feature, key)) for key, read in sides.items()}
     for key in ("width", "slope_n", "reach"):
         current = getattr(feature, key)
-        left_moved = abs(from_left[key] - current) > SAME
-        right_moved = abs(from_right[key] - current) > SAME
-        changes[key] = from_left[key] if left_moved and not right_moved else from_right[key]
+        left, right = sides["cross_left"].get(key, current), sides["cross_right"].get(key, current)
+        changes[key] = left if abs(left - current) > SAME and abs(right - current) <= SAME else right
     if symmetric:
         if _same_points(changes["cross_right"], feature.cross_right) \
                 and not _same_points(changes["cross_left"], feature.cross_left):
@@ -8051,7 +8140,6 @@ class ProfileDock(QgsDockWidget):
         self._loading = False
 
         self.cross = ProfileWidget(Kind.CROSS)
-        self.cross.setToolTip(CROSS_SIDES_TIP)
         self.long = ProfileWidget(Kind.LONG)
         self.symmetric = QCheckBox(self.tr("Symmetric"))
         self.symmetric.setChecked(True)
@@ -8103,6 +8191,7 @@ class ProfileDock(QgsDockWidget):
         """Load a feature's profiles, or clear both panels when there is no selection."""
         self._fid = fid
         if fid is None or not self.controller.has_dem:
+            self.cross.setToolTip("")
             self.cross.clear()
             self.long.clear()
             self.note.clear()
@@ -8121,6 +8210,7 @@ class ProfileDock(QgsDockWidget):
         try:
             info = TOOL_INFO[feature.tool]
             is_path = feature.mode is Mode.PATH
+            self.cross.setToolTip(CROSS_SIDES_TIP if is_path and info.has_slopes else "")   # it is about sides
             # A path shows both sides around its centre line; an area shows its one edge slope, and
             # takes no break points: the engine discards an area's (spec 5.4).
             if is_path:
@@ -8515,9 +8605,10 @@ class ProfileWidget(QWidget):
                 x = min(x, -MIN_HALF_WIDTH) if self.points[index][0] < 0.0 else max(x, MIN_HALF_WIDTH)
             elif self.kind is Kind.CROSS:
                 x = max(x, 0.0)
+        if index in self._edges():
+            z = self.points[index][1]           # the crest stays level: its edges only move sideways
         if partner is not None:
-            edge = partner in self._edges()     # the crest stays level: an edge's partner keeps its height
-            self.points[partner] = (-x, self.points[partner][1] if edge else z)
+            self.points[partner] = (-x, z)
         self.points[index] = (x, z)
         self.update()
 
@@ -8640,8 +8731,8 @@ def _interpolate(x: float, xs, zs) -> float:
 ```
 - [ ] **Step 4: Run the tests**
 
-Run: `scripts/test.sh tests/core/test_operations.py tests/core/test_sections.py tests/qgis/test_profile_dock.py tests/qgis/test_profile_widget.py tests/qgis/test_undo.py` → Expected: `119 passed`
-Run: `scripts/test.sh` → Expected: `480 passed`
+Run: `scripts/test.sh tests/core/test_operations.py tests/core/test_sections.py tests/qgis/test_profile_dock.py tests/qgis/test_profile_widget.py tests/qgis/test_undo.py` → Expected: `126 passed`
+Run: `scripts/test.sh` → Expected: `487 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -8993,6 +9084,38 @@ def test_symmetric_copies_the_edited_side_whichever_side_it_is():
     assert unticked["cross_left"] == ((4.0, -1.0),) and unticked["cross_right"] == ()
 
 
+def test_editing_one_side_leaves_a_side_with_breaks_past_its_reach_as_it_was():
+    """A berm beyond the reach leaves that side without a slope-end handle. Reading its last berm as the
+    slope's end rewrote the slope and the reach and dropped the berm while the user edited the other side."""
+    f = dike(width=4.0, slope_n=3.0, reach=5.0, cross_right=((2.0, -0.5), (8.0, -1.0)))
+    points = list(whole_cross_section(f))
+    assert points[-1] == (10.0, -1.0)                               # the berm is the last handle
+    points[0] = (-10.0, -8.0 / 3.0)                                 # the left slope's end, 3 m further out
+    changes = set_whole_cross_section(f, points)
+    assert changes["cross_right"] == f.cross_right and changes["cross_left"] == ()
+    assert changes["slope_n"] == pytest.approx(3.0) and changes["reach"] == pytest.approx(8.0)
+
+
+def test_a_side_whose_breaks_run_past_its_reach_keeps_its_slope_when_edited():
+    f = dike(width=4.0, slope_n=3.0, reach=5.0, cross_right=((2.0, -0.5), (8.0, -1.0)))
+    changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (4.0, -0.5), (10.0, -1.4)])
+    assert changes["cross_right"] == ((2.0, -0.5), (8.0, -1.4))
+    assert "slope_n" not in changes and "reach" not in changes
+
+
+def test_the_side_that_was_not_edited_does_not_change_the_shared_values():
+    f = dike(width=4.0, slope_n=0.0, reach=10.0, cross_right=((3.0, -1.0),))
+    points = list(whole_cross_section(f))
+    points[-1] = (6.0, -1.5)                                        # drag the right berm
+    changes = set_whole_cross_section(f, points)
+    assert changes["cross_right"] == ((4.0, -1.5),) and changes["reach"] == pytest.approx(10.0)
+    # a stored value halfway between two four-decimal numbers still counts as unchanged on the other side
+    odd = dike(width=4.0, slope_n=3.0, reach=40.34765)
+    moved = list(whole_cross_section(odd))
+    moved[0] = (moved[0][0] - 3.0, moved[0][1] - 1.0)
+    assert set_whole_cross_section(odd, moved)["reach"] == pytest.approx(43.34765, abs=1e-4)
+
+
 def rotated_rectangle(length, breadth, degrees, centre=(20.0, 20.0)):
     c, s = np.cos(np.radians(degrees)), np.sin(np.radians(degrees))
     corners = [(-length / 2, -breadth / 2), (length / 2, -breadth / 2), (length / 2, breadth / 2),
@@ -9324,6 +9447,20 @@ def test_an_area_section_follows_the_features_own_line_and_a_path_has_none(tmp_p
     assert section["line"] == own and section["stations"][-1] == pytest.approx(30.0)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 35, 34, 35), UTM)
     assert c.area_section(dike.id)["stations"] == () and c.area_section("gone")["line"] is None
+
+
+def test_the_cross_plot_explains_its_sides_only_for_a_path_it_can_edit(tmp_path):
+    from terrain_sketch.gui.help_texts import CROSS_SIDES_TIP
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 25, 25, 35), UTM)
+    band = c.add_drawn(Tool.ADD, Mode.PATH, line_through(5, 5, 34, 5), UTM)
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    assert dock.cross.toolTip() == CROSS_SIDES_TIP
+    for other in (pond.id, band.id, None):
+        dock.show_feature(other)
+        assert dock.cross.toolTip() == "", other
 ```
 
 **File:** `tests/qgis/test_scenario_file.py`
@@ -9859,7 +9996,7 @@ from .stations import vertex_stations
 from .tools import TOOL_INFO, Mode
 
 SAMPLES = 200
-SAME = 5e-5   # values written back at four decimals: closer than this is the same value
+SAME = 1e-4   # values are written back at four decimals, so closer than this is the same value
 
 
 def cross_section(feature, side: int = 1) -> tuple:
@@ -9904,14 +10041,20 @@ def set_cross_section(feature, side: int, points) -> dict:
     if feature.mode is Mode.PATH:
         changes["width"] = max(2.0 * edge, 0.1)
 
-    # Only treat the final point as a slope terminus when the feature has a terminal slope
-    # AND that point lies strictly beyond the last break; otherwise all points after the
-    # edge are break points.
+    # The final point is the slope's end only if the plot drew one: `cross_section` adds it when the
+    # reach goes past the last break. With breaks beyond the reach there is none, and reading the last
+    # break as the slope's end would rewrite the slope and the reach and drop that break.
     has_terminal_slope = feature.slope_n > 0.0
     last_break_distance = pts[-2][0] if len(pts) > 2 else edge
-    last_point_is_terminus = has_terminal_slope and pts[-1][0] > last_break_distance
+    stored = feature.cross_right if side >= 0 else feature.cross_left
+    drew_terminus = side_limit(stored, feature.slope_n, feature.reach) > max([0.0] + [float(d) for d, _ in stored])
+    last_point_is_terminus = has_terminal_slope and drew_terminus and pts[-1][0] > last_break_distance
 
-    if last_point_is_terminus:
+    if has_terminal_slope and not drew_terminus:
+        # every point after the edge is a break; the slope and its reach are not on the plot to change
+        if breaks_key is not None:
+            changes[breaks_key] = tuple((d - edge, z) for d, z in pts[2:] if d > edge)
+    elif last_point_is_terminus:
         interior, last = pts[2:-1], pts[-1]
         if breaks_key is not None:
             changes[breaks_key] = tuple((d - edge, z) for d, z in interior)
@@ -9950,18 +10093,24 @@ def whole_cross_section(feature) -> tuple:
 def set_whole_cross_section(feature, points, symmetric: bool = False) -> dict:
     """Turn an edited whole cross profile back into feature fields.
 
-    Each side is read the way `set_cross_section` reads one. Width, side slope and reach are single
-    values shared by both sides, so each is taken from the side where it changed. With `symmetric`,
-    the break points of the side that was edited are copied to the other side."""
+    Each side is read the way `set_cross_section` reads one, but a side whose points are still the ones
+    the plot was given is left as the feature has it: reading it back could only add rounding. Width,
+    side slope and reach are single values shared by both sides, so each is taken from the side where it
+    changed (the right when both did). With `symmetric`, the break points of the side that was edited
+    are copied to the other side."""
     pts = [(float(x), float(z)) for x, z in points]
-    from_right = set_cross_section(feature, 1, [(0.0, 0.0)] + sorted(p for p in pts if p[0] > 0.0))
-    from_left = set_cross_section(feature, -1, [(0.0, 0.0)] + sorted((-x, z) for x, z in pts if x < 0.0))
-    changes = {"cross_left": from_left["cross_left"], "cross_right": from_right["cross_right"]}
+    sides = {}
+    for side, key, own in ((1, "cross_right", sorted(p for p in pts if p[0] > 0.0)),
+                           (-1, "cross_left", sorted((-x, z) for x, z in pts if x < 0.0))):
+        if _same_points(own, cross_section(feature, side=side)[1:]):
+            sides[key] = {}
+        else:
+            sides[key] = set_cross_section(feature, side, [(0.0, 0.0)] + own)
+    changes = {key: read.get(key, getattr(feature, key)) for key, read in sides.items()}
     for key in ("width", "slope_n", "reach"):
         current = getattr(feature, key)
-        left_moved = abs(from_left[key] - current) > SAME
-        right_moved = abs(from_right[key] - current) > SAME
-        changes[key] = from_left[key] if left_moved and not right_moved else from_right[key]
+        left, right = sides["cross_left"].get(key, current), sides["cross_right"].get(key, current)
+        changes[key] = left if abs(left - current) > SAME and abs(right - current) <= SAME else right
     if symmetric:
         if _same_points(changes["cross_right"], feature.cross_right) \
                 and not _same_points(changes["cross_left"], feature.cross_left):
@@ -11073,7 +11222,6 @@ class ProfileDock(QgsDockWidget):
         self._loading = False
 
         self.cross = ProfileWidget(Kind.CROSS)
-        self.cross.setToolTip(CROSS_SIDES_TIP)
         self.long = ProfileWidget(Kind.LONG)
         self.symmetric = QCheckBox(self.tr("Symmetric"))
         self.symmetric.setChecked(True)
@@ -11125,6 +11273,7 @@ class ProfileDock(QgsDockWidget):
         """Load a feature's profiles, or clear both panels when there is no selection."""
         self._fid = fid
         if fid is None or not self.controller.has_dem:
+            self.cross.setToolTip("")
             self.cross.clear()
             self.long.clear()
             self.note.clear()
@@ -11143,6 +11292,7 @@ class ProfileDock(QgsDockWidget):
         try:
             info = TOOL_INFO[feature.tool]
             is_path = feature.mode is Mode.PATH
+            self.cross.setToolTip(CROSS_SIDES_TIP if is_path and info.has_slopes else "")   # it is about sides
             # A path shows both sides around its centre line; an area shows its one edge slope, and
             # takes no break points: the engine discards an area's (spec 5.4).
             if is_path:
@@ -11667,8 +11817,8 @@ def _round6(values) -> str:
 ```
 - [ ] **Step 4: Run the tests**
 
-Run: `scripts/test.sh tests/core/test_feature.py tests/core/test_sections.py tests/qgis/test_profile_dock.py tests/qgis/test_scenario_file.py` → Expected: `75 passed`
-Run: `scripts/test.sh` → Expected: `486 passed`
+Run: `scripts/test.sh tests/core/test_feature.py tests/core/test_sections.py tests/qgis/test_profile_dock.py tests/qgis/test_scenario_file.py` → Expected: `79 passed`
+Run: `scripts/test.sh` → Expected: `493 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -11858,7 +12008,7 @@ from .stations import vertex_stations
 from .tools import TOOL_INFO, Mode
 
 SAMPLES = 200
-SAME = 5e-5   # values written back at four decimals: closer than this is the same value
+SAME = 1e-4   # values are written back at four decimals, so closer than this is the same value
 
 
 def cross_section(feature, side: int = 1) -> tuple:
@@ -11903,14 +12053,20 @@ def set_cross_section(feature, side: int, points) -> dict:
     if feature.mode is Mode.PATH:
         changes["width"] = max(2.0 * edge, 0.1)
 
-    # Only treat the final point as a slope terminus when the feature has a terminal slope
-    # AND that point lies strictly beyond the last break; otherwise all points after the
-    # edge are break points.
+    # The final point is the slope's end only if the plot drew one: `cross_section` adds it when the
+    # reach goes past the last break. With breaks beyond the reach there is none, and reading the last
+    # break as the slope's end would rewrite the slope and the reach and drop that break.
     has_terminal_slope = feature.slope_n > 0.0
     last_break_distance = pts[-2][0] if len(pts) > 2 else edge
-    last_point_is_terminus = has_terminal_slope and pts[-1][0] > last_break_distance
+    stored = feature.cross_right if side >= 0 else feature.cross_left
+    drew_terminus = side_limit(stored, feature.slope_n, feature.reach) > max([0.0] + [float(d) for d, _ in stored])
+    last_point_is_terminus = has_terminal_slope and drew_terminus and pts[-1][0] > last_break_distance
 
-    if last_point_is_terminus:
+    if has_terminal_slope and not drew_terminus:
+        # every point after the edge is a break; the slope and its reach are not on the plot to change
+        if breaks_key is not None:
+            changes[breaks_key] = tuple((d - edge, z) for d, z in pts[2:] if d > edge)
+    elif last_point_is_terminus:
         interior, last = pts[2:-1], pts[-1]
         if breaks_key is not None:
             changes[breaks_key] = tuple((d - edge, z) for d, z in interior)
@@ -11949,18 +12105,24 @@ def whole_cross_section(feature) -> tuple:
 def set_whole_cross_section(feature, points, symmetric: bool = False) -> dict:
     """Turn an edited whole cross profile back into feature fields.
 
-    Each side is read the way `set_cross_section` reads one. Width, side slope and reach are single
-    values shared by both sides, so each is taken from the side where it changed. With `symmetric`,
-    the break points of the side that was edited are copied to the other side."""
+    Each side is read the way `set_cross_section` reads one, but a side whose points are still the ones
+    the plot was given is left as the feature has it: reading it back could only add rounding. Width,
+    side slope and reach are single values shared by both sides, so each is taken from the side where it
+    changed (the right when both did). With `symmetric`, the break points of the side that was edited
+    are copied to the other side."""
     pts = [(float(x), float(z)) for x, z in points]
-    from_right = set_cross_section(feature, 1, [(0.0, 0.0)] + sorted(p for p in pts if p[0] > 0.0))
-    from_left = set_cross_section(feature, -1, [(0.0, 0.0)] + sorted((-x, z) for x, z in pts if x < 0.0))
-    changes = {"cross_left": from_left["cross_left"], "cross_right": from_right["cross_right"]}
+    sides = {}
+    for side, key, own in ((1, "cross_right", sorted(p for p in pts if p[0] > 0.0)),
+                           (-1, "cross_left", sorted((-x, z) for x, z in pts if x < 0.0))):
+        if _same_points(own, cross_section(feature, side=side)[1:]):
+            sides[key] = {}
+        else:
+            sides[key] = set_cross_section(feature, side, [(0.0, 0.0)] + own)
+    changes = {key: read.get(key, getattr(feature, key)) for key, read in sides.items()}
     for key in ("width", "slope_n", "reach"):
         current = getattr(feature, key)
-        left_moved = abs(from_left[key] - current) > SAME
-        right_moved = abs(from_right[key] - current) > SAME
-        changes[key] = from_left[key] if left_moved and not right_moved else from_right[key]
+        left, right = sides["cross_left"].get(key, current), sides["cross_right"].get(key, current)
+        changes[key] = left if abs(left - current) > SAME and abs(right - current) <= SAME else right
     if symmetric:
         if _same_points(changes["cross_right"], feature.cross_right) \
                 and not _same_points(changes["cross_left"], feature.cross_left):
@@ -13921,7 +14083,6 @@ class ProfileDock(QgsDockWidget):
         self._loading = False
 
         self.cross = ProfileWidget(Kind.CROSS)
-        self.cross.setToolTip(CROSS_SIDES_TIP)
         self.long = ProfileWidget(Kind.LONG)
         self.symmetric = QCheckBox(self.tr("Symmetric"))
         self.symmetric.setChecked(True)
@@ -13979,6 +14140,7 @@ class ProfileDock(QgsDockWidget):
         """Load a feature's profiles, or clear both panels when there is no selection."""
         self._fid = fid
         if fid is None or not self.controller.has_dem:
+            self.cross.setToolTip("")
             self.cross.clear()
             self.long.clear()
             self.note.clear()
@@ -13997,6 +14159,7 @@ class ProfileDock(QgsDockWidget):
         try:
             info = TOOL_INFO[feature.tool]
             is_path = feature.mode is Mode.PATH
+            self.cross.setToolTip(CROSS_SIDES_TIP if is_path and info.has_slopes else "")   # it is about sides
             # A path shows both sides around its centre line; an area shows its one edge slope, and
             # takes no break points: the engine discards an area's (spec 5.4).
             if is_path:
@@ -14107,7 +14270,7 @@ class ProfileDock(QgsDockWidget):
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_section_line.py` → Expected: `8 passed`
-Run: `scripts/test.sh` → Expected: `494 passed`
+Run: `scripts/test.sh` → Expected: `501 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -15480,7 +15643,7 @@ def _title(feature) -> str:
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_guidance.py tests/qgis/test_illustrations.py tests/qgis/test_panels.py` → Expected: `34 passed`
-Run: `scripts/test.sh` → Expected: `500 passed`
+Run: `scripts/test.sh` → Expected: `507 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -16541,7 +16704,7 @@ class TerrainSketchPlugin:
 - [ ] **Step 4: Run the tests**
 
 Run: `scripts/test.sh tests/qgis/test_dock_plugin.py tests/qgis/test_settings.py` → Expected: `32 passed`
-Run: `scripts/test.sh` → Expected: `505 passed`
+Run: `scripts/test.sh` → Expected: `512 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -16644,7 +16807,8 @@ from qgis.core import QgsProject
 from qgis_helpers import UTM, line_through, read_tif, sample, square, start_session
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.controller import scenario_files_folder
-from terrain_sketch.gui.help_texts import FILES_NOT_MOVED
+from terrain_sketch.gui.help_texts import FILES_NOT_MOVED, FILES_NOT_RELEASED
+from terrain_sketch.qgis_io.raster_io import WorkingFiles
 
 
 def layer_sources(c):
@@ -16696,7 +16860,8 @@ def test_a_new_scenario_takes_the_rasters_back_to_a_temp_folder(tmp_path):
     assert not c.files.folder.startswith(str(tmp_path)) and os.path.isdir(c.files.folder)
     c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
     saved, _ = read_tif(tmp_path / "flood_files" / "working_dem.tif")
-    assert saved[15, 15] == 10.0                                      # the new pond went to the temp copy
+    assert saved[19, 20] == 11.0                                      # the saved dike is still there
+    assert saved[15, 15] == 10.0                                      # and the new pond went to the temp copy
     temp = c.files.folder
     c.close()
     assert not os.path.exists(temp)
@@ -16708,10 +16873,48 @@ def test_opening_a_scenario_keeps_the_rasters_beside_it(tmp_path):
     path = str(tmp_path / "flood.gpkg")
     c.save_scenario(path)
     c.new_scenario()
+    assert read_tif(tmp_path / "flood_files" / "working_dem.tif")[0][19, 20] == 11.0
     c.open_scenario(path)
     assert c.files.folder == str(tmp_path / "flood_files")
     working, _ = read_tif(tmp_path / "flood_files" / "working_dem.tif")
     assert working[19, 20] == 11.0
+
+
+def test_opening_another_scenario_leaves_the_first_scenarios_rasters_as_saved(tmp_path):
+    c = start_session(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    first = str(tmp_path / "first.gpkg")
+    c.save_scenario(first)
+    c.new_scenario()
+    c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
+    second = str(tmp_path / "second.gpkg")
+    c.save_scenario(second)
+    c.open_scenario(first)
+    c.open_scenario(second)
+    rasters, _ = read_tif(tmp_path / "first_files" / "working_dem.tif")
+    assert rasters[19, 20] == 11.0 and rasters[15, 15] == 10.0         # first's dike, and no pond from second
+    assert c.files.folder == str(tmp_path / "second_files")
+
+
+def test_edits_that_are_not_saved_do_not_stay_in_the_scenarios_rasters(tmp_path):
+    """The rasters are what a saved QGIS project shows next time: work the user threw away must not."""
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.save_scenario(str(tmp_path / "flood.gpkg"))
+    c.update_feature(dike.id, amount=4.0)
+    assert read_tif(tmp_path / "flood_files" / "working_dem.tif")[0][19, 20] == 14.0   # shown while working
+    c.close()                                                          # closed without saving
+    assert read_tif(tmp_path / "flood_files" / "working_dem.tif")[0][19, 20] == 11.0
+
+
+def test_save_as_puts_the_first_scenarios_rasters_back_to_what_it_saved(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.save_scenario(str(tmp_path / "first.gpkg"))
+    c.update_feature(dike.id, amount=4.0)
+    c.save_scenario(str(tmp_path / "second.gpkg"))
+    assert read_tif(tmp_path / "first_files" / "working_dem.tif")[0][19, 20] == 11.0
+    assert read_tif(tmp_path / "second_files" / "working_dem.tif")[0][19, 20] == 14.0
 
 
 def test_a_folder_that_cannot_be_written_leaves_the_rasters_where_they_were(tmp_path):
@@ -16736,6 +16939,46 @@ def test_a_3d_terrain_on_the_modified_dem_follows_the_move(tmp_path):
     provider = QgsProject.instance().elevationProperties().terrainProvider()
     assert provider.layer().id() == c.layers.working_id
     assert provider.layer().source() == str(tmp_path / "flood_files" / "working_dem.tif")
+
+
+def test_a_scenario_folder_that_cannot_be_written_falls_back_to_a_temp_folder(tmp_path):
+    """Spec §9. Staying in the first scenario's folder would write the second scenario's edits over it."""
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.save_scenario(str(tmp_path / "first.gpkg"))
+    (tmp_path / "second_files").write_text("a file where the folder should go")
+    c.save_scenario(str(tmp_path / "second.gpkg"))
+    assert not c.files.folder.startswith(str(tmp_path)) and os.path.isdir(c.files.folder)
+    c.update_feature(dike.id, amount=4.0)
+    assert read_tif(tmp_path / "first_files" / "working_dem.tif")[0][19, 20] == 11.0
+
+
+def test_new_and_open_change_nothing_when_the_rasters_cannot_leave_the_scenarios_folder(tmp_path, monkeypatch):
+    import pytest
+    from terrain_sketch.qgis_io.scenario import ScenarioError
+    c = start_session(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    path = str(tmp_path / "flood.gpkg")
+    c.save_scenario(path)
+    heard = []
+    c.message.connect(lambda _level, text: heard.append(text))
+    monkeypatch.setattr(WorkingFiles, "move_to", lambda self, folder: (_ for _ in ()).throw(OSError("no room")))
+    c.new_scenario()
+    assert len(c.features) == 1 and c.scenario_path == path
+    assert heard and heard[-1] == FILES_NOT_RELEASED.format(folder=str(tmp_path / "flood_files"))
+    with pytest.raises(ScenarioError):
+        c.open_scenario(path)
+    assert read_tif(tmp_path / "flood_files" / "working_dem.tif")[0][19, 20] == 11.0
+
+
+def test_moving_the_rasters_over_older_ones_leaves_no_partial_files(tmp_path):
+    c = start_session(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.save_scenario(str(tmp_path / "flood.gpkg"))
+    c.new_scenario()
+    c.save_scenario(str(tmp_path / "flood.gpkg"))                    # the same folder again, with nothing in it
+    assert sorted(os.listdir(tmp_path / "flood_files")) == ["change.tif", "working_dem.tif"]
+    assert read_tif(tmp_path / "flood_files" / "working_dem.tif")[0][19, 20] == 10.0
 ```
 
 **File:** `tests/qgis/test_scenario_panel.py`
@@ -17174,6 +17417,23 @@ def test_the_dem_question_has_both_choices_and_cancel(tmp_path, monkeypatch):
         monkeypatch.setattr(QMessageBox, "exec", click)
         assert dock._dem_choice_dialog("which DEM?") == expected
         assert seen == [sorted(["Start on its DEM", "Open on this DEM", "Cancel"])]
+
+
+def test_a_dem_that_cannot_be_started_on_is_not_left_in_the_project(tmp_path):
+    from unittest import mock
+    from terrain_sketch.qgis_io.raster_io import DemError
+    path = scenario_from_another_dem(tmp_path, np.full((30, 30), 12.0, np.float32))
+    other_dem = str(tmp_path / "other30" / "dem.tif")
+    project = QgsProject.instance()
+    project.removeMapLayers([l.id() for l in project.mapLayers().values() if l.source() == other_dem])
+    _iface, c, dock = panel(tmp_path)
+    first = c.info.path
+    dock.ask_open_path = lambda: path
+    dock.choose_dem = lambda text: "scenario"
+    with mock.patch.object(c, "set_dem", side_effect=DemError("refused")):
+        dock.open_scenario_button.click()
+    assert not [l for l in project.mapLayers().values() if l.source() == other_dem]
+    assert c.info.path == first and c.scenario_path is None
 ```
 - [ ] **Step 2: Run them to see them fail**
 
@@ -17215,6 +17475,7 @@ from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import DemError, WorkingFiles, export_dem, read_dem
 from ..qgis_io.scenario import ScenarioError
 from .help_texts import (COPY_NAME, DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, EMPTY_LAYER, FILES_NOT_MOVED,
+                         FILES_NOT_RELEASED, FILES_NOT_RESTORED,
                          NO_FEATURES_SELECTED, NO_SESSION, RESULT_LAYER_REMOVED, SCENARIO_NOT_APPLIED,
                          SESSION_ENDED_DEM_REMOVED, TOOL_LABELS, UNDO_ADD, UNDO_DELETE, UNDO_DUPLICATE,
                          UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER, UNDO_SECTION_LINE, UNDO_SETTINGS, UNDO_SHAPE,
@@ -17270,7 +17531,8 @@ class SketchController(QObject):
         self.stack = None
         self.info = None
         self.files = None
-        self._files_temporary = True   # the working rasters are in a temp folder, not a scenario's
+        self._files_owner = None       # the scenario file whose `_files` folder holds the working rasters, if any
+        self._files_edited = False     # whether those rasters changed since that scenario was saved or opened
         self.layers = None
         self.dem_layer_id = None
         self.dem_crs = QgsCoordinateReferenceSystem()
@@ -17329,7 +17591,7 @@ class SketchController(QObject):
         self.stack = FeatureStack(grid)
         self.info = info
         self.files = files
-        self._files_temporary = True
+        self._files_owner, self._files_edited = None, False
         try:
             self.layers = SketchLayers(self.project, layer, self.files.working_path, self.files.change_path)
         except Exception as error:  # noqa: BLE001 — never leave a half-built session behind
@@ -17609,9 +17871,10 @@ class SketchController(QObject):
 
     def new_scenario(self) -> None:
         """Drop every feature and forget the file, keeping the DEM session as it is."""
+        if not self._release_files():
+            return
         if self._set([]):
             self._forget_scenario()
-            self._place_files()
             self.sessionChanged.emit()
 
     def save_scenario(self, path: str) -> None:
@@ -17651,6 +17914,8 @@ class SketchController(QObject):
         if not self.has_dem:
             raise ScenarioError(NO_SESSION)
         features, meta = scenario.load(path)
+        if not self._release_files():
+            raise ScenarioError(FILES_NOT_RELEASED.format(folder=self.files.folder))
         if not self._set(features):
             raise ScenarioError(SCENARIO_NOT_APPLIED)
         self.undo_stack.clear()   # the history belonged to the features that were just replaced
@@ -17664,33 +17929,65 @@ class SketchController(QObject):
         self._created = created
 
     def _place_files(self) -> None:
-        """Keep the working rasters with the scenario the features belong to (spec §8.2 step 3): in
-        `<scenario>_files/` beside a saved or opened scenario, so a QGIS project saved with these layers
-        still finds them later; in a temp folder when there is no scenario file. They move whenever that
-        changes, so edits to a new or another scenario never write over a scenario's own rasters."""
-        if self._scenario_path is None:
-            if not self._files_temporary:
-                self._move_files(tempfile.mkdtemp(prefix="terrain_sketch_"), temporary=True)
-        elif self._files_temporary or not _same_file(scenario_files_folder(self._scenario_path), self.files.folder):
-            self._move_files(scenario_files_folder(self._scenario_path), temporary=False)
+        """Keep the working rasters beside the scenario just saved or opened (spec §8.2 step 3), in
+        `<scenario>_files/`, so a QGIS project saved with these layers still finds them later."""
+        target = scenario_files_folder(self._scenario_path)
+        if self._files_owner is not None and _same_file(target, self.files.folder):
+            self._files_owner, self._files_edited = self._scenario_path, False   # already there, and now saved
+            return
+        self._move_files(target, owner=self._scenario_path)
 
-    def _move_files(self, folder: str, temporary: bool) -> None:
-        """Move the working rasters to `folder` and point the layers at them. A folder that cannot be written
-        leaves them where they are, with a message: the save or open this follows has already happened."""
-        old, was_temporary = self.files.folder, self._files_temporary
+    def _release_files(self) -> bool:
+        """Before the features are replaced (New, Open): move the working rasters off a scenario's folder
+        into a temp one, or the next features would be written over that scenario's saved rasters. False,
+        with a message, when they cannot be moved."""
+        return self._files_owner is None or self._move_files(None, owner=None)
+
+    def _move_files(self, folder: str | None, owner: str | None) -> bool:
+        """Move the working rasters to `folder` — a new temp folder when `owner` is None, otherwise the
+        `_files` folder of the scenario file `owner` — and point the layers at them. The folder left
+        behind is removed when it was a temp one; when it was a scenario's and the session edited it since
+        that scenario was saved, it is put back to the saved terrain. A scenario folder that cannot be
+        written falls back to a temp folder, with a message (spec §9). True when the rasters moved."""
+        old_folder, old_owner, old_edited = self.files.folder, self._files_owner, self._files_edited
         try:
+            if owner is None:
+                folder = tempfile.mkdtemp(prefix="terrain_sketch_")
             self.files.move_to(folder)
         except Exception as error:  # noqa: BLE001 — a read-only share, a full disk, a file another program holds
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Warning)
+            if owner is None:
+                if folder is not None:
+                    shutil.rmtree(folder, ignore_errors=True)
+                self.message.emit(Qgis.MessageLevel.Warning, FILES_NOT_RELEASED.format(folder=old_folder))
+                return False
             self.message.emit(Qgis.MessageLevel.Warning, FILES_NOT_MOVED.format(folder=folder, error=error))
-            if temporary:
-                shutil.rmtree(folder, ignore_errors=True)
-            return
-        self._files_temporary = temporary
+            if old_owner is not None:
+                self._move_files(None, owner=None)   # not left writing into another scenario's rasters
+            return False
+        self._files_owner, self._files_edited = owner, False
         if self.layers is not None:
             self.layers.repoint(self.files.working_path, self.files.change_path)
-        if was_temporary:
-            shutil.rmtree(old, ignore_errors=True)
+        if old_owner is None:
+            shutil.rmtree(old_folder, ignore_errors=True)
+        elif old_edited:
+            self._restore_saved_rasters(old_owner, old_folder)
+        return True
+
+    def _restore_saved_rasters(self, path: str, folder: str) -> None:
+        """Put a scenario's `_files` rasters back to its saved terrain, recomputed from the scenario file:
+        the session edited them without saving, and a QGIS project saved with those layers must not show
+        changes the user discarded. A failure is a message, never an exception."""
+        try:
+            features, _meta = scenario.load(path)
+            stack = FeatureStack(self.stack.original)
+            window = stack.update(features)
+            files = WorkingFiles(folder, self.stack.original, self.info)
+            if window is not None:
+                files.write(window, stack.working)
+        except Exception as error:  # noqa: BLE001 — reached from buttons and project signals
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Warning)
+            self.message.emit(Qgis.MessageLevel.Warning, FILES_NOT_RESTORED.format(folder=folder, error=error))
 
     def _forget_scenario(self) -> None:
         self._scenario_path = None
@@ -17769,6 +18066,7 @@ class SketchController(QObject):
         self._features = features
         try:
             if window is not None:
+                self._files_edited = True
                 self.files.write(window, self.stack.working)
                 self.layers.refresh()
             self.layers.set_outlines(self._outline_items())
@@ -17834,12 +18132,14 @@ class SketchController(QObject):
         self._offer_save_before_discard()
         self.cancel_preview()  # a queued frame must not fire against a session that is gone
         had_session = self.stack is not None
+        if had_session and self._files_owner is not None and self._files_edited:
+            self._restore_saved_rasters(self._files_owner, self.files.folder)   # the edits were not saved
         self._forget_scenario()  # a Save after this must not write the next session over this file
         self._terrain_before = None  # the project is being cleared, or close() has already put it back
         # A scenario's `_files` folder is the scenario's, and stays; only a temp folder goes with the session
-        folder = self.files.folder if self.files is not None and self._files_temporary else None
+        folder = self.files.folder if self.files is not None and self._files_owner is None else None
         self.stack = self.info = self.files = self.layers = None
-        self._files_temporary = True
+        self._files_owner, self._files_edited = None, False
         self.dem_layer_id = None
         self.dem_crs = QgsCoordinateReferenceSystem()
         self._features = []
@@ -18175,8 +18475,12 @@ SCENARIO_DEM_DIFFERS = ("This scenario was made on a DEM with a different {}.\n\
 DEM_NOT_READABLE = "{} cannot be read as a raster, so Terrain Sketch cannot start on it."
 SCENARIO_OTHER_DEM = ("This scenario was made on {dem}, which differs from the DEM you are using in {differences}."
                       "\n\nStart on {dem} and open the scenario there? Your current DEM stays in the project.")
-FILES_NOT_MOVED = ("Terrain Sketch could not put its working rasters in {folder} ({error}). They stay where they "
-                   "were, so a QGIS project saved now will not find them next time.")
+FILES_NOT_MOVED = ("Terrain Sketch could not put its working rasters in {folder} ({error}), so a QGIS project "
+                   "saved now will not find them next time. They are kept in a temporary folder meanwhile.")
+FILES_NOT_RELEASED = ("Terrain Sketch could not move its working rasters out of {folder}, where the next features "
+                      "would have been written over the saved scenario's, so nothing was changed.")
+FILES_NOT_RESTORED = ("Terrain Sketch could not put the rasters in {folder} back to the saved scenario ({error}); "
+                      "they may show changes that were not saved.")
 SCENARIO_NOT_APPLIED = ("The scenario could not be applied to this DEM, so it was not opened. "
                         "Your current features are unchanged.")
 UNSAVED_BEFORE_CLOSING = ("Terrain Sketch is closing this scenario, and it has changes that are not "
@@ -18546,16 +18850,22 @@ class MainDock(QgsDockWidget):
 
     def _start_on_file(self, source: str) -> bool:
         """Start on the DEM at `source`: the layer already in the project that reads it, or a new one."""
-        layer = next((layer for layer in QgsProject.instance().mapLayers().values()
+        project = QgsProject.instance()
+        layer = next((layer for layer in project.mapLayers().values()
                       if isinstance(layer, QgsRasterLayer) and _same_source(layer.source(), source)), None)
-        if layer is None:
+        added = layer is None
+        if added:
             layer = QgsRasterLayer(source, os.path.splitext(os.path.basename(source))[0])
             if not layer.isValid():
                 self._show_message(Qgis.MessageLevel.Warning, DEM_NOT_READABLE.format(source))
                 return False
-            QgsProject.instance().addMapLayer(layer)
+            project.addMapLayer(layer)
         self.dem_combo.setLayer(layer)
-        return self._start_session(layer)
+        if self._start_session(layer):
+            return True
+        if added:
+            project.removeMapLayer(layer.id())    # a layer the user never added does not stay behind
+        return False
 
     def _new_feature(self) -> None:
         self.feature_view.clearSelection()
@@ -19243,12 +19553,22 @@ class WorkingFiles:
 
     def move_to(self, folder: str) -> None:
         """Copy both files into `folder` and write there from now on. The old files are left for the caller
-        to remove, so a copy that fails half way changes nothing: the old ones are still the ones in use."""
+        to remove. Each copy is made under a temporary name and only then put in place, so a copy that fails
+        half way — a full disk — neither changes the files in use nor leaves a truncated raster in `folder`."""
         os.makedirs(folder, exist_ok=True)
-        working, change = os.path.join(folder, WORKING_NAME), os.path.join(folder, CHANGE_NAME)
-        shutil.copyfile(self.working_path, working)
-        shutil.copyfile(self.change_path, change)
-        self.folder, self.working_path, self.change_path = folder, working, change
+        moves = [(source, os.path.join(folder, name)) for source, name in
+                 ((self.working_path, WORKING_NAME), (self.change_path, CHANGE_NAME))]
+        try:
+            for source, target in moves:
+                shutil.copyfile(source, target + ".copying")
+        except BaseException:
+            for _source, target in moves:
+                if os.path.exists(target + ".copying"):
+                    os.remove(target + ".copying")
+            raise
+        for _source, target in moves:
+            os.replace(target + ".copying", target)
+        self.folder, self.working_path, self.change_path = folder, moves[0][1], moves[1][1]
 
     def write(self, window: Window, working: DemGrid) -> None:
         """Write one window of the working DEM and its change into both files."""
@@ -19294,8 +19614,8 @@ def _write_tif(path: str, array: np.ndarray, grid: DemGrid, info: DemInfo, extra
 ```
 - [ ] **Step 4: Run the tests**
 
-Run: `scripts/test.sh tests/qgis/test_scenario_files.py tests/qgis/test_scenario_panel.py` → Expected: `35 passed`
-Run: `scripts/test.sh` → Expected: `516 passed`
+Run: `scripts/test.sh tests/qgis/test_scenario_files.py tests/qgis/test_scenario_panel.py` → Expected: `42 passed`
+Run: `scripts/test.sh` → Expected: `530 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -19321,7 +19641,7 @@ The suite cannot see these. Plans 2-7 still have their own lists waiting.
 9. Save a scenario as `flood.gpkg`: a `flood_files` folder appears beside it and the Modified DEM layer's source (Layer Properties ▸ Information) points into it. Save the QGIS project, close QGIS, reopen the project: the Modified DEM layer is still there.
 10. **New scenario**, draw something, and check that `flood_files/working_dem.tif` did not change (its modified time).
 11. Open a scenario made on another DEM whose file is still on disk: choose **Start on its DEM** and check that the session is on that DEM with the scenario's features.
-12. Save a scenario into a read-only folder, or onto a USB stick you then remove: expect a warning that the working rasters stayed where they were, not a crash.
+12. Save as `flood.gpkg` into a folder where `flood_files` already exists as a file (or a read-only folder): the scenario saves, and a warning says the working rasters are kept in a temporary folder — not a crash.
 
 ## Still open after Plan 8
 
@@ -19332,3 +19652,33 @@ The suite cannot see these. Plans 2-7 still have their own lists waiting.
 | A settings merge has no time boundary; `_restore_terrain` treats any DEM terrain on the Modified DEM layer as ours | Ruled acceptable in Plan 7; revisit if the manual checks surprise. |
 | `EXPORT_REPLACE` repeats `SCENARIO_REPLACE`'s text | One constant per message is the file's convention. |
 | Translations | Out of scope for v1 (spec §2). |
+
+## Addendum: execution and final-review fixes (2026-09-15)
+
+The eight tasks landed byte-identical to the blocks above. Two task reviews found plan-level defects; each was fixed in the prototype, the plan regenerated and dry-run again before the task's fix round, so **the blocks above already include them**:
+- **Task 3:** `set_whole_cross_section` re-read the side the user did not touch, and a side whose breaks run past the reach (no slope-end handle) was misread — an edit on one side rewrote the other side's slope and reach and dropped its berm. Also: `SAME` 5e-5 → 1e-4; the far-end axis test allows one bit; crest edges only move sideways; the sides tooltip only on an editable path.
+- **Task 8:** New and Open wrote the next terrain into the saved scenario's `_files` rasters before moving away, a failed move kept writing into another scenario's folder, and discarded edits stayed in the rasters. Now the rasters leave a scenario folder before the features change, a folder edited since its scenario was saved is rewritten from the file when the session leaves it, and a failed move falls back to a temp folder.
+
+The session scratchpad was wiped when the app quit mid-plan; the prototype was rebuilt from this plan's own blocks (identical for the tasks already done) in the git-ignored `.superpowers/`.
+
+The final whole-branch review found no Critical issues and four Important ones; one fix wave (e5f7dde..ed82a3f) and three controller fixes after its re-review (b344225..b1b36b3) followed. **Where the code on `main` differs from the task blocks above, the code and its tests are authoritative.** 549 tests.
+
+| # | What changed | Why |
+|---|---|---|
+| I1 | With Symmetric, only a side whose break handles moved on the plot is copied (compared as crest edge + offset); selecting a path sets Symmetric from whether its sides match | Any slope-end or crest-edge edit copied the right side's breaks over the left, wiping a left-only berm; Symmetric is ticked by default. |
+| I2 | Opening a scenario puts the rasters beside it only when it was made on this DEM file with the same grid; otherwise they stay in a temp folder until Save | Opening on another DEM (even a same-grid one, which asks no question) rewrote the scenario's `_files` rasters with that DEM's terrain. |
+| I3 | The rasters never move into a folder whose `working_dem.tif` or `change.tif` is the session's DEM | Starting on a reopened project's Modified DEM and saving as its scenario overwrote the DEM under the session. |
+| I4 | A reloaded plot keeps the selected handle where it still is (count and position within 5 mm); selecting another feature clears it | Each nudge commit reloaded the plot and dropped the selection, so tapping an arrow key moved a handle once. |
+| — | Smaller: a section-line drawing ends when another feature is selected; the outline and section band follow a map CRS change; reshaping an area away from its section line restores the default line in the same undo step; a malformed `section_line` loads as the default; a default line through a centroid outside the area falls back to a point on it; area amount labels say "highest/lowest point" and the path summaries name the straight grade; the Profiles buttons reset with no selection; picture redraws in Qt callbacks are guarded; each failed raster move says it once; a failed "Start on its DEM" removes the layer it added and a failed Open after it no longer claims the old features are unchanged; a scenario without a DEM record opens without an exception; tests for the grown section window and the unload save | Each confirmed by review. |
+
+### Additions to the manual check
+13. Select a dike whose two sides differ: Symmetric unticks. Tick it, drag a crest edge: neither side's berm is copied. Drag a berm: it is mirrored.
+14. Select a slope end and tap the Right arrow three times: the handle moves 0.3 m in three undo steps.
+15. Start on a DEM, open a scenario made on another DEM file (choose "Open on this DEM"), then close without saving: the scenario's `_files` rasters are unchanged (their modified time).
+
+### Still open after Plan 8 (in addition to the table above)
+| Item | Why not here |
+|---|---|
+| Rewriting a scenario's rasters on project clear while its layers still hold them may fail on Windows (shown as a message) | Cannot be tested on macOS. |
+| A crest-edge drag keeps break handles where they are on the plot, so stored offsets shrink as the crest widens | The Properties width still carries breaks outward (spec §5.4); ruled in Task 3. |
+| Duplicate ordering by the "(copy)" name; a held arrow key overlapping a mouse edit emits an extra, empty commit; a floating panel's later moves saved only at unload; the area section recomputed on every change (~0.35 s for a 1.3 M-cell area) | Task minors, accepted with rulings. |

@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 from qgis.core import QgsSettings
+from qgis.PyQt.QtCore import Qt
 
 GROUP = "terrain_sketch"
+DOCK_AREAS = (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea,
+              Qt.DockWidgetArea.TopDockWidgetArea, Qt.DockWidgetArea.BottomDockWidgetArea)
 
 
 def save(key: str, value) -> None:
@@ -70,3 +73,57 @@ def _restore(stored, widget, method: str) -> bool:
         return bool(getattr(widget, method)(stored))
     except Exception:  # noqa: BLE001 — a corrupt blob or a deleted widget must not reach Qt
         return False
+
+
+def remember_collapsed(name: str, box) -> None:
+    """Keep a QgsCollapsibleGroupBox's collapsed state under the plugin's group. Left to itself the box
+    saves under its own `QgsCollapsibleGroupBox/…` key, where the plugin can neither find nor clear it."""
+    try:
+        box.setSaveCollapsedState(False)
+        box.setCollapsed(bool(load(f"{name}/collapsed", False, bool)))
+        box.collapsedStateChanged.connect(lambda collapsed: save(f"{name}/collapsed", bool(collapsed)))
+    except Exception:  # noqa: BLE001 — persistence is a convenience, never a failure path
+        pass
+
+
+def save_dock(name: str, dock, window) -> None:
+    """Remember where a panel is in `window`: its dock area, whether it floats, and its size — or, when it
+    floats, its position too. A panel that is not in the window at all (being removed) changes nothing."""
+    try:
+        area = window.dockWidgetArea(dock)
+        if dock.isFloating():
+            save(f"{name}/floating", True)
+            save_geometry(name, dock)
+        elif area in DOCK_AREAS:
+            save(f"{name}/floating", False)
+            save(f"{name}/area", int(area.value))
+            save(f"{name}/width", dock.width())
+            save(f"{name}/height", dock.height())
+    except Exception:  # noqa: BLE001 — runs from dock signals and unload
+        pass
+
+
+def dock_area(name: str, default):
+    """The dock area a panel was last in, or `default`."""
+    try:
+        area = Qt.DockWidgetArea(int(load(f"{name}/area", int(default.value), int)))
+    except Exception:  # noqa: BLE001 — a value from an older or hand-edited profile
+        return default
+    return area if area in DOCK_AREAS else default
+
+
+def restore_dock(name: str, dock, window) -> None:
+    """Put a panel back the way it was, once it has been added to `window`: floating where it floated, or
+    docked at the width (side areas) or height (top and bottom) it had."""
+    try:
+        if load(f"{name}/floating", False, bool):
+            dock.setFloating(True)
+            restore_geometry(name, dock)
+            return
+        across = window.dockWidgetArea(dock) in (Qt.DockWidgetArea.LeftDockWidgetArea,
+                                                 Qt.DockWidgetArea.RightDockWidgetArea)
+        size = load(f"{name}/width" if across else f"{name}/height", 0, int)
+        if size > 0:
+            window.resizeDocks([dock], [size], Qt.Orientation.Horizontal if across else Qt.Orientation.Vertical)
+    except Exception:  # noqa: BLE001 — persistence is a convenience, never a failure path
+        pass

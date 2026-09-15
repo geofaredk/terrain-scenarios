@@ -95,7 +95,9 @@ UNDO_DUPLICATE = "Duplicate {}"
 COPY_NAME = "{} (copy)"
 
 VIEW_3D_TIP = ("Show the modified DEM in a new 3D view. It becomes the project's terrain until this "
-               "session ends; the terrain you had before is put back then.")
+               "session ends; the terrain you had before is put back then. This 3D terrain is only temporary, "
+               "even if you save the project meanwhile: your project's own terrain comes back when the sketch "
+               "session ends.")
 VIEW_3D_NOT_OPENED = ("The modified DEM is now the project's terrain, but Terrain Sketch could not open a "
                       "3D view. Open one with View ▸ 3D Map Views ▸ New 3D Map View.")
 VIEW_3D_NO_LAYER = ("The Modified DEM layer is no longer in the project, so there is nothing to show in 3D. "

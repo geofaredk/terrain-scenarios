@@ -171,6 +171,14 @@ def test_the_3d_button_waits_for_a_session():
     assert not dock.view_3d_button.icon().isNull()     # getThemeIcon gives a blank for an unknown name
 
 
+def test_the_button_says_the_3d_terrain_is_temporary_even_in_a_saved_project():
+    """The Modified DEM's files go when the session ends, so a project saved meanwhile must not be
+    expected to keep that terrain."""
+    dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
+    tip = dock.view_3d_button.toolTip()
+    assert "temporary" in tip and "save" in tip
+
+
 def test_a_closed_project_does_not_hand_its_terrain_to_the_next_one(tmp_path):
     """Clearing the project drops the session without close(); the terrain remembered from that
     project must go with it, or the next session would put it into a different project."""

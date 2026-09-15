@@ -50,6 +50,22 @@ def test_symmetric_mirrors_the_edit_to_the_other_side(tmp_path):
     assert after.cross_right == ((6.0, -2.0),) and after.cross_left == ((4.0, -1.0),)
 
 
+def test_selecting_a_path_ticks_symmetric_only_when_its_two_sides_match(tmp_path):
+    """Ticked on a path with a berm on one side, the next break-point edit would copy it over the other."""
+    c = start_session(tmp_path)
+    plain = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 10, 34, 10), UTM)
+    berm = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 30, 34, 30), UTM)
+    c.update_feature(berm.id, cross_left=((2.0, -0.5),))
+    dock = ProfileDock(c)
+    dock.show_feature(berm.id)
+    assert not dock.symmetric.isChecked() and not dock.cross.symmetric
+    dock.show_feature(plain.id)
+    assert dock.symmetric.isChecked() and dock.cross.symmetric
+    dock.symmetric.setChecked(False)                                 # the user's own choice
+    c.update_feature(plain.id, amount=2.0)                            # a change reloads the panel
+    assert not dock.symmetric.isChecked()
+
+
 def test_the_side_slope_is_shared_between_the_sides_and_the_tip_says_so(tmp_path):
     """`slope_n` and `reach` are single per-feature fields (spec 5.4), so unticking Symmetric
     cannot stop them applying to both sides. The tooltip has to say that rather than promise

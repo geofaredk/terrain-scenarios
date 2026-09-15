@@ -274,6 +274,18 @@ def test_symmetric_copies_the_edited_side_whichever_side_it_is():
     assert unticked["cross_left"] == ((4.0, -1.0),) and unticked["cross_right"] == ()
 
 
+def test_symmetric_keeps_both_sides_when_an_edit_moves_no_break_point():
+    """Only a side whose break points changed is copied. Copying right over left whenever the right side's
+    breaks were unchanged wiped a left-only berm with every slope-end or crest-edge drag."""
+    f = dike(width=4.0, slope_n=3.0, reach=10.0, cross_left=((2.0, -0.5),))
+    points = list(whole_cross_section(f))
+    x, z = points[-1]
+    points[-1] = (x + 1.0, z)                                        # the right slope's end, 1 m further out
+    changes = set_whole_cross_section(f, points, symmetric=True)
+    assert changes["cross_left"] == ((2.0, -0.5),) and changes["cross_right"] == ()
+    assert changes["reach"] == pytest.approx(11.0)
+
+
 def test_editing_one_side_leaves_a_side_with_breaks_past_its_reach_as_it_was():
     """A berm beyond the reach leaves that side without a slope-end handle. Reading its last berm as the
     slope's end rewrote the slope and the reach and dropped the berm while the user edited the other side."""

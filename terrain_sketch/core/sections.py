@@ -118,8 +118,9 @@ def set_whole_cross_section(feature, points, symmetric: bool = False) -> dict:
     Each side is read the way `set_cross_section` reads one, but a side whose points are still the ones
     the plot was given is left as the feature has it: reading it back could only add rounding. Width,
     side slope and reach are single values shared by both sides, so each is taken from the side where it
-    changed (the right when both did). With `symmetric`, the break points of the side that was edited
-    are copied to the other side."""
+    changed (the right when both did). With `symmetric`, the break points of a side whose breaks changed
+    are copied to the other side (the right's when both did); an edit that moves no break point, such as
+    a slope's end, leaves both sides' breaks as they are."""
     pts = [(float(x), float(z)) for x, z in points]
     sides = {}
     for side, key, own in ((1, "cross_right", sorted(p for p in pts if p[0] > 0.0)),
@@ -134,10 +135,11 @@ def set_whole_cross_section(feature, points, symmetric: bool = False) -> dict:
         left, right = sides["cross_left"].get(key, current), sides["cross_right"].get(key, current)
         changes[key] = left if abs(left - current) > SAME and abs(right - current) <= SAME else right
     if symmetric:
-        if _same_points(changes["cross_right"], feature.cross_right) \
-                and not _same_points(changes["cross_left"], feature.cross_left):
+        right_same = _same_points(changes["cross_right"], feature.cross_right)
+        left_same = _same_points(changes["cross_left"], feature.cross_left)
+        if right_same and not left_same:
             changes["cross_right"] = changes["cross_left"]
-        else:
+        elif not right_same:
             changes["cross_left"] = changes["cross_right"]
     return changes
 

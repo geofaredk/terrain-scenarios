@@ -83,7 +83,11 @@ class ProfileDock(QgsDockWidget):
         self.show_feature(None)
 
     def show_feature(self, fid) -> None:
-        """Load a feature's profiles, or clear both panels when there is no selection."""
+        """Load a feature's profiles, or clear both panels when there is no selection.
+
+        Selecting a path ticks Symmetric when its two sides have the same break points, and unticks it
+        when they differ: ticked, the next break-point edit would copy one side over the other. Only on
+        selection — a reload after an edit keeps whatever the user chose."""
         self._fid = fid
         if fid is None or not self.controller.has_dem:
             self.cross.setToolTip("")
@@ -92,6 +96,9 @@ class ProfileDock(QgsDockWidget):
             self.note.clear()
             self._set_enabled(False)
             return
+        feature = self.controller.find(fid)
+        if feature is not None and feature.mode is Mode.PATH:
+            self.symmetric.setChecked(feature.cross_left == feature.cross_right)
         self._refresh()
 
     def _refresh(self) -> None:

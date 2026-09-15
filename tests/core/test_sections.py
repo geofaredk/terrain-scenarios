@@ -269,3 +269,35 @@ def test_symmetric_copies_the_edited_side_whichever_side_it_is():
     assert set_whole_cross_section(f, right_berm, symmetric=True)["cross_left"] == ((4.0, -1.0),)
     unticked = set_whole_cross_section(f, left_berm, symmetric=False)
     assert unticked["cross_left"] == ((4.0, -1.0),) and unticked["cross_right"] == ()
+
+
+def test_editing_one_side_leaves_a_side_with_breaks_past_its_reach_as_it_was():
+    """A berm beyond the reach leaves that side without a slope-end handle. Reading its last berm as the
+    slope's end rewrote the slope and the reach and dropped the berm while the user edited the other side."""
+    f = dike(width=4.0, slope_n=3.0, reach=5.0, cross_right=((2.0, -0.5), (8.0, -1.0)))
+    points = list(whole_cross_section(f))
+    assert points[-1] == (10.0, -1.0)                               # the berm is the last handle
+    points[0] = (-10.0, -8.0 / 3.0)                                 # the left slope's end, 3 m further out
+    changes = set_whole_cross_section(f, points)
+    assert changes["cross_right"] == f.cross_right and changes["cross_left"] == ()
+    assert changes["slope_n"] == pytest.approx(3.0) and changes["reach"] == pytest.approx(8.0)
+
+
+def test_a_side_whose_breaks_run_past_its_reach_keeps_its_slope_when_edited():
+    f = dike(width=4.0, slope_n=3.0, reach=5.0, cross_right=((2.0, -0.5), (8.0, -1.0)))
+    changes = set_cross_section(f, 1, [(0.0, 0.0), (2.0, 0.0), (4.0, -0.5), (10.0, -1.4)])
+    assert changes["cross_right"] == ((2.0, -0.5), (8.0, -1.4))
+    assert "slope_n" not in changes and "reach" not in changes
+
+
+def test_the_side_that_was_not_edited_does_not_change_the_shared_values():
+    f = dike(width=4.0, slope_n=0.0, reach=10.0, cross_right=((3.0, -1.0),))
+    points = list(whole_cross_section(f))
+    points[-1] = (6.0, -1.5)                                        # drag the right berm
+    changes = set_whole_cross_section(f, points)
+    assert changes["cross_right"] == ((4.0, -1.5),) and changes["reach"] == pytest.approx(10.0)
+    # a stored value halfway between two four-decimal numbers still counts as unchanged on the other side
+    odd = dike(width=4.0, slope_n=3.0, reach=40.34765)
+    moved = list(whole_cross_section(odd))
+    moved[0] = (moved[0][0] - 3.0, moved[0][1] - 1.0)
+    assert set_whole_cross_section(odd, moved)["reach"] == pytest.approx(43.34765, abs=1e-4)

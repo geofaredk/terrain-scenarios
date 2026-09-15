@@ -14,7 +14,7 @@ from .stations import vertex_stations
 from .tools import TOOL_INFO, Mode
 
 SAMPLES = 200
-SAME = 5e-5   # values written back at four decimals: closer than this is the same value
+SAME = 1e-4   # values are written back at four decimals, so closer than this is the same value
 
 
 def cross_section(feature, side: int = 1) -> tuple:
@@ -59,14 +59,20 @@ def set_cross_section(feature, side: int, points) -> dict:
     if feature.mode is Mode.PATH:
         changes["width"] = max(2.0 * edge, 0.1)
 
-    # Only treat the final point as a slope terminus when the feature has a terminal slope
-    # AND that point lies strictly beyond the last break; otherwise all points after the
-    # edge are break points.
+    # The final point is the slope's end only if the plot drew one: `cross_section` adds it when the
+    # reach goes past the last break. With breaks beyond the reach there is none, and reading the last
+    # break as the slope's end would rewrite the slope and the reach and drop that break.
     has_terminal_slope = feature.slope_n > 0.0
     last_break_distance = pts[-2][0] if len(pts) > 2 else edge
-    last_point_is_terminus = has_terminal_slope and pts[-1][0] > last_break_distance
+    stored = feature.cross_right if side >= 0 else feature.cross_left
+    drew_terminus = side_limit(stored, feature.slope_n, feature.reach) > max([0.0] + [float(d) for d, _ in stored])
+    last_point_is_terminus = has_terminal_slope and drew_terminus and pts[-1][0] > last_break_distance
 
-    if last_point_is_terminus:
+    if has_terminal_slope and not drew_terminus:
+        # every point after the edge is a break; the slope and its reach are not on the plot to change
+        if breaks_key is not None:
+            changes[breaks_key] = tuple((d - edge, z) for d, z in pts[2:] if d > edge)
+    elif last_point_is_terminus:
         interior, last = pts[2:-1], pts[-1]
         if breaks_key is not None:
             changes[breaks_key] = tuple((d - edge, z) for d, z in interior)
@@ -105,18 +111,24 @@ def whole_cross_section(feature) -> tuple:
 def set_whole_cross_section(feature, points, symmetric: bool = False) -> dict:
     """Turn an edited whole cross profile back into feature fields.
 
-    Each side is read the way `set_cross_section` reads one. Width, side slope and reach are single
-    values shared by both sides, so each is taken from the side where it changed. With `symmetric`,
-    the break points of the side that was edited are copied to the other side."""
+    Each side is read the way `set_cross_section` reads one, but a side whose points are still the ones
+    the plot was given is left as the feature has it: reading it back could only add rounding. Width,
+    side slope and reach are single values shared by both sides, so each is taken from the side where it
+    changed (the right when both did). With `symmetric`, the break points of the side that was edited
+    are copied to the other side."""
     pts = [(float(x), float(z)) for x, z in points]
-    from_right = set_cross_section(feature, 1, [(0.0, 0.0)] + sorted(p for p in pts if p[0] > 0.0))
-    from_left = set_cross_section(feature, -1, [(0.0, 0.0)] + sorted((-x, z) for x, z in pts if x < 0.0))
-    changes = {"cross_left": from_left["cross_left"], "cross_right": from_right["cross_right"]}
+    sides = {}
+    for side, key, own in ((1, "cross_right", sorted(p for p in pts if p[0] > 0.0)),
+                           (-1, "cross_left", sorted((-x, z) for x, z in pts if x < 0.0))):
+        if _same_points(own, cross_section(feature, side=side)[1:]):
+            sides[key] = {}
+        else:
+            sides[key] = set_cross_section(feature, side, [(0.0, 0.0)] + own)
+    changes = {key: read.get(key, getattr(feature, key)) for key, read in sides.items()}
     for key in ("width", "slope_n", "reach"):
         current = getattr(feature, key)
-        left_moved = abs(from_left[key] - current) > SAME
-        right_moved = abs(from_right[key] - current) > SAME
-        changes[key] = from_left[key] if left_moved and not right_moved else from_right[key]
+        left, right = sides["cross_left"].get(key, current), sides["cross_right"].get(key, current)
+        changes[key] = left if abs(left - current) > SAME and abs(right - current) <= SAME else right
     if symmetric:
         if _same_points(changes["cross_right"], feature.cross_right) \
                 and not _same_points(changes["cross_left"], feature.cross_left):

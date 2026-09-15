@@ -27,7 +27,6 @@ class ProfileDock(QgsDockWidget):
         self._loading = False
 
         self.cross = ProfileWidget(Kind.CROSS)
-        self.cross.setToolTip(CROSS_SIDES_TIP)
         self.long = ProfileWidget(Kind.LONG)
         self.symmetric = QCheckBox(self.tr("Symmetric"))
         self.symmetric.setChecked(True)
@@ -79,6 +78,7 @@ class ProfileDock(QgsDockWidget):
         """Load a feature's profiles, or clear both panels when there is no selection."""
         self._fid = fid
         if fid is None or not self.controller.has_dem:
+            self.cross.setToolTip("")
             self.cross.clear()
             self.long.clear()
             self.note.clear()
@@ -97,6 +97,7 @@ class ProfileDock(QgsDockWidget):
         try:
             info = TOOL_INFO[feature.tool]
             is_path = feature.mode is Mode.PATH
+            self.cross.setToolTip(CROSS_SIDES_TIP if is_path and info.has_slopes else "")   # it is about sides
             # A path shows both sides around its centre line; an area shows its one edge slope, and
             # takes no break points: the engine discards an area's (spec 5.4).
             if is_path:

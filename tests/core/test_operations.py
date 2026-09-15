@@ -217,7 +217,26 @@ def test_straight_past_an_end_the_axis_follows_the_side_the_combine_rule_keeps()
 
     lowered = make_grid(flat(10.0))
     apply_feature(feature(Tool.LOWER_PATH, Mode.PATH, axis, amount=2.0, width=3.0, slope_n=2.0, reach=10.0,
-                          cross_right=((2.0, 0.0),)), lowered)        # a lower tool keeps the deeper side
+                          cross_left=((2.0, 0.0),)), lowered)         # a lower tool keeps the deeper side
     cut = lowered.data.astype(float)
-    np.testing.assert_allclose(cut[19, beyond], cut[20, beyond])
-    assert (cut[19, beyond] < cut[18, beyond]).any()
+    np.testing.assert_allclose(cut[19, beyond], cut[18, beyond])
+    assert (cut[19, beyond] < cut[20, beyond]).any()
+
+
+def test_the_axis_past_the_far_end_is_found_even_when_the_lengths_differ_in_the_last_bit():
+    """The station of a cell past the end and the path's length are summed differently; on some paths
+    the station falls one bit short of the length, and the far end kept its notch."""
+    bent = line_wkb([(4.034, 4.192), (10.5, 20.5), (29.5, 20.5)])
+    grid = make_grid(flat(10.0))
+    apply_feature(feature(Tool.RAISE_PATH, Mode.PATH, bent, amount=2.0, width=3.0, slope_n=2.0, reach=10.0,
+                          cross_left=((2.0, 0.0),)), grid)
+    after = grid.data.astype(float)
+    beyond = slice(31, 36)
+    np.testing.assert_allclose(after[19, beyond], after[18, beyond])
+
+
+def test_a_point_straight_ahead_of_an_end_is_on_neither_side():
+    from terrain_sketch.core.stations import stations_offsets
+    coords = np.array([[0.0, 0.0], [10.0, 0.0]])
+    station, offset = stations_offsets(coords, np.array([15.0, -3.0, 5.0, 5.0]), np.array([0.0, 0.0, 2.0, -2.0]))
+    assert list(offset) == [0.0, 0.0, -2.0, 2.0] and list(station) == [10.0, 0.0, 5.0, 5.0]

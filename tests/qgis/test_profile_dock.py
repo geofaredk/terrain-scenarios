@@ -252,3 +252,17 @@ def test_the_symmetric_box_tells_the_plot_to_move_mirror_handles_together(tmp_pa
     assert dock.cross.symmetric
     dock.symmetric.setChecked(False)
     assert not dock.cross.symmetric
+
+
+def test_the_cross_plot_explains_its_sides_only_for_a_path_it_can_edit(tmp_path):
+    from terrain_sketch.gui.help_texts import CROSS_SIDES_TIP
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 25, 25, 35), UTM)
+    band = c.add_drawn(Tool.ADD, Mode.PATH, line_through(5, 5, 34, 5), UTM)
+    dock = ProfileDock(c)
+    dock.show_feature(dike.id)
+    assert dock.cross.toolTip() == CROSS_SIDES_TIP
+    for other in (pond.id, band.id, None):
+        dock.show_feature(other)
+        assert dock.cross.toolTip() == "", other

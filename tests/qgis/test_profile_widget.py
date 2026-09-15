@@ -265,6 +265,17 @@ def test_the_two_crest_edges_move_together():
     assert w.points[1][1] == w.points[2][1] == 0.0                # the crest stays level
 
 
+def test_the_crest_stays_level_while_an_edge_is_dragged_or_nudged():
+    w = whole(left=((-12.0, -3.0),))
+    drag(w, 2.0, 0.0, 3.0, 1.5)                                   # dragged up and out
+    assert w.points[1][1] == w.points[2][1] == 0.0
+    committed = []
+    w.profileCommitted.connect(committed.append)
+    select(w, *w.points[2])
+    key(w, Qt.Key.Key_Up)
+    assert w.points[2][1] == 0.0 and committed == []               # nothing to commit
+
+
 def test_no_handle_crosses_the_centre_line():
     w = whole(left=((-12.0, -3.0),))
     drag(w, -2.0, 0.0, 5.0, 0.0)                                  # the left edge dragged far to the right

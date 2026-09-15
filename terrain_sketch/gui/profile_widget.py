@@ -308,9 +308,10 @@ class ProfileWidget(QWidget):
                 x = min(x, -MIN_HALF_WIDTH) if self.points[index][0] < 0.0 else max(x, MIN_HALF_WIDTH)
             elif self.kind is Kind.CROSS:
                 x = max(x, 0.0)
+        if index in self._edges():
+            z = self.points[index][1]           # the crest stays level: its edges only move sideways
         if partner is not None:
-            edge = partner in self._edges()     # the crest stays level: an edge's partner keeps its height
-            self.points[partner] = (-x, self.points[partner][1] if edge else z)
+            self.points[partner] = (-x, z)
         self.points[index] = (x, z)
         self.update()
 

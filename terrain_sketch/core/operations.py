@@ -198,7 +198,8 @@ def _path_values(feature, info, drawn, view: DemGrid, long_profile):
     # side the combine rule would keep, as if both side shapes were built there, instead of always the
     # right-hand one — a visible step when the two sides differ.
     length = float(vertex_stations(coords)[-1])
-    axis = (offset == 0.0) & ~core & ((station <= 0.0) | (station >= length))
+    # (the stations and the length are summed in different ways, so the far end can be one bit short)
+    axis = (offset == 0.0) & ~core & ((station <= 0.0) | (station >= length - 1e-9))
     if axis.any():
         keep = np.maximum if info.combine is Combine.MAX else np.minimum
         unused = -np.inf if info.combine is Combine.MAX else np.inf

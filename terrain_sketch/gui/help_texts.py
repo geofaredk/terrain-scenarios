@@ -30,10 +30,12 @@ TOOL_SUMMARIES = {
     Tool.INTERPOLATE: "A straight grade between the terrain at the start and end of the path, or a smooth "
                       "surface between the corners of an area. Example: cut through an embankment that "
                       "blocks a flow path, or fill an old ditch.",
-    Tool.RAISE_PATH: "Adds material along the path, following the terrain uphill or downhill; it never "
-                     "removes material. Example: a wall or emergency dike along a river bank.",
-    Tool.LOWER_PATH: "Removes material along the path, following the terrain; it never adds material. "
-                     "Example: a ditch or swale that drains a road towards a pond.",
+    Tool.RAISE_PATH: "Adds material along the path: a straight grade between the ground at the path's ends, "
+                     "plus the height; it never removes material. Example: a wall or emergency dike along a "
+                     "river bank.",
+    Tool.LOWER_PATH: "Removes material along the path: a straight grade between the ground at the path's ends, "
+                     "minus the depth; it never adds material. Example: a ditch or swale that drains a road "
+                     "towards a pond.",
     Tool.RAISE_FLAT: "A level top at the highest point of the path or outline plus the height. "
                      "Example: a flat dam, or building footprints.",
     Tool.LOWER_FLAT: "A level bottom at the lowest point of the path or outline minus the depth. "
@@ -112,9 +114,9 @@ AMOUNT_LABELS = {
     (Tool.RAISE_PATH, Mode.PATH): "Height above the path",
     (Tool.LOWER_PATH, Mode.PATH): "Depth below the path",
     (Tool.RAISE_FLAT, Mode.PATH): "Height above the highest point",
-    (Tool.RAISE_FLAT, Mode.AREA): "Height above the highest edge",
+    (Tool.RAISE_FLAT, Mode.AREA): "Height above the highest point",
     (Tool.LOWER_FLAT, Mode.PATH): "Depth below the lowest point",
-    (Tool.LOWER_FLAT, Mode.AREA): "Depth below the lowest edge",
+    (Tool.LOWER_FLAT, Mode.AREA): "Depth below the lowest point",
     (Tool.ADD, Mode.PATH): "Height added",
     (Tool.ADD, Mode.AREA): "Height added",
     (Tool.SUBTRACT, Mode.PATH): "Depth removed",

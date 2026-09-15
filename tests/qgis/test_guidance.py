@@ -165,3 +165,16 @@ def test_a_picture_that_cannot_be_drawn_does_not_take_qgis_down(tmp_path, monkey
     monkeypatch.setattr(illustrations, "pixmap", broken)
     page.changeEvent(QEvent(QEvent.Type.PaletteChange))
     page.eventFilter(page.width, QFocusEvent(QEvent.Type.FocusIn))
+
+
+def test_the_amount_labels_and_summaries_name_what_the_engine_measures_from():
+    """An area's level is the highest or lowest point of its outline, as the About text says; a raised or
+    lowered path follows the straight grade between the ground at its ends, not every bump in between."""
+    from terrain_sketch.gui.help_texts import TOOL_SUMMARIES, amount_label
+    for tool in (Tool.RAISE_FLAT, Tool.LOWER_FLAT):
+        assert amount_label(tool, Mode.AREA) == amount_label(tool, Mode.PATH)
+        assert "point" in amount_label(tool, Mode.AREA) and "edge" not in amount_label(tool, Mode.AREA)
+    for tool, change in ((Tool.RAISE_PATH, "plus the height"), (Tool.LOWER_PATH, "minus the depth")):
+        summary = TOOL_SUMMARIES[tool]
+        assert "straight grade between the ground at" in summary and change in summary
+        assert "following the terrain" not in summary

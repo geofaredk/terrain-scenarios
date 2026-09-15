@@ -432,3 +432,20 @@ def test_the_dem_question_has_both_choices_and_cancel(tmp_path, monkeypatch):
         monkeypatch.setattr(QMessageBox, "exec", click)
         assert dock._dem_choice_dialog("which DEM?") == expected
         assert seen == [sorted(["Start on its DEM", "Open on this DEM", "Cancel"])]
+
+
+def test_a_dem_that_cannot_be_started_on_is_not_left_in_the_project(tmp_path):
+    from unittest import mock
+    from terrain_sketch.qgis_io.raster_io import DemError
+    path = scenario_from_another_dem(tmp_path, np.full((30, 30), 12.0, np.float32))
+    other_dem = str(tmp_path / "other30" / "dem.tif")
+    project = QgsProject.instance()
+    project.removeMapLayers([l.id() for l in project.mapLayers().values() if l.source() == other_dem])
+    _iface, c, dock = panel(tmp_path)
+    first = c.info.path
+    dock.ask_open_path = lambda: path
+    dock.choose_dem = lambda text: "scenario"
+    with mock.patch.object(c, "set_dem", side_effect=DemError("refused")):
+        dock.open_scenario_button.click()
+    assert not [l for l in project.mapLayers().values() if l.source() == other_dem]
+    assert c.info.path == first and c.scenario_path is None

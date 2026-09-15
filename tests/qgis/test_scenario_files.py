@@ -7,7 +7,8 @@ from qgis.core import QgsProject
 from qgis_helpers import UTM, line_through, read_tif, sample, square, start_session
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.controller import scenario_files_folder
-from terrain_sketch.gui.help_texts import FILES_NOT_MOVED
+from terrain_sketch.gui.help_texts import FILES_NOT_MOVED, FILES_NOT_RELEASED
+from terrain_sketch.qgis_io.raster_io import WorkingFiles
 
 
 def layer_sources(c):
@@ -59,7 +60,8 @@ def test_a_new_scenario_takes_the_rasters_back_to_a_temp_folder(tmp_path):
     assert not c.files.folder.startswith(str(tmp_path)) and os.path.isdir(c.files.folder)
     c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
     saved, _ = read_tif(tmp_path / "flood_files" / "working_dem.tif")
-    assert saved[15, 15] == 10.0                                      # the new pond went to the temp copy
+    assert saved[19, 20] == 11.0                                      # the saved dike is still there
+    assert saved[15, 15] == 10.0                                      # and the new pond went to the temp copy
     temp = c.files.folder
     c.close()
     assert not os.path.exists(temp)
@@ -71,10 +73,48 @@ def test_opening_a_scenario_keeps_the_rasters_beside_it(tmp_path):
     path = str(tmp_path / "flood.gpkg")
     c.save_scenario(path)
     c.new_scenario()
+    assert read_tif(tmp_path / "flood_files" / "working_dem.tif")[0][19, 20] == 11.0
     c.open_scenario(path)
     assert c.files.folder == str(tmp_path / "flood_files")
     working, _ = read_tif(tmp_path / "flood_files" / "working_dem.tif")
     assert working[19, 20] == 11.0
+
+
+def test_opening_another_scenario_leaves_the_first_scenarios_rasters_as_saved(tmp_path):
+    c = start_session(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    first = str(tmp_path / "first.gpkg")
+    c.save_scenario(first)
+    c.new_scenario()
+    c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
+    second = str(tmp_path / "second.gpkg")
+    c.save_scenario(second)
+    c.open_scenario(first)
+    c.open_scenario(second)
+    rasters, _ = read_tif(tmp_path / "first_files" / "working_dem.tif")
+    assert rasters[19, 20] == 11.0 and rasters[15, 15] == 10.0         # first's dike, and no pond from second
+    assert c.files.folder == str(tmp_path / "second_files")
+
+
+def test_edits_that_are_not_saved_do_not_stay_in_the_scenarios_rasters(tmp_path):
+    """The rasters are what a saved QGIS project shows next time: work the user threw away must not."""
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.save_scenario(str(tmp_path / "flood.gpkg"))
+    c.update_feature(dike.id, amount=4.0)
+    assert read_tif(tmp_path / "flood_files" / "working_dem.tif")[0][19, 20] == 14.0   # shown while working
+    c.close()                                                          # closed without saving
+    assert read_tif(tmp_path / "flood_files" / "working_dem.tif")[0][19, 20] == 11.0
+
+
+def test_save_as_puts_the_first_scenarios_rasters_back_to_what_it_saved(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.save_scenario(str(tmp_path / "first.gpkg"))
+    c.update_feature(dike.id, amount=4.0)
+    c.save_scenario(str(tmp_path / "second.gpkg"))
+    assert read_tif(tmp_path / "first_files" / "working_dem.tif")[0][19, 20] == 11.0
+    assert read_tif(tmp_path / "second_files" / "working_dem.tif")[0][19, 20] == 14.0
 
 
 def test_a_folder_that_cannot_be_written_leaves_the_rasters_where_they_were(tmp_path):
@@ -99,3 +139,43 @@ def test_a_3d_terrain_on_the_modified_dem_follows_the_move(tmp_path):
     provider = QgsProject.instance().elevationProperties().terrainProvider()
     assert provider.layer().id() == c.layers.working_id
     assert provider.layer().source() == str(tmp_path / "flood_files" / "working_dem.tif")
+
+
+def test_a_scenario_folder_that_cannot_be_written_falls_back_to_a_temp_folder(tmp_path):
+    """Spec §9. Staying in the first scenario's folder would write the second scenario's edits over it."""
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.save_scenario(str(tmp_path / "first.gpkg"))
+    (tmp_path / "second_files").write_text("a file where the folder should go")
+    c.save_scenario(str(tmp_path / "second.gpkg"))
+    assert not c.files.folder.startswith(str(tmp_path)) and os.path.isdir(c.files.folder)
+    c.update_feature(dike.id, amount=4.0)
+    assert read_tif(tmp_path / "first_files" / "working_dem.tif")[0][19, 20] == 11.0
+
+
+def test_new_and_open_change_nothing_when_the_rasters_cannot_leave_the_scenarios_folder(tmp_path, monkeypatch):
+    import pytest
+    from terrain_sketch.qgis_io.scenario import ScenarioError
+    c = start_session(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    path = str(tmp_path / "flood.gpkg")
+    c.save_scenario(path)
+    heard = []
+    c.message.connect(lambda _level, text: heard.append(text))
+    monkeypatch.setattr(WorkingFiles, "move_to", lambda self, folder: (_ for _ in ()).throw(OSError("no room")))
+    c.new_scenario()
+    assert len(c.features) == 1 and c.scenario_path == path
+    assert heard and heard[-1] == FILES_NOT_RELEASED.format(folder=str(tmp_path / "flood_files"))
+    with pytest.raises(ScenarioError):
+        c.open_scenario(path)
+    assert read_tif(tmp_path / "flood_files" / "working_dem.tif")[0][19, 20] == 11.0
+
+
+def test_moving_the_rasters_over_older_ones_leaves_no_partial_files(tmp_path):
+    c = start_session(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.save_scenario(str(tmp_path / "flood.gpkg"))
+    c.new_scenario()
+    c.save_scenario(str(tmp_path / "flood.gpkg"))                    # the same folder again, with nothing in it
+    assert sorted(os.listdir(tmp_path / "flood_files")) == ["change.tif", "working_dem.tif"]
+    assert read_tif(tmp_path / "flood_files" / "working_dem.tif")[0][19, 20] == 10.0

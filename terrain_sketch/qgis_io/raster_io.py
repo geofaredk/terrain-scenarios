@@ -87,12 +87,22 @@ class WorkingFiles:
 
     def move_to(self, folder: str) -> None:
         """Copy both files into `folder` and write there from now on. The old files are left for the caller
-        to remove, so a copy that fails half way changes nothing: the old ones are still the ones in use."""
+        to remove. Each copy is made under a temporary name and only then put in place, so a copy that fails
+        half way — a full disk — neither changes the files in use nor leaves a truncated raster in `folder`."""
         os.makedirs(folder, exist_ok=True)
-        working, change = os.path.join(folder, WORKING_NAME), os.path.join(folder, CHANGE_NAME)
-        shutil.copyfile(self.working_path, working)
-        shutil.copyfile(self.change_path, change)
-        self.folder, self.working_path, self.change_path = folder, working, change
+        moves = [(source, os.path.join(folder, name)) for source, name in
+                 ((self.working_path, WORKING_NAME), (self.change_path, CHANGE_NAME))]
+        try:
+            for source, target in moves:
+                shutil.copyfile(source, target + ".copying")
+        except BaseException:
+            for _source, target in moves:
+                if os.path.exists(target + ".copying"):
+                    os.remove(target + ".copying")
+            raise
+        for _source, target in moves:
+            os.replace(target + ".copying", target)
+        self.folder, self.working_path, self.change_path = folder, moves[0][1], moves[1][1]
 
     def write(self, window: Window, working: DemGrid) -> None:
         """Write one window of the working DEM and its change into both files."""

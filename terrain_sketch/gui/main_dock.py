@@ -357,16 +357,22 @@ class MainDock(QgsDockWidget):
 
     def _start_on_file(self, source: str) -> bool:
         """Start on the DEM at `source`: the layer already in the project that reads it, or a new one."""
-        layer = next((layer for layer in QgsProject.instance().mapLayers().values()
+        project = QgsProject.instance()
+        layer = next((layer for layer in project.mapLayers().values()
                       if isinstance(layer, QgsRasterLayer) and _same_source(layer.source(), source)), None)
-        if layer is None:
+        added = layer is None
+        if added:
             layer = QgsRasterLayer(source, os.path.splitext(os.path.basename(source))[0])
             if not layer.isValid():
                 self._show_message(Qgis.MessageLevel.Warning, DEM_NOT_READABLE.format(source))
                 return False
-            QgsProject.instance().addMapLayer(layer)
+            project.addMapLayer(layer)
         self.dem_combo.setLayer(layer)
-        return self._start_session(layer)
+        if self._start_session(layer):
+            return True
+        if added:
+            project.removeMapLayer(layer.id())    # a layer the user never added does not stay behind
+        return False
 
     def _new_feature(self) -> None:
         self.feature_view.clearSelection()

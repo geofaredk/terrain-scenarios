@@ -67,6 +67,44 @@ def test_a_terrain_the_user_chose_afterwards_is_left_alone(tmp_path):
     assert isinstance(terrain(), QgsFlatTerrainProvider) and terrain().offset() == 9.0
 
 
+def test_removing_the_modified_dem_layer_puts_the_previous_terrain_back_at_once(tmp_path):
+    """The terrain would point at a layer that is gone; the session carries on without it."""
+    a_flat_terrain_at(5.0)
+    c = start_session(tmp_path)
+    c.show_in_3d()
+    QgsProject.instance().removeMapLayer(c.layers.working_id)
+    assert c.has_dem
+    assert isinstance(terrain(), QgsFlatTerrainProvider) and terrain().offset() == 5.0
+    c.close()
+    assert isinstance(terrain(), QgsFlatTerrainProvider) and terrain().offset() == 5.0
+
+
+def test_removing_the_dem_and_the_modified_dem_together_puts_the_previous_terrain_back(tmp_path):
+    """close() runs from layersRemoved, when both layers are already gone and the terrain's layer
+    reads as None rather than as the Modified DEM."""
+    a_flat_terrain_at(6.0)
+    c = start_session(tmp_path)
+    c.show_in_3d()
+    QgsProject.instance().removeMapLayers([c.dem_layer_id, c.layers.working_id])
+    assert not c.has_dem
+    assert isinstance(terrain(), QgsFlatTerrainProvider) and terrain().offset() == 6.0
+
+
+def test_a_terrain_left_on_a_removed_layer_is_put_back_when_the_session_ends(tmp_path):
+    """The Modified DEM went while the controller was not listening (its layer reads None)."""
+    a_flat_terrain_at(8.0)
+    c = start_session(tmp_path)
+    c.show_in_3d()
+    QgsProject.instance().layersRemoved.disconnect(c._on_layers_removed)
+    try:
+        QgsProject.instance().removeMapLayer(c.layers.working_id)
+    finally:
+        QgsProject.instance().layersRemoved.connect(c._on_layers_removed)
+    assert terrain().layer() is None
+    c.close()
+    assert isinstance(terrain(), QgsFlatTerrainProvider) and terrain().offset() == 8.0
+
+
 def test_without_the_modified_dem_layer_there_is_nothing_to_show(tmp_path):
     a_flat_terrain_at(3.0)
     c = start_session(tmp_path)

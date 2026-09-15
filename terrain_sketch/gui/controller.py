@@ -420,11 +420,17 @@ class SketchController(QObject):
         if before is None:
             return
         properties = self.project.elevationProperties()
-        current = properties.terrainProvider()
-        ours = self.layers.working_id if self.layers is not None else None
-        if isinstance(current, QgsRasterDemTerrainProvider) and current.layer() is not None \
-                and current.layer().id() == ours:
+        if self._terrain_is_ours(properties.terrainProvider()):
             properties.setTerrainProvider(before)
+
+    def _terrain_is_ours(self, provider) -> bool:
+        """Whether `provider` is the one show_in_3d set: a DEM terrain on the Modified DEM layer, or
+        on a layer that has gone. Only ours can have lost its layer through the session's own
+        removal, and a terrain on nothing is worth nothing to keep."""
+        if not isinstance(provider, QgsRasterDemTerrainProvider):
+            return False
+        layer = provider.layer()
+        return layer is None or (self.layers is not None and layer.id() == self.layers.working_id)
 
     @property
     def dem_is_integer(self) -> bool:
@@ -555,6 +561,8 @@ class SketchController(QObject):
         if self._closing or self.stack is None or self.layers is None:
             return
         ids = {item if isinstance(item, str) else item.id() for item in items}
+        if self.layers.working_id in ids:
+            self._restore_terrain()   # the terrain now shows nothing; checked first, as close() needs it too
         if self.dem_layer_id in ids:
             self.close()  # the removal has finished, so the remaining session layers can go too
             self.message.emit(Qgis.MessageLevel.Warning, SESSION_ENDED_DEM_REMOVED)

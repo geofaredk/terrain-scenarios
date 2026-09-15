@@ -114,7 +114,7 @@ def test_an_area_feature_gets_a_read_only_section_through_it(tmp_path):
     assert max(before) == pytest.approx(10.0) and min(after) == pytest.approx(8.0, abs=0.05)
     assert after[0] == pytest.approx(10.0) and after[-1] == pytest.approx(10.0)   # it reaches past the outline
     stations = [s for s, _z in dock.long.points]
-    assert stations[-1] - stations[0] > 19.0                    # along the longer side, west to east
+    assert stations[-1] - stations[0] == pytest.approx(29.0, abs=0.5)   # along the longer side: 19 m + 2 x 5 cells
     assert dock.long.hint == AREA_SECTION_EMPTY_HINT            # what an empty section would say
 
 

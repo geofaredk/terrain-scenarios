@@ -377,3 +377,34 @@ def test_terrain_around_a_feature_is_before_and_after_it_alone():
     assert before.sample(20.0, 20.0) == pytest.approx(11.0) and after.sample(20.0, 20.0) == pytest.approx(8.0)
     _w, before_off, after_off = stack.terrain_around("pond", features=[pad, replace(pond, enabled=False)])
     assert np.array_equal(before_off.data, after_off.data)                   # a feature turned off changes nothing
+
+
+def test_terrain_around_replays_earlier_features_along_the_whole_line_and_no_later_ones():
+    """The section line reaches past the area, so the ground it shows there must include what an earlier
+    feature built outside the area's footprint — and nothing a later one did."""
+    grid = make_grid(flat(10.0))
+    earlier = feature(Tool.RAISE_PATH, Mode.PATH, line_wkb([(5, 5), (5, 35)]), amount=1.0, slope_n=0.0,
+                      id="earlier")
+    pond = feature(Tool.LOWER_FLAT, Mode.AREA, polygon_wkb([(15, 15), (25, 15), (25, 25), (15, 25)]),
+                   amount=2.0, slope_n=0.0, id="pond")
+    later = feature(Tool.RAISE_PATH, Mode.PATH, line_wkb([(35, 5), (35, 35)]), amount=1.0, slope_n=0.0,
+                    id="later")
+    stack = FeatureStack(grid)
+    stack.update([earlier, pond, later])
+    _window, before, after = stack.terrain_around("pond", grid.window_for_bbox(0.5, 19.5, 39.5, 20.5))
+    assert before.sample(5.5, 20.0) == pytest.approx(11.0) and after.sample(5.5, 20.0) == pytest.approx(11.0)
+    assert before.sample(35.5, 20.0) == pytest.approx(10.0) and after.sample(35.5, 20.0) == pytest.approx(10.0)
+    assert before.sample(20.0, 20.0) == pytest.approx(10.0) and after.sample(20.0, 20.0) == pytest.approx(8.0)
+
+
+def test_the_default_section_of_parts_side_by_side_runs_through_one_of_them():
+    """The middle of two strips lies between them, where a line through it would miss both."""
+    strips = multi_wkb([polygon_wkb([(2, 2), (6, 2), (6, 32), (2, 32)]),
+                        polygon_wkb([(20, 2), (24, 2), (24, 32), (20, 32)])])
+    ponds = feature(Tool.LOWER_FLAT, Mode.AREA, strips, slopes_inside=True)
+    line = default_section_line(ponds, cell_size=1.0)
+    from osgeo import ogr
+    assert ogr.CreateGeometryFromWkb(line).Intersects(ogr.CreateGeometryFromWkb(strips))
+    start, end = line_points(line)
+    assert start[0] == pytest.approx(end[0]) and start[1] < end[1]          # still along the longer side, south to north
+    assert start[1] == pytest.approx(2.0 - 5.0) and end[1] == pytest.approx(32.0 + 5.0)

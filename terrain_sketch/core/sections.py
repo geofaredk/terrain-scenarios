@@ -226,7 +226,8 @@ def long_section(feature, grid: DemGrid, terrain: DemGrid | None = None) -> dict
 
 def default_section_line(feature, cell_size: float) -> bytes | None:
     """The line an area's section runs along until the user draws one (spec §5.4): through the
-    centroid, along the longer side of the smallest rotated rectangle around the outline, and on past
+    centroid (or, when a line there would miss the outline, through a point inside it), along the
+    longer side of the smallest rotated rectangle around the outline, and on past
     the outline — beyond the reach of outside slopes — so the section shows the ground around it.
     Runs west to east (or south to north). None for a path, or an outline too thin to have a longer side."""
     parts = [p for p in split_parts(feature.geometry_wkb) if not is_line(p)] if feature.mode is Mode.AREA else []
@@ -251,16 +252,24 @@ def default_section_line(feature, cell_size: float) -> bytes | None:
     if along[0] < 0.0 or (along[0] == 0.0 and along[1] < 0.0):
         along = -along
     outline = ogr.CreateGeometryFromWkb(bytes(feature.geometry_wkb))
-    centre = np.array(outline.Centroid().GetPoints()[0][:2])
-    t = (points - centre) @ along
     outside = TOOL_INFO[feature.tool].has_slopes and feature.slope_n > 0.0 and not feature.slopes_inside
-    margin = (feature.reach if outside else 0.0) + max(5.0 * cell_size, 0.1 * float(np.ptp(t)))
-    return line_wkb([centre + (t.min() - margin) * along, centre + (t.max() + margin) * along])
+    line = None
+    # The centroid of parts side by side, or of a C shape, can lie where a line through it misses the
+    # outline altogether; a point on the surface is always inside it
+    for point in (outline.Centroid(), outline.PointOnSurface()):
+        centre = np.array(point.GetPoints()[0][:2])
+        t = (points - centre) @ along
+        margin = (feature.reach if outside else 0.0) + max(5.0 * cell_size, 0.1 * float(np.ptp(t)))
+        line = line_wkb([centre + (t.min() - margin) * along, centre + (t.max() + margin) * along])
+        if outline.Intersects(ogr.CreateGeometryFromWkb(line)):
+            break
+    return line
 
 
 def section_along(line: bytes, before: DemGrid, after: DemGrid) -> dict:
     """Terrain before and after a feature along `line`: `{"stations", "before", "after"}`, stations in
-    metres from the line's start. Stations where either terrain is nodata or off the grid are left out."""
+    metres from the line's start. A station on nodata or off the grid takes the nearest valid cell within
+    3 cells (`DemGrid.sample`); only a station farther than that from valid terrain is left out."""
     empty = {"stations": (), "before": (), "after": ()}
     lines = [line_coords(p) for p in split_parts(line) if is_line(p)]
     coords = max(lines, key=_length, default=np.zeros((0, 2)))

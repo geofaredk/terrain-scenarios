@@ -170,3 +170,17 @@ def test_the_outline_and_the_section_line_follow_the_map_into_another_crs(tmp_pa
         assert band.vertexAt(0).x() == pytest.approx(in_crs(c.section_line(pond.id), crs).vertexAt(0).x(), abs=0.01)
         assert outline.boundingBox().xMinimum() == pytest.approx(
             in_crs(c.find(pond.id).geometry_wkb, crs).boundingBox().xMinimum(), abs=0.01)
+
+
+def test_a_section_line_the_reshaped_area_no_longer_crosses_goes_back_to_the_default(tmp_path):
+    c = start_session(tmp_path)
+    pond, _dike = pond_and_dike(c)
+    c.set_section_line(pond.id, line_through(20, 5, 20, 30), UTM)
+    own = c.find(pond.id).section_line
+    assert c.set_geometry(pond.id, square(12, 12, 27, 20), UTM)      # reshaped, still across the line
+    assert c.find(pond.id).section_line == own
+    steps = c.undo_stack.count()
+    assert c.set_geometry(pond.id, square(26, 2, 36, 10), UTM)       # moved away from it
+    assert c.find(pond.id).section_line is None and c.undo_stack.count() == steps + 1
+    c.undo_stack.undo()
+    assert c.find(pond.id).section_line == own

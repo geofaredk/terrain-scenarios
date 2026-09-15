@@ -233,6 +233,8 @@ class SketchController(QObject):
         rescaled = rescale_long_profile(feature, wkb, self.stack.original.cell_size)
         if rescaled is not feature.long_profile:
             changes["long_profile"] = rescaled
+        if feature.section_line is not None and not from_wkb(feature.section_line).intersects(from_wkb(wkb)):
+            changes["section_line"] = None   # a section across empty ground shows nothing: back to the default line
         self.update_feature(fid, **changes)
         return True
 

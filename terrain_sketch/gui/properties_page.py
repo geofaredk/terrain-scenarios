@@ -89,7 +89,7 @@ class PropertiesPage(QWidget):
 
         self.volumes = QgsCollapsibleGroupBox(self.tr("Volumes"))
         self.volumes.setObjectName("TerrainSketchVolumes")
-        settings.remember_collapsed("volumes_group", self.volumes)
+        settings.remember_collapsed("volumes_group", self.volumes, collapsed=True)   # open on request
         self.fill_value = QLabel()
         self.fill_value.setWordWrap(True)
         self.fill_value.setToolTip(VOLUME_FILL_TIP)

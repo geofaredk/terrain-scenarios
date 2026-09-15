@@ -68,6 +68,7 @@ def test_the_storage_line_wraps_instead_of_widening_the_page(tmp_path):
         # this offscreen test platform — unlike a real docked panel, which reflows on every resize.
         page = PropertiesPage(c)
         page.show()
+        page.volumes.setCollapsed(False)          # collapsed by default, which would hide the line in question
         page.show_feature(fid)
         page.layout().invalidate()
         page.layout().activate()

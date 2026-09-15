@@ -10,13 +10,14 @@ from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsRubb
 from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QAction
-from qgis.PyQt.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QStackedWidget,
-                                 QToolBar, QToolButton, QVBoxLayout, QWidget)
+from qgis.PyQt.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QSplitter,
+                                 QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from ..core.tools import Mode
 from ..qgis_io.convert import from_wkb
 from ..qgis_io.raster_io import DemError, GeographicDemError
 from ..qgis_io.scenario import ScenarioError
+from . import settings
 from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
 from .help_texts import (DEM_NOT_READABLE, EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED,
@@ -163,7 +164,6 @@ class MainDock(QgsDockWidget):
 
         self.model = FeatureListModel(controller, self)
         self.feature_view = FeatureListView(self.model)
-        layout.addWidget(self.feature_view, 1)
         list_row = QHBoxLayout()
         self.new_button = QPushButton(QgsApplication.getThemeIcon("/mActionAdd.svg"), self.tr("New feature"))
         self.delete_button = QPushButton(QgsApplication.getThemeIcon("/mActionDeleteSelected.svg"), self.tr("Delete"))
@@ -179,7 +179,6 @@ class MainDock(QgsDockWidget):
         self.hint = QLabel()
         self.hint.setWordWrap(True)
         self.hint.hide()
-        layout.addWidget(self.hint)
 
         self.pages = QStackedWidget()
         start_label = QLabel(self.tr("Pick a DEM above and press Start. Terrain Sketch works on a copy; your DEM "
@@ -189,7 +188,24 @@ class MainDock(QgsDockWidget):
         self.properties = PropertiesPage(controller)
         for page in (start_label, self.gallery, self.properties):
             self.pages.addWidget(page)
-        layout.addWidget(self.pages, 2)
+        # The list and the pages below it share the panel's height; dragging the handle between them gives the
+        # list more or less of it, and the split is remembered like the Profiles panel's.
+        lower = QWidget()
+        lower_layout = QVBoxLayout(lower)
+        lower_layout.setContentsMargins(0, 0, 0, 0)
+        lower_layout.addWidget(self.hint)
+        lower_layout.addWidget(self.pages, 1)
+        self.list_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.list_splitter.setObjectName("TerrainSketchListSplitter")
+        self.list_splitter.setChildrenCollapsible(False)
+        self.list_splitter.addWidget(self.feature_view)
+        self.list_splitter.addWidget(lower)
+        self.list_splitter.setStretchFactor(0, 1)
+        self.list_splitter.setStretchFactor(1, 2)
+        settings.restore_state("list_splitter", self.list_splitter)
+        self.list_splitter.splitterMoved.connect(
+            lambda *_args: settings.save_state("list_splitter", self.list_splitter))
+        layout.addWidget(self.list_splitter, 1)
         self.setWidget(body)
 
         self.start_button.clicked.connect(self._start)

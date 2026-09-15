@@ -84,7 +84,20 @@ def test_a_collapsed_group_is_remembered_under_the_plugin_group(tmp_path):
                 and "TerrainSketch" in key]
     again = PropertiesPage(c)
     again.show()                                   # a box that saved its own state would load it here
-    assert again.about.isCollapsed() and not again.volumes.isCollapsed()
+    assert again.about.isCollapsed() and again.volumes.isCollapsed()    # Volumes starts collapsed
+
+
+def test_volumes_start_collapsed_and_an_opened_group_stays_open(tmp_path):
+    from qgis_helpers import start_session
+    from terrain_sketch.gui.properties_page import PropertiesPage
+    c = start_session(tmp_path)
+    page = PropertiesPage(c)
+    page.show()
+    assert page.volumes.isCollapsed() and not page.about.isCollapsed()
+    page.volumes.setCollapsed(False)
+    again = PropertiesPage(c)
+    again.show()
+    assert not again.volumes.isCollapsed()
 
 
 def window_with(dock, area):

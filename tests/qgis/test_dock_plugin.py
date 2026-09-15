@@ -1,7 +1,9 @@
+from unittest import mock
+
 import pytest
 from qgis.core import QgsProject
 
-from qgis.core import QgsCoordinateReferenceSystem, QgsPointXY
+from qgis.core import QgsCoordinateReferenceSystem, QgsCsException, QgsGeometry, QgsPointXY
 
 from qgis.core import QgsRectangle
 
@@ -154,6 +156,20 @@ def test_selecting_a_feature_highlights_it_on_the_map(tmp_path):
     assert dock.highlight.numberOfVertices() > 0
     dock.feature_view.clearSelection()
     assert dock.highlight.numberOfVertices() == 0
+
+
+def test_an_outline_that_cannot_be_projected_leaves_the_highlight_empty(tmp_path):
+    """Selecting and changing a feature redraw the highlight from Qt signals, so a failed
+    projection into the map's CRS must not raise there; Edit shape and Zoom say so when used."""
+    iface, controller, dock = _session_dock(tmp_path)
+    iface.mapCanvas().setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:3857"))
+    dike = controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    with mock.patch.object(QgsGeometry, "transform", side_effect=QgsCsException("forced")):
+        dock.feature_view.select_id(dike.id)
+        assert dock.highlight.numberOfVertices() == 0
+        controller.update_feature(dike.id, amount=2.0)
+        assert dock.highlight.numberOfVertices() == 0
+    iface.messageBar().pushMessage.assert_not_called()
 
 
 def test_deleting_the_shown_feature_leaves_the_properties_page(tmp_path):

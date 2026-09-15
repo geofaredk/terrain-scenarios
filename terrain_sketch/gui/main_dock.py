@@ -482,7 +482,13 @@ class MainDock(QgsDockWidget):
         if fid is None or not self.controller.has_dem or fid not in {f.id for f in self.controller.features}:
             self.highlight.reset(Qgis.GeometryType.Line)
             return
-        geometry = self._to_canvas(self.controller.feature_geometry(fid))
+        try:
+            geometry = self._to_canvas(self.controller.feature_geometry(fid))
+        except QgsCsException:
+            # runs from selection and change signals, on every change: no message here, Edit shape
+            # and Zoom to feature give one when the user acts on the outline
+            self.highlight.reset(Qgis.GeometryType.Line)
+            return
         self.highlight.reset(geometry.type())
         self.highlight.setToGeometry(geometry, None)
 

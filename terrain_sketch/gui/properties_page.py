@@ -143,12 +143,18 @@ class PropertiesPage(QWidget):
     def eventFilter(self, watched, event):  # noqa: N802 — Qt override
         """Highlight the part of the diagram that belongs to whichever field has focus."""
         if event.type() == QEvent.Type.FocusIn:
-            self._draw_diagram(self._highlight_for.get(watched))
+            try:
+                self._draw_diagram(self._highlight_for.get(watched))
+            except Exception:  # noqa: BLE001 — an event filter must never take QGIS down
+                QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
         return super().eventFilter(watched, event)
 
     def changeEvent(self, event):  # noqa: N802 — Qt override
         if event.type() == QEvent.Type.PaletteChange and self._fid is not None:
-            self._draw_pictures()
+            try:
+                self._draw_pictures()
+            except Exception:  # noqa: BLE001 — a Qt event handler must never take QGIS down
+                QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
         super().changeEvent(event)
 
     def _draw_diagram(self, highlight: str | None) -> None:

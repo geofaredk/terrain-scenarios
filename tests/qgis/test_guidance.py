@@ -149,3 +149,19 @@ def test_the_pixels_tooltip_shows_the_three_modes_side_by_side_in_the_theme(tmp_
     dark.setColor(QPalette.ColorRole.Highlight, Qt.GlobalColor.yellow)
     page.setPalette(dark)                                       # the theme changes
     assert page.pixel_mode.toolTip() != tip
+
+
+def test_a_picture_that_cannot_be_drawn_does_not_take_qgis_down(tmp_path, monkeypatch):
+    """The theme changing and a field taking focus both redraw pictures from inside a Qt handler."""
+    from terrain_sketch.gui import illustrations
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    page = PropertiesPage(c)
+    page.show_feature(dike.id)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("an SVG that cannot be read")
+
+    monkeypatch.setattr(illustrations, "pixmap", broken)
+    page.changeEvent(QEvent(QEvent.Type.PaletteChange))
+    page.eventFilter(page.width, QFocusEvent(QEvent.Type.FocusIn))

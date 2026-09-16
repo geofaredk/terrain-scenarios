@@ -134,8 +134,7 @@ Title "New feature", pushed on the stack. Contents, top to bottom:
    the feature page instead (§7). `MainDock` routes a hint to whichever page is open.
 
 Picking a tool and a method starts the map tool, as today. When the drawing finishes and the controller adds
-the feature, the New feature page closes and the new feature's page opens in its place. Pressing back, or
-Esc-cancelling the drawing, leaves the map tool stopped and returns to the list.
+the feature, the New feature page closes and the new feature's page opens in its place. Pressing back (or Escape on the page) stops a drawing that is still running and returns to the list. Esc-cancelling a drawing on the map keeps the New feature page open, so the user can try again with another method.
 
 ## 7. Feature page
 

@@ -1,5 +1,5 @@
-"""The 'New feature' page: a tile grid of tools, a segmented Line/Area pair, the four ways to
-draw, and the drawing hint that shows while one of them is running."""
+"""The 'New feature' page: the drawing hint while one is running, a tile grid of tools, a segmented
+Line/Area pair and the four ways to draw."""
 from __future__ import annotations
 
 import traceback
@@ -27,8 +27,8 @@ METHOD_GRID_POSITIONS = {Method.CLICK: (0, 0), Method.FREEHAND: (0, 1), Method.B
 class _ToolTileList(QListWidget):
     """The tile grid, sized to fit exactly the rows its current width needs — not stretched to
     fill whatever space `QVBoxLayout` leaves it (`QAbstractScrollArea`'s default vertical size
-    policy is `Expanding`), which used to crowd the summary, Shape and Where controls into
-    whatever was left at the bottom of the New feature page (VISUAL b). `IconMode` with
+    policy is `Expanding`), which would crowd the summary, Shape and Where controls into
+    whatever was left at the bottom of the New feature page. `IconMode` with
     `ResizeMode.Adjust` already reflows the tiles into more or fewer columns as the width changes;
     `heightForWidth` is what lets `QVBoxLayout` ask this widget how tall it needs to be for THAT
     width, rather than the other way around — the standard Qt mechanism for a flow layout whose
@@ -48,7 +48,7 @@ class _ToolTileList(QListWidget):
 
     def heightForWidth(self, width: int) -> int:  # noqa: N802 — Qt override
         """Columns must be counted the way the view itself will actually lay them out: from the
-        VIEWPORT width (`width` minus the frame on both sides, spec§ IMPORTANT 1) — the wrapped
+        VIEWPORT width (`width` minus the frame on both sides) — the wrapped
         icon grid lives inside the viewport, not the outer widget — and a column only really fits
         if the viewport is wider than an exact multiple of the grid width, not merely as wide
         (`(viewport_width - 1) // grid_width`, not `viewport_width // grid_width`): at an exact
@@ -75,11 +75,18 @@ class ToolGallery(QgsPanelWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setPanelTitle(self.tr("New feature"))
         self.setDockMode(True)   # mandatory before openPanel, or it opens a modal dialog (hangs offscreen tests)
 
         layout = QVBoxLayout(self)
-        apply_page_margins(layout, self)   # VISUAL c: a normal gap from the panel edge
+        apply_page_margins(layout, self)   # a normal gap from the panel edge, as QGIS's own panels have
+
+        # At the top, above the tiles: the page is taller than a typical dock, and what to do next
+        # on the map must be readable without scrolling, as on the feature page.
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.hint.hide()
+        layout.addWidget(self.hint)
+
         layout.addWidget(QLabel(self.tr("What do you want to build?")))
         self.tool_list = _ToolTileList()
         self.tool_list.setViewMode(QListView.ViewMode.IconMode)
@@ -135,13 +142,8 @@ class ToolGallery(QgsPanelWidget):
         self.layer_source.hide()
         layout.addWidget(self.layer_source)
 
-        self.hint = QLabel()
-        self.hint.setWordWrap(True)
-        self.hint.hide()
-        layout.addWidget(self.hint)
-
-        # VISUAL b: the stretch sits below every control, not on the tile grid itself, so leftover
-        # space in a tall dock collects here instead of the grid being stretched to fill it.
+        # The stretch sits below every control, not on the tile grid itself, so leftover space in a
+        # tall dock collects here instead of the grid being stretched to fill it.
         layout.addStretch(1)
 
         self.tool_list.currentItemChanged.connect(self._tool_changed)
@@ -196,11 +198,6 @@ class ToolGallery(QgsPanelWidget):
         """Name the units the brush radius is really in — the canvas's map units, never converted."""
         self.brush_spin.setSuffix(f" {self._unit_label(units)}")
 
-    def show_hint(self, text: str) -> None:
-        """Show the instruction text for the drawing tool that is now running on the map."""
-        self.hint.setText(text)
-        self.hint.show()
-
     def clear_hint(self) -> None:
         self.hint.hide()
 
@@ -212,9 +209,9 @@ class ToolGallery(QgsPanelWidget):
         return QgsUnitTypes.toAbbreviatedString(units) or self.tr("map units")
 
     def _shape_button(self, text: str) -> QToolButton:
-        """VISUAL d: `autoRaise` off, on both Line and Area, so each looks like a button in either
-        state — checked or not — instead of the unchecked one reading as plain text next to the
-        checked one's flat highlight."""
+        """`autoRaise` off, on both Line and Area, so each looks like a button in either state —
+        checked or not — instead of the unchecked one reading as plain text next to the checked
+        one's flat highlight."""
         button = QToolButton()
         button.setText(text)
         button.setCheckable(True)

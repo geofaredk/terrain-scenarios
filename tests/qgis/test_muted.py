@@ -22,11 +22,9 @@ def test_muted_text_sits_between_the_text_and_the_background():
 
 
 def test_the_label_follows_a_theme_change():
-    """`!=` alone let a runaway self-blend through (CRITICAL 1): `_apply` re-entering itself off
-    its own `setPalette` used to re-blend the already-muted colour towards the background every
-    time, converging on something merely *different* from `was` — never equal to `was`, so this
-    assertion passed even though the label had blended itself invisible. Asserting the exact
-    expected colour is what actually catches that."""
+    """The exact expected colour, not merely one that differs from before: a label that re-blends
+    its already-muted colour off its own `setPalette` converges on the background, a colour that
+    also differs from before while being invisible."""
     light = palette_of("#000000", "#ffffff")
     dark = palette_of("#ffffff", "#000000")
     parent = QWidget()
@@ -38,14 +36,13 @@ def test_the_label_follows_a_theme_change():
 
 
 def test_the_muted_colour_is_computed_from_the_inherited_palette_not_its_own():
-    """CRITICAL 1: `MutedLabel._apply` calls `setPalette`, which — because `QWidget.setPalette`
-    always sends `QEvent.Type.PaletteChange` synchronously back to the same widget — re-enters
-    `changeEvent` -> `_apply` immediately. Computing the muted colour from the label's own palette
-    on that re-entrant call re-blends the *already-muted* colour another 45% towards the
-    background; repeated (~9 times, verified by probe) this converges the text within a shade of
-    the background — invisible in both themes. The fix must always compute from the label's
-    PARENT's palette (or the application's, with no parent) — never `self.palette()` — so the
-    result is exact and stable no matter how many times `setPalette`'s own event re-enters this."""
+    """`MutedLabel._apply` calls `setPalette`, which — because `QWidget.setPalette` always sends
+    `QEvent.Type.PaletteChange` synchronously back to the same widget — re-enters `changeEvent` ->
+    `_apply` immediately. Computing the muted colour from the label's own palette on that
+    re-entrant call would blend the *already-muted* colour again; repeated (~9 times, verified by
+    probe) that converges the text within a shade of the background — invisible in both themes.
+    The colour must come from the label's PARENT's palette (or the application's, with no parent),
+    never `self.palette()`, so the result is exact and stable however often this re-enters."""
     from qgis.PyQt.QtWidgets import QApplication
 
     light = palette_of("#000000", "#ffffff")

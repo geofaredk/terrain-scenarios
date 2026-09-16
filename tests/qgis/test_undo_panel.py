@@ -167,7 +167,7 @@ def test_the_panel_header_does_not_make_the_panel_wider(tmp_path):
     """Seven buttons in a row forced a right-hand panel past 400 px; in a toolbar the ones that do
     not fit go behind », so the header is no longer what sets the panel's minimum width. New feature
     and Scenario ▾ now carry their own text (spec §5.1), so the floor is one such button wide rather
-    than icon-only — still nowhere near what used to force the panel wider."""
+    than icon-only — still nowhere near 400 px."""
     _iface, _c, dock = panel(tmp_path)
     dock.show()
     assert dock.toolbar.minimumSizeHint().width() < 200

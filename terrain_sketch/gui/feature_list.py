@@ -12,7 +12,7 @@ from qgis.PyQt.QtWidgets import (QAbstractItemView, QApplication, QListView, QSt
 
 from . import illustrations
 from .help_texts import FLAG_TEXTS, TOOL_LABELS, cubic_metres
-from .muted import muted_colour
+from .muted import muted_between
 
 LOG_TAG = "Terrain Sketch"
 
@@ -160,6 +160,32 @@ class FeatureRowDelegate(QStyledItemDelegate):
         y = row_rect.top() + (row_rect.height() - height) // 2
         return QRect(x, y, width, height)
 
+    @staticmethod
+    def row_colours(option) -> tuple:
+        """(text, muted) for a row: the colours the row's text is drawn in, taken from the
+        background the row is actually painted on — HighlightedText muted toward Highlight on a
+        selected row, Text muted toward Base on any other (list rows sit on Base, not Window)."""
+        palette = option.palette
+        if option.state & QStyle.StateFlag.State_Selected:
+            text = palette.color(QPalette.ColorRole.HighlightedText)
+            background = palette.color(QPalette.ColorRole.Highlight)
+        else:
+            text = palette.color(QPalette.ColorRole.Text)
+            background = palette.color(QPalette.ColorRole.Base)
+        return text, muted_between(text, background)
+
+    @staticmethod
+    def picture_palette(option, text, muted) -> QPalette:
+        """The palette the row's picture is drawn from. On a selected row the picture's line
+        (Highlight) and terrain (Mid) would sit on the highlight itself, so they take the row's
+        text and muted colours instead."""
+        palette = QPalette(option.palette)
+        if option.state & QStyle.StateFlag.State_Selected:
+            palette.setColor(QPalette.ColorRole.Highlight, text)
+            palette.setColor(QPalette.ColorRole.WindowText, text)
+            palette.setColor(QPalette.ColorRole.Mid, muted)
+        return palette
+
     def sizeHint(self, option, index):  # noqa: N802 — Qt override
         option = QStyleOptionViewItem(option)
         self.initStyleOption(option, index)
@@ -190,10 +216,7 @@ class FeatureRowDelegate(QStyledItemDelegate):
         try:
             if option.state & QStyle.StateFlag.State_Selected:
                 painter.fillRect(option.rect, option.palette.color(QPalette.ColorRole.Highlight))
-                text_colour = option.palette.color(QPalette.ColorRole.HighlightedText)
-            else:
-                text_colour = option.palette.color(QPalette.ColorRole.Text)
-            muted = muted_colour(option.palette)
+            text_colour, muted = self.row_colours(option)
 
             checkbox_rect = self.checkbox_rect(option.rect)
             checkbox_option = QStyleOptionButton()
@@ -209,7 +232,8 @@ class FeatureRowDelegate(QStyledItemDelegate):
                                  PICTURE_SIZE.width(), PICTURE_SIZE.height())
             picture_name = index.data(PICTURE_ROLE)
             if picture_name:
-                painter.drawPixmap(picture_rect, illustrations.pixmap(picture_name, PICTURE_SIZE, option.palette))
+                picture_palette = self.picture_palette(option, text_colour, muted)
+                painter.drawPixmap(picture_rect, illustrations.pixmap(picture_name, PICTURE_SIZE, picture_palette))
 
             right = option.rect.right() - PADDING
             chevron_rect = QRect(right - CHEVRON_WIDTH, option.rect.top(), CHEVRON_WIDTH, option.rect.height())
@@ -259,8 +283,9 @@ class FeatureRowDelegate(QStyledItemDelegate):
 class FeatureListView(QListView):
     """List view with drag-to-reorder that keeps the selected feature across model resets.
 
-    A click outside the checkbox opens the feature's page (`rowOpened`); a click on the checkbox,
-    or Enter/Return with a row current, toggles it or opens it respectively."""
+    A click outside the checkbox opens the feature's page (`rowOpened`); a click on the checkbox
+    toggles it; Enter/Return opens the current row. Renaming in the list is F2 (or the context
+    menu's Rename), not a double click: its first click has already opened the page."""
 
     rowOpened = pyqtSignal(str)
 
@@ -270,7 +295,7 @@ class FeatureListView(QListView):
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed)
+        self.setEditTriggers(QAbstractItemView.EditTrigger.EditKeyPressed)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.setItemDelegate(FeatureRowDelegate(self))
         self._remembered = None
@@ -293,7 +318,7 @@ class FeatureListView(QListView):
         index = self.indexAt(event.pos())
         super().mouseReleaseEvent(event)
         if self.state() == QAbstractItemView.State.EditingState:
-            return          # this release completed a double-click into rename, not a plain open
+            return          # a release while a rename is open belongs to that rename, not a plain open
         if not index.isValid() or event.button() != Qt.MouseButton.LeftButton:
             return
         rect = self.visualRect(index)
@@ -307,12 +332,22 @@ class FeatureListView(QListView):
             self.rowOpened.emit(fid)
 
     def keyPressEvent(self, event):  # noqa: N802 — Qt override
-        if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-                and self.state() != QAbstractItemView.State.EditingState):
-            fid = self.currentIndex().data(ID_ROLE)
-            if fid is not None:
-                self.rowOpened.emit(fid)
-                return
+        """Return/Enter opens the current row; F2 renames it. Qt's own F2 handling is compiled out
+        on macOS, where its edit key is Return instead, and Return opens the page here — so F2 is
+        handled explicitly on every platform. Guarded: an exception escaping this Qt override
+        would abort QGIS."""
+        try:
+            if self.state() != QAbstractItemView.State.EditingState:
+                if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    fid = self.currentIndex().data(ID_ROLE)
+                    if fid is not None:
+                        self.rowOpened.emit(fid)
+                        return
+                elif event.key() == Qt.Key.Key_F2 and self.currentIndex().isValid():
+                    if self.edit(self.currentIndex(), QAbstractItemView.EditTrigger.EditKeyPressed, event):
+                        return
+        except Exception:  # noqa: BLE001 — this runs from a Qt virtual override
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
         super().keyPressEvent(event)
 
     def _remember(self) -> None:

@@ -62,10 +62,28 @@ def test_the_status_line_follows_a_dem_rename(tmp_path):
 
 
 def test_every_page_the_panel_opens_is_in_dock_mode(tmp_path):
-    """A panel that is not in dock mode opens a modal dialog, which never returns offscreen."""
-    _iface, _c, dock = panel(tmp_path)
+    """A panel that is not in dock mode opens a modal dialog, which never returns offscreen. The
+    panel opens two pages (spec §11): New feature, and a feature's own page."""
+    _iface, c, dock = panel(tmp_path)
+    assert dock.main_panel.dockMode()
     dock.new_button.click()
-    assert dock.main_panel.dockMode() and dock.stack.currentPanel().dockMode()
+    assert dock.stack.currentPanel() is dock.gallery_page and dock.gallery_page.dockMode()
+    dock.close_page()
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    assert dock.stack.currentPanel() is dock.properties_page and dock.properties_page.dockMode()
+
+
+def test_the_status_line_keeps_the_styles_normal_margin_from_the_panel_edge(tmp_path):
+    from qgis.PyQt.QtCore import QPoint
+
+    _iface, _c, dock = panel(tmp_path)
+    dock.resize(360, 650)
+    dock.show()
+    status = dock.status_label
+    left = status.mapTo(dock.views, QPoint(0, 0)).x()
+    right = dock.views.width() - (left + status.width())
+    assert left > 0 and right > 0, (left, right)
 
 
 def test_the_scenario_actions_live_behind_one_menu_button(tmp_path):
@@ -81,8 +99,8 @@ def test_changing_the_dem_goes_back_to_the_welcome_view(tmp_path):
 
 
 def test_changing_the_dem_stops_a_drawing_in_progress(tmp_path):
-    """Change… used to leave a drawing running on the map behind a view that no longer shows it; a
-    finished drawing would then have opened the new feature's page on top of the welcome view."""
+    """A drawing left running behind the welcome view runs on the map behind a view that does not
+    show it, and finishing it would open the new feature's page on top of the welcome view."""
     _iface, _c, dock = panel(tmp_path)
     dock.new_button.click()
     dock.gallery.select_tool(Tool.RAISE_PATH)
@@ -94,8 +112,8 @@ def test_changing_the_dem_stops_a_drawing_in_progress(tmp_path):
 
 
 def test_keep_sketching_returns_to_the_session_without_touching_it(tmp_path):
-    """Change… used to be the only way back to a live session, and the only route from the welcome
-    view was Start — which discards every feature just to return to the same session."""
+    """Keep sketching is the way back to a live session from Change…: Start would replace the
+    session, discarding every feature just to return to the same one."""
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.status_label.linkActivated.emit("change")
@@ -110,16 +128,55 @@ def test_keep_sketching_is_hidden_without_a_session(tmp_path):
     assert dock.keep_sketching_button.isHidden()
 
 
-def test_changing_the_dem_with_unsaved_work_asks_first_and_can_be_cancelled(tmp_path):
-    """The dirty branch of Change…: `_keep_unsaved_work` backing out must leave the session view
-    showing, exactly as it does when Start is refused the same way."""
+def test_changing_the_dem_with_unsaved_work_asks_nothing_and_keeps_the_session(tmp_path):
+    """spec §5.3: Change… only shows the welcome view. Nothing is discarded there, so there is
+    nothing to ask; Keep sketching returns to the same session and its unsaved work."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    asked = []
+    dock.confirm_save = lambda text, can_cancel=True: asked.append(text) or None     # cancel, if asked
+    dock.status_label.linkActivated.emit("change")
+    assert asked == []
+    assert dock.views.currentIndex() == VIEW_WELCOME and c.has_dem and c.is_dirty
+    dock.keep_sketching_button.click()
+    assert dock.views.currentIndex() == VIEW_SESSION and [f.id for f in c.features] == [dike.id]
+    assert asked == []
+
+
+def test_change_then_start_asks_about_unsaved_work_exactly_once(tmp_path):
+    """The unsaved-work question belongs to Start, which is what replaces the session (spec §5.3)."""
     _iface, c, dock = panel(tmp_path)
     c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     asked = []
-    dock.confirm_save = lambda text, can_cancel=True: asked.append(text) or None     # cancel
+    dock.confirm_save = lambda text, can_cancel=True: asked.append(text) or False     # Discard
     dock.status_label.linkActivated.emit("change")
+    dock.start_button.click()
     assert asked == [UNSAVED_CHANGES]
-    assert dock.views.currentIndex() == VIEW_SESSION and len(c.features) == 1
+    assert c.has_dem and c.features == () and dock.views.currentIndex() == VIEW_SESSION
+
+
+def test_a_section_line_started_behind_the_welcome_view_brings_the_session_back(tmp_path):
+    """The Profiles dock stays usable while the welcome view shows (the session keeps running);
+    the line being drawn, and its hint under the toolbar, must be on screen."""
+    from terrain_sketch.gui.help_texts import SECTION_LINE_HINT
+    from terrain_sketch.gui.profile_dock import ProfileDock
+
+    iface = fake_iface()
+    c = SketchController(QgsProject.instance())
+    profiles = ProfileDock(c)
+    dock = MainDock(iface, c, profiles)
+    dock.show()
+    dock.dem_combo.setLayer(dem_layer(tmp_path))
+    dock.start_button.click()
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 12, 29, 22), UTM)
+    dock.feature_view.select_id(pond.id)
+    dock.status_label.linkActivated.emit("change")
+    assert dock.views.currentIndex() == VIEW_WELCOME
+
+    profiles.draw_section.click()
+    assert dock.draw_tool is not None
+    assert dock.views.currentIndex() == VIEW_SESSION
+    assert dock.session_hint.isVisible() and dock.session_hint.text() == SECTION_LINE_HINT
 
 
 def test_ending_the_session_closes_any_open_page(tmp_path):
@@ -226,7 +283,7 @@ def test_undo_keys_on_the_properties_fields_survive_a_close_and_reopen(tmp_path)
 
 
 def test_the_gallery_survives_new_feature_draw_and_new_feature_again(tmp_path):
-    """The exact sequence the reviewer's repro used: New feature (opens the gallery page), draw a
+    """New feature (opens the gallery page), draw a
     feature (closes it, opens the feature's properties page), New feature again (closes the
     properties page, reopens the gallery page) — `dock.gallery` is one persistent instance for the
     dock's whole life (a fresh `_PagePanel` wraps it on every open), so it must still be the SAME
@@ -296,8 +353,8 @@ def test_escape_releases_the_page_before_reopening(tmp_path):
     assert dock.stack.currentPanel() is dock.main_panel     # Escape really did close the page
     spin_event_loop(50)                                       # let the deferred delete actually run
     # The row stays selected after Escape closes the page (spec §9); rowOpened must still reopen
-    # it even though reselecting it fires no selectionChanged at all (Task 5's fix — see
-    # test_reopening_an_already_selected_row_after_back below for the Back-button/click version).
+    # it even though reselecting it fires no selectionChanged at all (see
+    # test_reopening_an_already_selected_row_reaches_its_page below for the Back-button/click version).
     dock.feature_view.rowOpened.emit(dike.id)                 # must not touch a deleted `properties`
     assert dock.stack.currentPanel() is dock.properties_page
     assert dock.properties.isVisible()             # not left invisible by release_content's old hide()
@@ -365,18 +422,17 @@ def test_shape_is_a_segmented_pair_that_disables_what_the_tool_cannot_do(tmp_pat
 
 
 def test_the_shape_buttons_look_like_buttons_in_either_state(tmp_path):
-    """VISUAL d: `autoRaise` used to be on, so the unchecked one of the pair had no visible border
-    at all — reading as plain text next to the checked one's highlight, rather than as a pair of
-    buttons."""
+    """With `autoRaise` on, the unchecked one of the pair has no visible border at all — reading as
+    plain text next to the checked one's highlight, rather than as a pair of buttons."""
     _iface, _c, dock = panel(tmp_path)
     dock.new_button.click()
     assert not dock.gallery.line_mode.autoRaise() and not dock.gallery.area_mode.autoRaise()
 
 
 def test_the_tile_grid_is_sized_to_its_content_not_stretched(tmp_path):
-    """VISUAL b: the tile view's vertical size policy used to be `Expanding` (a `QListWidget`'s
-    default), so it stretched to fill the whole New feature page, crowding the summary, Shape and
-    Where controls into whatever space was left at the bottom of a tall dock. Sized to content
+    """With a `QListWidget`'s default vertical size policy, `Expanding`, the tile view stretches to
+    fill the whole New feature page, crowding the summary, Shape and Where controls into whatever
+    space is left at the bottom of a tall dock. Sized to content
     (`_ToolTileList.heightForWidth`) instead: all seven tiles show without a scrollbar, and the
     Where buttons sit well up the page rather than pushed to its bottom."""
     from qgis.PyQt.QtWidgets import QApplication
@@ -397,13 +453,13 @@ def test_the_tile_grid_is_sized_to_its_content_not_stretched(tmp_path):
 
 
 def test_the_tile_grid_reports_a_height_that_keeps_every_tile_reachable(tmp_path):
-    """IMPORTANT 1: `heightForWidth` used to count columns from the outer WIDGET width, not the
-    viewport the icon grid actually wraps inside, and treated an exact multiple of the grid width
-    as already enough to fit another column — both undercount the rows some widths need (232-234,
+    """`heightForWidth` must count columns from the viewport the icon grid actually wraps inside,
+    not the outer WIDGET width, and must not treat an exact multiple of the grid width as enough
+    to fit another column — either mistake undercounts the rows some widths need (232-234,
     348-350 and 464-466 px reproduce it for seven tiles at this grid size — the sweep starts at
     200, not 240, specifically to also cover the first of those). The list then gets too little
     height from the page's layout, the last tile falls below the viewport, and
-    `ScrollBarAlwaysOff` (VISUAL b) leaves it permanently unreachable — silently, since nothing
+    `ScrollBarAlwaysOff` leaves it permanently unreachable — silently, since nothing
     about the list looks wrong until you count the tiles.
 
     `verticalScrollBar().isVisible()` cannot catch this: with the scrollbar forced off, it is
@@ -429,9 +485,33 @@ def test_the_tile_grid_reports_a_height_that_keeps_every_tile_reachable(tmp_path
     assert not failures, f"the last tile is clipped at width(s) {failures}"
 
 
+def test_the_new_feature_pages_hint_is_on_screen_while_drawing_on_a_short_dock(tmp_path):
+    """The hint sits at the top of the page, above the tiles, so a dock too short for the whole
+    page still shows what to do while a drawing runs."""
+    from qgis.PyQt.QtCore import QPoint, QRect
+    from qgis.PyQt.QtWidgets import QApplication
+
+    _iface, _c, dock = panel(tmp_path)
+    dock.resize(360, 650)
+    dock.show()
+    dock.new_button.click()
+    dock.gallery.select_tool(Tool.RAISE_PATH)
+    dock.gallery.select_mode(Mode.PATH)
+    dock.gallery.method_buttons[Method.CLICK].click()
+    QApplication.processEvents()
+    assert dock.draw_tool is not None
+
+    hint, page = dock.gallery.hint, dock.gallery_page
+    assert hint.isVisible()
+    visible = QRect(page.mapTo(dock, QPoint(0, 0)), page.size()).intersected(dock.rect())
+    shown = QRect(hint.mapTo(dock, QPoint(0, 0)), hint.size())
+    assert visible.contains(shown), (shown, visible)
+    assert shown.bottom() < dock.gallery.tool_list.mapTo(dock, QPoint(0, 0)).y()     # above the tiles
+
+
 def test_the_new_feature_page_keeps_the_styles_normal_margin_from_the_panel_edge(tmp_path):
-    """VISUAL c: the New feature page used to have zero content margins, so its content touched
-    the panel edge, unlike QGIS's own panels."""
+    """With zero content margins the page's content would touch the panel edge, unlike QGIS's own
+    panels."""
     _iface, _c, dock = panel(tmp_path)
     dock.show()
     dock.new_button.click()
@@ -442,8 +522,8 @@ def test_the_new_feature_page_keeps_the_styles_normal_margin_from_the_panel_edge
 def test_drawing_a_feature_closes_the_new_feature_page(tmp_path):
     """Drawing goes through the ordinary path — `select_id` selects the new feature, which opens
     its properties page, which `open_page` replaces the New feature page with — so nothing New-
-    feature-specific has to close it (a count-based close-on-add used to do this and was removed:
-    it also fired, wrongly, on an unrelated scenario reset or an undo)."""
+    feature-specific has to close it (a close on every added feature would also fire, wrongly, on
+    an unrelated scenario reset or an undo)."""
     _iface, c, dock = panel(tmp_path)
     dock.new_button.click()
     assert dock.stack.currentPanel() is dock.gallery_page   # the page really was open first
@@ -457,7 +537,7 @@ def test_drawing_a_feature_closes_the_new_feature_page(tmp_path):
 def test_reopening_new_feature_does_not_build_a_new_gallery(tmp_path):
     """dock.gallery is one persistent instance for the dock's whole life (a fresh `_PagePanel`
     wraps it on every open) — repeated opens must not construct a fresh `ToolGallery` each time,
-    which used to leak one gallery per click and reset every choice on reopen."""
+    which would leak one gallery per click and reset every choice on reopen."""
     _iface, _c, dock = panel(tmp_path)
     gallery = dock.gallery
     for _ in range(3):
@@ -587,7 +667,7 @@ def test_the_brush_radius_is_labelled_with_the_units_it_is_really_in():
     assert gallery.brush_spin.suffix() == " map units"
 
 
-# --- Task 5: the feature page ------------------------------------------------------------------
+# --- The feature page -----------------------------------------------------------------------
 
 
 def test_opening_a_feature_shows_its_page_with_name_and_volume(tmp_path):
@@ -606,8 +686,8 @@ def test_opening_a_feature_shows_its_page_with_name_and_volume(tmp_path):
 
 
 def test_the_feature_page_keeps_the_styles_normal_margin_from_the_panel_edge(tmp_path):
-    """VISUAL c: the feature page used to have zero content margins, so its fields touched the
-    panel edge, unlike QGIS's own panels."""
+    """With zero content margins the page's fields would touch the panel edge, unlike QGIS's own
+    panels."""
     _iface, c, dock = panel(tmp_path)
     dock.show()
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
@@ -661,8 +741,7 @@ def test_undo_that_restores_a_deleted_feature_does_not_open_a_page(tmp_path):
     time (its own page was closed with Back) while `pond` is deleted and the delete undone — the
     list resets twice, which reselects `dike` through `FeatureListView`'s own remember/restore (a
     real `selectionChanged` fires, confirmed by probe) even though nothing about `dike` changed.
-    Before Task 5, `_selection_changed` opened a page whenever a feature became selected at all;
-    now it only ever retargets or closes a page that is *already* open."""
+    `_selection_changed` only ever retargets or closes a page that is *already* open."""
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.feature_view.rowOpened.emit(dike.id)
@@ -702,11 +781,11 @@ def test_renaming_in_the_list_does_not_reach_a_closed_page(tmp_path):
 
 
 def test_reopening_an_already_selected_row_reaches_its_page(tmp_path):
-    """Carried from Task 3's review: after Back closes the feature page, the row stays selected
-    (spec §9) — and a click on an already-selected row fires no `selectionChanged` at all (Qt does
-    not re-emit for a selection that does not change), so before this task that row could not be
-    reopened at all. Wiring `FeatureListView.rowOpened` — not `selectionChanged` — is the fix; this
-    reproduces the real path, a click on the view's own viewport, not a direct signal emit."""
+    """After Back closes the feature page, the row stays selected (spec §9) — and a click on an
+    already-selected row fires no `selectionChanged` at all (Qt does not re-emit for a selection
+    that does not change). Pages open from `FeatureListView.rowOpened`, not `selectionChanged`, so
+    the row can still be reopened; this reproduces the real path, a click on the view's own
+    viewport, not a direct signal emit."""
     from qgis.PyQt.QtCore import Qt
     from qgis.PyQt.QtTest import QTest
     from qgis.PyQt.QtWidgets import QApplication, QToolButton
@@ -752,7 +831,7 @@ def test_the_zoom_button_zooms_to_the_feature(tmp_path):
     assert dock.iface.mapCanvas().extent() != before
 
 
-# --- Review fixes: Escape, the title bar, hint placement, tools for a vanished feature ----------
+# --- Escape, the title bar, hint placement, tools for a vanished feature ------------------------
 
 
 def test_escape_inside_the_feature_page_closes_it(tmp_path):
@@ -795,9 +874,9 @@ def test_escape_inside_the_feature_page_closes_it(tmp_path):
 
 
 def test_escape_in_the_name_field_cancels_instead_of_committing(tmp_path):
-    """Ruling: Escape cancels. `editingFinished` fires on focus-out as well as Return — and the
-    page closing (Escape's other effect there) takes focus away from `name_edit` — so without
-    discarding the typed text first, Escape used to commit it as a rename anyway, the moment the
+    """Escape cancels. `editingFinished` fires on focus-out as well as Return — and the page
+    closing (Escape's other effect there) takes focus away from `name_edit` — so without
+    discarding the typed text first, Escape would commit it as a rename anyway, the moment the
     page closed underneath it. Return still commits (`test_renaming_in_the_header_is_undoable`)."""
     from qgis.PyQt.QtCore import Qt
     from qgis.PyQt.QtTest import QTest
@@ -823,7 +902,7 @@ def test_escape_in_the_name_field_cancels_instead_of_committing(tmp_path):
 
 
 def test_escape_in_a_spin_box_cancels_instead_of_committing(tmp_path):
-    """Ruling: Escape cancels in every field, not just the name field. `amount`'s
+    """Escape cancels in every field, not just the name field. `amount`'s
     `setKeyboardTracking(False)` means typing does not commit as it goes, but the spin's own
     `interpretText()` still commits whatever is displayed on focus-out — which the page closing
     (Escape's other effect) would otherwise trigger, same hazard `_discard_name_edit` fixes for the
@@ -905,7 +984,7 @@ def test_the_title_bar_follows_a_rename(tmp_path):
 
 
 def test_the_hint_sits_under_the_action_row_within_the_viewport(tmp_path):
-    """spec §6 item 6, as amended: the hint must sit directly under the action row so it is never
+    """spec §6 item 6: the hint must sit directly under the action row so it is never
     scrolled out of sight — checked on a small dock with Volumes and About both expanded, which
     push the page's total content height well past what a 320×420 dock can show at once."""
     from qgis.PyQt.QtWidgets import QApplication
@@ -934,7 +1013,7 @@ def test_the_hint_sits_under_the_action_row_within_the_viewport(tmp_path):
 
 
 def test_a_hint_with_no_page_open_shows_under_the_toolbar(tmp_path):
-    """spec §6 item 6, as amended: a section line drawn from the Profiles dock after going back to
+    """spec §6 item 6: a section line drawn from the Profiles dock after going back to
     the list has no page open to show its hint on — it shows under the toolbar in the session view
     instead."""
     from terrain_sketch.gui.help_texts import SECTION_LINE_HINT
@@ -959,9 +1038,9 @@ def test_a_hint_with_no_page_open_shows_under_the_toolbar(tmp_path):
 
 
 def test_a_running_section_lines_hint_moves_to_the_session_view_on_back(tmp_path):
-    """spec §6 item 6, as amended: `show_hint` used to pick a label only once, when the activity
-    started — closing the feature page with a section line still running (spec §9: it keeps going)
-    left the hint on the now-hidden page's own label and nowhere else visible. `MainDock` must move
+    """spec §6 item 6: a hint whose label is picked only once, when the activity starts, stays on
+    the now-hidden page's own label when the feature page closes with a section line still running
+    (spec §9: it keeps going), and is visible nowhere. `MainDock` must move
     it to `session_hint` the moment the page closes, whichever way that happens — here, the stack's
     own Back button, with a real event loop so the deferred reroute (`_schedule_reroute_hint` waits
     for the stack's own pop, posted with `QTimer.singleShot(0, …)`) has a chance to run."""
@@ -1044,7 +1123,7 @@ def test_edit_shape_stops_when_the_feature_page_closes(tmp_path):
 
 
 def test_a_section_line_keeps_running_after_the_feature_page_closes(tmp_path):
-    """Ruling: unlike Edit shape, a section line started from the Profiles dock keeps running when
+    """Unlike Edit shape, a section line started from the Profiles dock keeps running when
     the feature page closes — its own controls live on the Profiles dock, not the feature page."""
     from terrain_sketch.gui.profile_dock import ProfileDock
 
@@ -1065,9 +1144,9 @@ def test_a_section_line_keeps_running_after_the_feature_page_closes(tmp_path):
 
 def test_a_section_line_stops_when_its_feature_disappears_with_the_page_closed(tmp_path):
     """spec §9: a feature that disappears (delete, undo) must not leave a tool still working on it,
-    whether or not its page happens to be open right now. `_sync_selection_page` used to return
-    early unless the feature page was the current panel, leaving a section line's `_section_fid`
-    still set — and the map tool still running — whenever the page had already been closed (a
+    whether or not its page happens to be open right now. Checking only while the feature page is
+    the current panel would leave a section line's `_section_fid` still set — and the map tool
+    still running — whenever the page had already been closed (a
     section line is the one tool that genuinely reaches that state at all: unlike Edit shape, spec
     §9 has it keep running when the feature page closes, see
     `test_a_section_line_keeps_running_after_the_feature_page_closes` above — Edit shape's own
@@ -1098,9 +1177,8 @@ def test_edit_shape_stops_when_its_feature_disappears_with_no_page_ever_open(tmp
     at all — nothing about `_toggle_edit` requires the page to be showing — so a feature can be
     edited without its page ever having been opened (selecting it is enough); deleting it through
     the list's context menu (`controller.delete_feature`, exactly what `Delete` on the menu calls)
-    at that point used to leave `edit_tool` running on a feature that no longer exists, because
-    `_sync_selection_page` returned before ever checking, unless the feature page happened to be the
-    open panel."""
+    at that point must not leave `edit_tool` running on a feature that no longer exists, whether
+    or not the feature page happens to be the open panel."""
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.feature_view.select_id(dike.id)
@@ -1178,20 +1256,10 @@ def test_delete_uses_the_id_the_page_sends_not_just_the_selection(tmp_path):
     assert c.find(pond.id) is None
 
 
-def test_a_guarded_slots_failure_is_logged_not_raised(tmp_path, monkeypatch):
-    """Every `MainDock` slot reachable from a Qt signal, event filter or timer must log rather than
-    raise (an exception escaping a Qt callback aborts QGIS) — `_delete_selected` stands in for the
-    whole list of guarded slots, each wrapped in the same try/except + `QgsMessageLog` pattern:
-    `_context_menu`, `_export`, `_open_scenario`, `_use_layer`, `_section_drawn`,
-    `_drop_missing_brush_target`, `_refresh_highlight`, `stop_editing`, `_edited`, `_reroute_hint`
-    (Task 6's original sweep), plus `_start`, `_new_scenario`, `_zoom_to`, `_toggle_edit`,
-    `_map_tool_set`, `_update_radius_units`, `_show_message`, `_preview_updated`,
-    `_history_restored`, `_begin_drawing`, `_drawn`, `end_drawing`, `close_page`, `_save_scenario`,
-    `_sync_feature_page_title`, `_draw_section_line`, `_schedule_reroute_hint`,
-    `_update_overlay_transform`, `_clear_preview`, `_profiles_closed_state_changed` and
-    `closeEvent` (the review's follow-up sweep, including two bare lambdas — `previewCleared` and
-    `profiles.closedStateChanged` — replaced with named guarded methods so they could be guarded
-    at all). See the Task 6 fix report for the full final sweep."""
+def test_delete_selected_logs_an_exception_instead_of_raising_it(tmp_path, monkeypatch):
+    """An exception escaping a Qt callback aborts QGIS, so every `MainDock` slot reachable from a
+    signal, event filter or timer wraps its body in try/except and logs to `QgsMessageLog`. This
+    checks that pattern on one slot, `_delete_selected`, with the controller made to raise."""
     import terrain_sketch.gui.main_dock as main_dock_module
 
     _iface, c, dock = panel(tmp_path)

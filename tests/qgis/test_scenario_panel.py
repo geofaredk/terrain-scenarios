@@ -251,12 +251,11 @@ def test_a_failed_save_before_closing_asks_again_until_it_succeeds(tmp_path):
 
 
 def test_a_repeatedly_failing_save_before_the_project_closes_asks_until_an_explicit_discard(tmp_path):
-    """Round 3 ruling: `before_discard` cannot cancel anything — `SketchController._drop_session`
-    calls it and then always drops the session, whatever it did. Round 2's fix stopped the
-    question after one unexpected save failure, which left the session to be dropped a moment
-    later with no explicit Discard from the user — silent data loss. The question must instead
-    repeat, carrying the failure, until the user explicitly answers Discard: here, Save (fails),
-    Save (fails again), Discard."""
+    """`before_discard` cannot cancel anything — `SketchController._drop_session` calls it and
+    then always drops the session, whatever it did. Stopping the question after a failed save
+    would let the session be dropped a moment later with no explicit Discard from the user —
+    silent data loss. The question repeats instead, carrying the failure, until the user
+    explicitly answers Discard: here, Save (fails), Save (fails again), Discard."""
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.ask_save_path = lambda: str(tmp_path / "boom.gpkg")
@@ -339,8 +338,7 @@ def test_a_cancelled_save_dialog_on_a_cancellable_path_keeps_the_work(tmp_path):
     another DEM, Change… then Start, New scenario, Open scenario) can genuinely back out.
     Choosing Save and then cancelling the file dialog (`ask_save_path` returning "") is "wanted to
     save but did not" — `_keep_unsaved_work` already turns that into backing out rather than
-    discarding, and still does after the round-3 fix: the "no path chosen" case still returns
-    plain `False` from `_save_scenario`, unchanged."""
+    discarding: the "no path chosen" case returns plain `False` from `_save_scenario`."""
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     question = SaveQuestion()                                # wants to save

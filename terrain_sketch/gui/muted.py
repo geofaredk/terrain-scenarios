@@ -1,19 +1,59 @@
 """Secondary text: the palette's own text colour, toned down so it reads as supporting information."""
 from __future__ import annotations
 
+import functools
+
 from qgis.PyQt.QtCore import QEvent
 from qgis.PyQt.QtGui import QColor, QPalette
 from qgis.PyQt.QtWidgets import QApplication, QLabel
 
-BLEND = 0.45   # how far the text colour moves towards the background
+BLEND = 0.45          # how far the text colour moves towards the background
+MIN_CONTRAST = 3.0    # WCAG contrast the muted colour keeps against its background, where the text itself has it
+_STEP = 0.01
+
+
+def _luminance(colour: QColor) -> float:
+    """WCAG relative luminance of `colour`."""
+    def channel(value: int) -> float:
+        value /= 255
+        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+    return 0.2126 * channel(colour.red()) + 0.7152 * channel(colour.green()) + 0.0722 * channel(colour.blue())
+
+
+def _contrast(a: QColor, b: QColor) -> float:
+    high, low = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def _mix(text: QColor, background: QColor, amount: float) -> QColor:
+    return QColor(*(round(t + (b - t) * amount) for t, b in (
+        (text.red(), background.red()), (text.green(), background.green()), (text.blue(), background.blue()))))
+
+
+@functools.lru_cache(maxsize=64)
+def _muted_rgb(text: int, background: int) -> int:
+    text_colour, background_colour = QColor.fromRgb(text), QColor.fromRgb(background)
+    floor = min(MIN_CONTRAST, _contrast(text_colour, background_colour))
+    amount = BLEND
+    while amount > 0:
+        colour = _mix(text_colour, background_colour, amount)
+        if _contrast(colour, background_colour) >= floor:
+            return colour.rgb()
+        amount -= _STEP
+    return text_colour.rgb()
+
+
+def muted_between(text: QColor, background: QColor) -> QColor:
+    """`text` blended towards `background`, for secondary text drawn on that background. The blend
+    stops short where going the full way would leave less than `MIN_CONTRAST` against the
+    background: a selection highlight is often much closer to its text colour than a window is
+    (Qt's light highlight has 3.7:1 against white), and a full blend there cannot be read."""
+    return QColor.fromRgb(_muted_rgb(text.rgb(), background.rgb()))
 
 
 def muted_colour(palette: QPalette) -> QColor:
-    """The palette's text colour blended towards its background, so it follows light and dark themes."""
-    text = palette.color(QPalette.ColorRole.WindowText)
-    back = palette.color(QPalette.ColorRole.Window)
-    mix = lambda a, b: round(a + (b - a) * BLEND)   # noqa: E731 — one expression, used three times
-    return QColor(mix(text.red(), back.red()), mix(text.green(), back.green()), mix(text.blue(), back.blue()))
+    """The palette's window text colour muted against the window colour, for labels on a panel."""
+    return muted_between(palette.color(QPalette.ColorRole.WindowText), palette.color(QPalette.ColorRole.Window))
 
 
 class MutedLabel(QLabel):
@@ -31,19 +71,15 @@ class MutedLabel(QLabel):
         super().changeEvent(event)
 
     def _apply(self) -> None:
-        """CRITICAL 1 fix: `setPalette` below always sends `QEvent.Type.PaletteChange` straight
-        back to this same label (`QWidget.setPalette` does this synchronously, unconditionally),
-        which `changeEvent` catches and used to call `_apply` again — reading the colour back from
-        `self.palette()`, which by then already held the *muted* colour from the call just made,
-        and blending that another `BLEND` fraction towards the background. Repeated, that
-        converges the text within a shade of the background inside a handful of re-entries
-        (verified by probe: about 9 passes) — invisible in both themes.
+        """Set the muted colour on this label's own palette.
 
-        Two independent fixes, either alone would do it, kept together for safety: the source
-        colour always comes from the INHERITED palette — this label's parent, or the application's
-        with no parent yet — never `self.palette()`, so re-entering this can only ever recompute
-        the same exact colour, never blend further; and `_applying` blocks the re-entrant call
-        outright, so `changeEvent` never even calls back into this while it is still running."""
+        `QWidget.setPalette` sends `PaletteChange` straight back to this label, synchronously, so
+        `changeEvent` re-enters here while the call is still running. Two things keep that from
+        blending the colour a second time: the source colour always comes from the inherited
+        palette (the parent's, or the application's with no parent yet), never from
+        `self.palette()`, which already holds the muted colour; and `_applying` returns early from
+        the re-entrant call. Blending the label's own colour again on every re-entry converges on
+        the background within about nine passes, leaving the text invisible."""
         if self._applying:
             return
         self._applying = True

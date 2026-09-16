@@ -71,6 +71,8 @@ START_HEADING = "Sketch changes on your terrain"
 START_INTRO = "Terrain Sketch works on a copy; your DEM is never changed."
 SKETCHING_ON = "Sketching on: {}"
 CHANGE_DEM_LINK = ' <a href="change">Change…</a>'
+KEEP_SKETCHING = "Keep sketching"
+KEEP_SKETCHING_TIP = "Go back to the session that is still running, without starting a new one."
 SCENARIO_MENU_TIP = "Start, open or save a scenario file."
 
 EXPORT_OVER_SOURCE = "Choose a new file name: Terrain Sketch never overwrites your DEM or its own working files."

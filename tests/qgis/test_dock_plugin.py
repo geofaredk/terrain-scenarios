@@ -148,6 +148,9 @@ def _session_dock(tmp_path):
 
 
 def test_the_brush_extends_the_selected_area_feature(tmp_path):
+    """Drives the gallery directly, with a feature selected: the panel itself cannot reach an
+    extending brush, because New feature clears the selection before its page opens. The code is
+    kept as the hook for a future "paint more" action."""
     _iface, controller, dock = _session_dock(tmp_path)
     pond = controller.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
     dock.feature_view.select_id(pond.id)
@@ -429,8 +432,8 @@ def test_a_panel_without_a_profiles_panel_has_no_profiles_button():
 
 def test_the_new_feature_button_sits_above_the_feature_list(tmp_path):
     """The primary action lives in the toolbar, above the list, in the session view now (spec §5).
-    `delete_button` and `edit_button` are the feature page's own buttons since Task 5 (spec §12) and
-    are laid out there, not in the toolbar, so their position is not asserted here."""
+    `delete_button` and `edit_button` are the feature page's own buttons (spec §12) and are laid
+    out there, not in the toolbar, so their position is not asserted here."""
     dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
     dock.dem_combo.setLayer(dem_layer(tmp_path))
     dock.start_button.click()
@@ -443,7 +446,7 @@ def test_the_new_feature_button_sits_above_the_feature_list(tmp_path):
 
 def test_the_feature_list_fills_the_session_view_without_a_splitter(tmp_path):
     """The list_splitter is retired along with its settings key (spec §10): there is no splitter any
-    more, and the feature list alone fills the height the list and the old lower pages used to share."""
+    more, and the feature list alone fills the session view's height below the toolbar."""
     from qgis.PyQt.QtWidgets import QSplitter
     dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
     assert not hasattr(dock, "list_splitter")
@@ -453,4 +456,5 @@ def test_the_feature_list_fills_the_session_view_without_a_splitter(tmp_path):
     dock.resize(360, 900)
     dock.show()
     QApplication.processEvents()
-    assert dock.feature_view.height() > 800   # no lower pages sharing the session view's height any more
+    # no lower pages sharing the session view's height any more: only the toolbar and the status line
+    assert dock.feature_view.height() > dock.views.height() - 120

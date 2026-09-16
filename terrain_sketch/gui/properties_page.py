@@ -186,10 +186,10 @@ class PropertiesPage(QgsPanelWidget):
 
         content = QWidget()
         content_layout = QVBoxLayout(content)
-        apply_page_margins(content_layout, content)   # VISUAL c: a normal gap from the panel edge
+        apply_page_margins(content_layout, content)   # a normal gap from the panel edge, as QGIS's own panels have
         content_layout.addLayout(header_row)
         content_layout.addLayout(action_row)
-        # Directly under the action row (spec §6 item 6, as amended): a hint for work started from
+        # Directly under the action row (spec §6 item 6): a hint for work started from
         # this page — Edit shape, or Draw section line from the Profiles dock — must never scroll
         # out of sight below Advanced/Volumes/About, which can each expand to any length.
         content_layout.addWidget(self.hint)
@@ -281,12 +281,6 @@ class PropertiesPage(QgsPanelWidget):
             except Exception:  # noqa: BLE001 — a Qt event handler must never take QGIS down
                 QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
         super().changeEvent(event)
-
-    def show_hint(self, text: str) -> None:
-        """Show the instruction text for the drawing tool that is now running, started from this
-        page (Edit shape, or Draw section line from the Profiles dock — spec §6 item 6)."""
-        self.hint.setText(text)
-        self.hint.show()
 
     def clear_hint(self) -> None:
         self.hint.hide()

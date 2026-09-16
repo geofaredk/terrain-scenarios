@@ -20,8 +20,9 @@ from ..qgis_io.convert import from_wkb
 from ..qgis_io.raster_io import DemError, GeographicDemError
 from ..qgis_io.scenario import ScenarioError
 from .help_texts import (CHANGE_DEM_LINK, DEM_NOT_READABLE, EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE,
-                         EXPORT_NOT_ADDED, EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SAVE_FAILED_BEFORE_CLOSING,
-                         SCENARIO_DEM_DIFFERS, SCENARIO_MAY_NOT_BE_SAVED, SCENARIO_MENU_TIP, SCENARIO_NOT_APPLIED,
+                         EXPORT_NOT_ADDED, EXPORT_REPLACE, KEEP_SKETCHING, KEEP_SKETCHING_TIP,
+                         REPROJECT_UNAVAILABLE, SAVE_FAILED_BEFORE_CLOSING, SCENARIO_DEM_DIFFERS,
+                         SCENARIO_MAY_NOT_BE_SAVED, SCENARIO_MENU_TIP, SCENARIO_NOT_APPLIED,
                          SCENARIO_NOT_APPLIED_ON_ITS_DEM, SCENARIO_OPENED, SCENARIO_OTHER_DEM, SCENARIO_REPLACE,
                          SCENARIO_SAVED, SECTION_LINE_HINT,
                          SHAPE_NOT_TRANSFORMED, SKETCHING_ON, START_HEADING, START_INTRO, UNSAVED_BEFORE_CLOSING,
@@ -37,6 +38,7 @@ from .map_tools.freehand import FreehandTool
 from .map_tools.vertex_edit import VertexEditTool
 from .muted import MutedLabel
 from .overlay import PreviewOverlay
+from .page_layout import apply_page_margins
 from .properties_page import PropertiesPage
 from .selection import BRUSH_EXTEND_HINT, EDIT_HINT, METHOD_HINTS, ZOOM_ICON, Method
 from .tool_gallery import ToolGallery
@@ -46,7 +48,7 @@ VIEW_WELCOME, VIEW_SESSION = range(2)
 PROFILES_ICON = "/mActionElevationProfile.svg"
 
 
-def _file_button(icon: str, text: str, tip: str) -> QToolButton:
+def _icon_button(icon: str, text: str, tip: str) -> QToolButton:
     """An icon-only, auto-raised button like those in QGIS's own dock toolbars. The text is kept
     for screen readers and heads the tooltip, so the icon is never the only way to tell them apart."""
     button = QToolButton()
@@ -112,9 +114,9 @@ class _PagePanel(QgsPanelWidget):
     the stack (verified by probe). So neither is ever pushed itself: a *fresh* `_PagePanel` wraps
     it on every open, and only the wrapper is ever pushed and accepted. `content` keeps its
     identity — it is only reparented — so `dock.gallery` and `dock.properties` stay the same
-    objects other code already reaches for. `PropertiesPage` is a `QgsPanelWidget` in its own right
-    too (Task 5), the same as `ToolGallery` — neither is exempt from the "same instance twice"
-    restriction, which is why both still go through this wrapper rather than being pushed directly.
+    objects other code already reaches for. Both `PropertiesPage` and `ToolGallery` are
+    `QgsPanelWidget`s in their own right, but the "same instance twice" restriction applies to them
+    as to any panel, which is why both go through this wrapper rather than being pushed directly.
 
     `QgsPanelWidgetStack` defaults `autoDelete` to True and `acceptPanel()` schedules the panel for
     deletion: left alone, that `deleteLater()` takes `content` down with it, since `addWidget`
@@ -209,6 +211,9 @@ class MainDock(QgsDockWidget):
         self._session_has_dem = False       # _session_changed's own memory of has_dem, to spot a real transition
         controller.before_discard = self._offer_save_before_discard
         self.edit_tool = None
+        # The brush can extend the selected area instead of adding a feature (`_brush_target`). The
+        # panel cannot reach that today — New feature clears the selection before its page opens —
+        # but it is kept as the hook for a future "paint more" action on the feature page.
         self._brush_fid = None
         self._brush_extends = False       # set with _brush_fid, but kept when that feature goes
         self._section_fid = None          # the area whose section line is being drawn
@@ -256,9 +261,8 @@ class MainDock(QgsDockWidget):
         self.start_button.setToolTip(self.tr("Start sketching on this DEM. The DEM itself is never changed."))
         dem_row.addWidget(self.start_button)
         welcome_layout.addLayout(dem_row)
-        self.keep_sketching_button = QPushButton(self.tr("Keep sketching"))
-        self.keep_sketching_button.setToolTip(
-            self.tr("Go back to the session that is still running, without starting a new one."))
+        self.keep_sketching_button = QPushButton(KEEP_SKETCHING)
+        self.keep_sketching_button.setToolTip(KEEP_SKETCHING_TIP)
         self.keep_sketching_button.hide()   # shown by _session_changed only while a session is live
         welcome_layout.addWidget(self.keep_sketching_button)
         welcome_layout.addStretch(1)
@@ -308,15 +312,15 @@ class MainDock(QgsDockWidget):
         self.scenario_button.setMenu(scenario_menu)
         self.toolbar.addWidget(self.scenario_button)
         self.toolbar.addSeparator()
-        self.export_button = _file_button(
+        self.export_button = _icon_button(
             "/mActionSharingExport.svg", self.tr("Export DEM…"),
             self.tr("Write the modified DEM to a new GeoTIFF, e.g. for a flood simulation."))
         self.toolbar.addWidget(self.export_button)
-        self.view_3d_button = _file_button("/3d.svg", self.tr("3D view"), VIEW_3D_TIP)
+        self.view_3d_button = _icon_button("/3d.svg", self.tr("3D view"), VIEW_3D_TIP)
         self.toolbar.addWidget(self.view_3d_button)
         # The Profiles panel stays hidden until this button asks for it, and the button follows the panel
         # when the user closes it there instead.
-        self.profiles_button = _file_button(PROFILES_ICON, self.tr("Profiles"), PROFILES_TIP)
+        self.profiles_button = _icon_button(PROFILES_ICON, self.tr("Profiles"), PROFILES_TIP)
         self.profiles_button.setCheckable(True)
         self.profiles_action = self.toolbar.addWidget(self.profiles_button)
         self.profiles_action.setVisible(profiles is not None)
@@ -328,7 +332,7 @@ class MainDock(QgsDockWidget):
         self.status_label.setOpenExternalLinks(False)
 
         # A hint for work with no page open — a section line drawn from the Profiles dock after
-        # going back to the list (spec §6 item 6, as amended) — shows here, under the toolbar.
+        # going back to the list (spec §6 item 6) — shows here, under the toolbar.
         self.session_hint = QLabel()
         self.session_hint.setWordWrap(True)
         self.session_hint.hide()
@@ -337,9 +341,9 @@ class MainDock(QgsDockWidget):
         session_layout = QVBoxLayout(session_view)
         session_layout.setContentsMargins(0, 0, 0, 0)
         session_layout.addWidget(self.toolbar)
-        session_layout.addWidget(self.session_hint)
+        session_layout.addLayout(self._text_row(self.session_hint, session_view))
         session_layout.addWidget(self.feature_view, 1)
-        session_layout.addWidget(self.status_label)
+        session_layout.addLayout(self._text_row(self.status_label, session_view))
 
         self.views = QStackedWidget()
         self.views.addWidget(welcome_view)   # VIEW_WELCOME
@@ -457,6 +461,15 @@ class MainDock(QgsDockWidget):
                                        parent=self)
         iface.mapCanvas().installEventFilter(self.canvas_undo_keys)
         self._session_changed()
+
+    @staticmethod
+    def _text_row(label: QLabel, parent: QWidget) -> QVBoxLayout:
+        """`label` in a layout with the style's page margins. The toolbar and the list run edge to
+        edge like QGIS's own panels, but a line of text there would touch the panel edge."""
+        row = QVBoxLayout()
+        apply_page_margins(row, parent)
+        row.addWidget(label)
+        return row
 
     def end_drawing(self) -> None:
         """Stop a drawing in progress and give the canvas its previous map tool back. Guarded:
@@ -592,7 +605,7 @@ class MainDock(QgsDockWidget):
         `SECTION_LINE_HINT` (Draw section line, from the Profiles dock) belong to the feature page
         (spec §6 item 6, §7) and show there whenever it is the page open; with no page open at all —
         a section line drawn from the Profiles dock after going back to the list — the hint shows
-        under the toolbar in the session view instead (spec §6 item 6, as amended). Routed here
+        under the toolbar in the session view instead (spec §6 item 6). Routed here
         rather than at each call site, so every caller stays unchanged.
 
         The text is remembered (`_hint_text`) so `_reroute_hint` can move it to wherever the hint
@@ -670,14 +683,13 @@ class MainDock(QgsDockWidget):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _show_welcome_view(self, _link: str = "") -> None:
-        """The status line's Change… link: back to the welcome view, asking about unsaved work
-        first — the session itself keeps running until a new DEM is started, as pressing Start does.
+        """The status line's Change… link: back to the welcome view, asking nothing (spec §5.3).
+        The session keeps running behind it, so no work is at risk yet: Keep sketching returns to
+        it, and Start asks about unsaved work once, when it actually replaces the session.
         Stops any drawing or edit in progress: it was running on the map behind the session view,
         which the welcome view no longer shows, and a drawing that then finished would open a
         feature page on top of it."""
         try:
-            if self._keep_unsaved_work():
-                return
             self.stop_tools()
             self.close_page()
             self.views.setCurrentIndex(VIEW_WELCOME)
@@ -685,9 +697,8 @@ class MainDock(QgsDockWidget):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _keep_sketching(self) -> None:
-        """The welcome view's second button, shown only while a session is still live (spec-driven
-        fix: Change… used to be the only way back, and pressing Start there would have discarded
-        every feature just to return to the same session)."""
+        """The welcome view's second button, shown only while a session is still live: the way back
+        to that session from Change…, since Start would replace it."""
         try:
             self.views.setCurrentIndex(VIEW_SESSION)
         except Exception:  # noqa: BLE001 — this runs in a slot
@@ -818,10 +829,9 @@ class MainDock(QgsDockWidget):
             self.feature_view.clearSelection()
             self.gallery_page = _PagePanel(self.tr("New feature"), self.gallery, self._released_pages)
             self.gallery_page.panelAccepted.connect(self._stop_drawing_on_gallery_close)
-            # A hint whose activity outlives this page (there is none today — a New feature page
-            # drawing stops with the page, see `_stop_drawing_on_gallery_close` above — but this
-            # keeps both pages symmetric and correct if that ever changes) must move off this page
-            # the moment it closes, whichever way that happens (spec §6 item 6, as amended).
+            # Every drawing started from this page stops when the page closes (the connection
+            # above), so no hint currently outlives it. Rerouting on close anyway treats both
+            # pages the same way: a hint is never left on a page that is gone.
             self.gallery_page.panelAccepted.connect(self._schedule_reroute_hint)
             self.open_page(self.gallery_page)
             self._reroute_hint()
@@ -898,17 +908,16 @@ class MainDock(QgsDockWidget):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _clear_preview(self) -> None:
-        """Guarded: reached from `controller.previewCleared`, a Qt signal (a bare lambda calling
-        `self.overlay.clear()` directly used to sit on this connection with no guard at all)."""
+        """Guarded: reached from `controller.previewCleared`, a Qt signal — a named method rather
+        than a lambda on the connection, so the call can be guarded."""
         try:
             self.overlay.clear()
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _profiles_closed_state_changed(self, closed: bool) -> None:
-        """Guarded: reached from `profiles.closedStateChanged`, a Qt signal (a bare lambda calling
-        `self.profiles_button.setChecked(...)` directly used to sit on this connection with no
-        guard at all)."""
+        """Guarded: reached from `profiles.closedStateChanged`, a Qt signal — a named method rather
+        than a lambda on the connection, so the call can be guarded."""
         try:
             self.profiles_button.setChecked(not closed)
         except Exception:  # noqa: BLE001 — this runs in a slot
@@ -973,10 +982,14 @@ class MainDock(QgsDockWidget):
 
     def _draw_section_line(self, fid: str) -> None:
         """Draw the line an area's section runs along (spec §5.4), asked for by the Profiles panel.
-        Guarded: reached from `profiles.drawSectionRequested`, a Qt signal."""
+        The Profiles panel stays usable while the welcome view shows, so this switches back to the
+        session view first: the line's hint shows there, and the drawing must not run behind a view
+        that says nothing about it. Guarded: reached from `profiles.drawSectionRequested`, a Qt
+        signal."""
         try:
             if self.controller.find(fid) is None:
                 return
+            self.views.setCurrentIndex(VIEW_SESSION)
             self.stop_tools()
             self._section_fid = fid
             self.draw_tool = DrawLineTool(self.iface.mapCanvas())
@@ -1003,7 +1016,10 @@ class MainDock(QgsDockWidget):
         return METHOD_HINTS[method]
 
     def _brush_target(self, tool, mode) -> str | None:
-        """The selected feature the brush should extend, if it fits the chosen tool and shape."""
+        """The selected feature the brush should extend, if it fits the chosen tool and shape.
+        Currently always None from the panel itself: `_new_feature` clears the selection before
+        the New feature page opens, so only code that drives the gallery directly reaches an
+        extending brush (see the note on `_brush_fid` in `__init__`)."""
         fid = self.feature_view.selected_id()
         if fid is None or mode is not Mode.AREA:
             return None
@@ -1258,13 +1274,12 @@ class MainDock(QgsDockWidget):
         those: `SketchController._drop_session` calls it and then always drops the session,
         whatever it did. So the question here is only ever Save or Discard, and it must repeat
         after ANY failed save — a recoverable one (a `ScenarioError`, or the file dialog cancelled)
-        exactly as before, but also an unexpected one (round 3 ruling, reverting round 2's "stop
-        asking on an unexpected failure": that stopped the question, but nothing else stops the
-        session from being dropped a moment later — one unexpected save failure silently discarded
-        the user's work on every path through here, which they never agreed to). Work is discarded
-        only when the user explicitly answers Discard. A save that failed after the file was
-        written is still a failed save here (see `_save_scenario`): asking again and writing again
-        is harmless, treating it as done could drop work that never reached the file.
+        and an unexpected one alike. Nothing else stops the session from being dropped a moment
+        later, so leaving the loop after a failed save would discard the work without the user
+        agreeing to it. Work is discarded only when the user explicitly answers Discard. A save
+        that failed after the file was written is still a failed save here (see `_save_scenario`):
+        asking again and writing again is harmless, treating it as done could drop work that never
+        reached the file.
 
         The repeated question carries the reason the last attempt failed (`_last_save_reason`,
         when there is one — an empty save-file dialog leaves no specific reason), so a second or

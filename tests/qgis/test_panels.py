@@ -267,6 +267,37 @@ def test_escape_releases_the_page_before_reopening(tmp_path):
     assert dock.properties.amount.value() == pytest.approx(dike.amount)   # still a live, working widget
 
 
+def test_escape_inside_the_gallery_closes_the_new_feature_page(tmp_path):
+    """`ToolGallery` is itself a `QgsPanelWidget` (`dockMode` True): its own inherited
+    `keyPressEvent` answers Escape by calling its own `acceptPanel()` — emitting `gallery`'s own
+    `panelAccepted`, not the `_PagePanel` wrapper's — before the key press ever reaches the wrapper
+    that is actually on the stack. Unlike `test_escape_releases_the_page_before_reopening` (which
+    sends Escape to the stack itself, where a plain-`QWidget` page like `properties` has nothing of
+    its own to intercept it with), this sends Escape to a widget *inside* the gallery — the tool
+    tiles — to reproduce that exact path, and only passes because `gallery.panelAccepted` is
+    forwarded to `close_page` (`MainDock.__init__`); removing that connection makes it fail."""
+    from qgis.PyQt import sip
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtTest import QTest
+    from qgis.PyQt.QtWidgets import QApplication
+    from qgis_helpers import spin_event_loop
+
+    _iface, _c, dock = panel(tmp_path)
+    dock.show()
+    gallery = dock.gallery
+    dock.new_button.click()
+    assert dock.stack.currentPanel() is dock.gallery_page
+    dock.gallery.tool_list.setFocus()
+    QApplication.processEvents()
+    QTest.keyClick(dock.gallery.tool_list, Qt.Key.Key_Escape)
+    assert dock.stack.currentPanel() is dock.main_panel     # Escape really did close the page
+    spin_event_loop(50)                                       # let the deferred delete actually run
+    assert dock.gallery is gallery and not sip.isdeleted(gallery)   # still the same, live instance
+    dock.new_button.click()                                   # must not touch a deleted `gallery`
+    assert dock.stack.currentPanel() is dock.gallery_page
+    assert dock.gallery.isVisible()
+
+
 def test_the_tools_are_shown_as_tiles(tmp_path):
     _iface, _c, dock = panel(tmp_path)
     dock.new_button.click()
@@ -353,10 +384,12 @@ def test_a_brush_strokes_radius_change_updates_the_one_gallery(tmp_path):
 
 
 def test_pressing_back_while_drawing_stops_the_map_tool(tmp_path):
-    """Spec §6.6: "Pressing back, or Esc-cancelling the drawing, leaves the map tool stopped and
-    returns to the list." Closing the New feature page via the stack's own Back button while its
-    drawing is still running must stop that drawing, not leave it running on the map behind a page
-    that no longer shows its hint or has a Finish/Cancel control for it."""
+    """Spec §6.6: "Pressing back (or Escape on the page) stops a drawing that is still running and
+    returns to the list." (Esc-cancelling a drawing on the map itself is a different case — it keeps
+    the New feature page open so the user can try again — and is unaffected here: nothing in this
+    test presses Escape on the map or the canvas.) Closing the New feature page via the stack's own
+    Back button while its drawing is still running must stop that drawing, not leave it running on
+    the map behind a page that no longer shows its hint or has a Finish/Cancel control for it."""
     from qgis.PyQt.QtWidgets import QApplication, QToolButton
     from qgis_helpers import spin_event_loop
 

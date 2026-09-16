@@ -21,9 +21,9 @@ from ..qgis_io.raster_io import DemError, GeographicDemError
 from ..qgis_io.scenario import ScenarioError
 from .help_texts import (CHANGE_DEM_LINK, DEM_NOT_READABLE, EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE,
                          EXPORT_NOT_ADDED, EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SAVE_FAILED_BEFORE_CLOSING,
-                         SCENARIO_DEM_DIFFERS, SCENARIO_MENU_TIP, SCENARIO_NOT_APPLIED,
+                         SCENARIO_DEM_DIFFERS, SCENARIO_MAY_NOT_BE_SAVED, SCENARIO_MENU_TIP, SCENARIO_NOT_APPLIED,
                          SCENARIO_NOT_APPLIED_ON_ITS_DEM, SCENARIO_OPENED, SCENARIO_OTHER_DEM, SCENARIO_REPLACE,
-                         SCENARIO_SAVED, SCENARIO_SAVED_BUT_INCOMPLETE, SCENARIO_SAVE_FAILED, SECTION_LINE_HINT,
+                         SCENARIO_SAVED, SECTION_LINE_HINT,
                          SHAPE_NOT_TRANSFORMED, SKETCHING_ON, START_HEADING, START_INTRO, UNSAVED_BEFORE_CLOSING,
                          UNSAVED_CHANGES, PROFILES_TIP, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
 from . import illustrations
@@ -1214,26 +1214,24 @@ class MainDock(QgsDockWidget):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _save_scenario(self, save_as: bool = False) -> bool:
-        """Save, asking for a path when there is not one yet. True when the work is safe on disk —
-        an ordinary save, or an unexpected exception that only happened AFTER
-        `controller.save_scenario` had already written the file (its own bookkeeping —
-        `_mark_scenario`, `undo_stack.setClean`, `_place_files` — comes after the write, so a
-        failure there must not be treated as "nothing was saved": the file is right there).
-        `controller.scenario_path == path` is what tells the two apart — `_mark_scenario` sets it
-        the moment the write succeeds, before any of that later bookkeeping runs. False otherwise
-        (no path chosen, a `ScenarioError`, or an unexpected exception before/during the write) —
-        worth asking about again, since the work is genuinely still only in memory.
+        """Save, asking for a path when there is not one yet. True only when the save finished; False
+        when no path was chosen, on a `ScenarioError`, or on any unexpected exception.
 
-        `_last_save_reason` is set to what to tell the user about a failure (None on an unremarkable
-        success), so `_offer_save_before_discard` can carry it into the question it asks again
-        (round 3 ruling: every failure, not just a recoverable one, is asked about again — see that
-        method's own docstring for why).
+        An unexpected exception is always a failed save, wherever it came from. It cannot tell
+        whether the file was written: `controller.save_scenario` writes and then does its own
+        bookkeeping, and on a re-save `controller.scenario_path` already equals `path` before the
+        write, so no state here separates "failed before the write" from "failed after it". The
+        user is told the scenario may not have been saved completely, and why; saving again just
+        writes the file again, which is harmless.
+
+        `_last_save_reason` is set to what to tell the user about a failure (None on a success or a
+        cancelled file dialog), so `_offer_save_before_discard` can carry it into the question it
+        asks again.
 
         Guarded: reached directly from the Scenario menu's Save / Save as… actions (a Qt signal via
         a lambda), as well as called directly by `_keep_unsaved_work` and
         `_offer_save_before_discard`, both of which depend on the value it returns."""
         self._last_save_reason = None
-        path = None
         try:
             path = self.controller.scenario_path
             if save_as or not path:
@@ -1248,13 +1246,9 @@ class MainDock(QgsDockWidget):
                 return False
             self._show_message(Qgis.MessageLevel.Success, SCENARIO_SAVED.format(path))
             return True
-        except Exception:  # noqa: BLE001 — this runs in a slot
+        except Exception as error:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-            if path is not None and self.controller.scenario_path == path:
-                self._last_save_reason = SCENARIO_SAVED_BUT_INCOMPLETE.format(path)
-                self._show_message(Qgis.MessageLevel.Warning, self._last_save_reason)
-                return True   # the file itself is safe; only some later step did not finish
-            self._last_save_reason = SCENARIO_SAVE_FAILED
+            self._last_save_reason = SCENARIO_MAY_NOT_BE_SAVED.format(error=str(error) or type(error).__name__)
             self._show_message(Qgis.MessageLevel.Warning, self._last_save_reason)
             return False
 
@@ -1268,7 +1262,9 @@ class MainDock(QgsDockWidget):
         asking on an unexpected failure": that stopped the question, but nothing else stops the
         session from being dropped a moment later — one unexpected save failure silently discarded
         the user's work on every path through here, which they never agreed to). Work is discarded
-        only when the user explicitly answers Discard.
+        only when the user explicitly answers Discard. A save that failed after the file was
+        written is still a failed save here (see `_save_scenario`): asking again and writing again
+        is harmless, treating it as done could drop work that never reached the file.
 
         The repeated question carries the reason the last attempt failed (`_last_save_reason`,
         when there is one — an empty save-file dialog leaves no specific reason), so a second or

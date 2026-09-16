@@ -259,9 +259,8 @@ def cubic_metres(value: float | None) -> str:
 
 UNSAVED_CHANGES = ("This scenario has changes that are not saved. Save them before continuing?")
 SCENARIO_SAVED = "Scenario saved to {}"
-SCENARIO_SAVE_FAILED = "The scenario could not be saved."
-SCENARIO_SAVED_BUT_INCOMPLETE = ("Scenario saved to {}, but something afterwards did not finish properly. "
-                                 "Check the working files are where you expect them.")
+SCENARIO_MAY_NOT_BE_SAVED = ("The scenario may not have been saved completely ({error}); see the 'Terrain Sketch' "
+                             "log tab for details.")
 SCENARIO_REPLACE = "{} already exists. Replace it?"
 SCENARIO_OPENED = "Scenario opened from {}"
 SCENARIO_DEM_DIFFERS = ("This scenario was made on a DEM with a different {}.\n\n"

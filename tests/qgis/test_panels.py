@@ -151,6 +151,7 @@ def test_a_page_survives_being_closed_and_reopened(tmp_path):
     from qgis_helpers import spin_event_loop
 
     _iface, c, dock = panel(tmp_path)
+    dock.show()
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.feature_view.select_id(dike.id)          # opens the properties page
     dock.feature_view.clearSelection()            # closes it
@@ -158,6 +159,7 @@ def test_a_page_survives_being_closed_and_reopened(tmp_path):
     dock.feature_view.select_id(dike.id)          # reopening must not touch a deleted `properties` widget
     assert dock.stack.currentPanel() is dock.properties_page
     assert dock.properties.amount.value() == pytest.approx(dike.amount)   # still a live, working widget
+    assert dock.properties.isVisible()             # not left invisible by release_content's old hide()
 
 
 def test_undo_keys_on_the_properties_fields_survive_a_close_and_reopen(tmp_path):
@@ -193,6 +195,7 @@ def test_the_gallery_survives_new_feature_draw_and_new_feature_again(tmp_path):
     from qgis_helpers import spin_event_loop
 
     _iface, c, dock = panel(tmp_path)
+    dock.show()
     dock.new_button.click()
     dock.gallery.select_tool(Tool.RAISE_PATH)
     dock.gallery.select_mode(Mode.PATH)
@@ -203,6 +206,58 @@ def test_the_gallery_survives_new_feature_draw_and_new_feature_again(tmp_path):
     dock.new_button.click()                        # must not touch the deleted-by-then gallery page
     assert dock.stack.currentPanel() is dock.gallery_page
     assert dock.gallery.tool_list.count() == len(Tool)             # still a live, working widget
+    assert dock.gallery.isVisible()                # not left invisible by release_content's old hide()
+
+
+def test_the_stacks_own_back_button_releases_the_page_before_reopening(tmp_path):
+    """`QgsPanelWidgetStack` owns a visible "Go back" button (`mBackButton`) that calls
+    `acceptPanel()` directly — never through `MainDock.close_page()`. `_PagePanel` must release its
+    content from `panelAccepted` itself, or this exit path (the one a real user actually clicks)
+    destroys `gallery` right along with its wrapper."""
+    from qgis.PyQt.QtWidgets import QApplication, QToolButton
+    from qgis_helpers import spin_event_loop
+
+    _iface, _c, dock = panel(tmp_path)
+    dock.show()
+    dock.new_button.click()
+    QApplication.processEvents()
+    back = dock.stack.findChild(QToolButton, "mBackButton")
+    assert back is not None and back.isVisible()
+    back.click()
+    assert dock.stack.currentPanel() is dock.main_panel     # the button really did close the page
+    spin_event_loop(50)                                       # let the deferred delete actually run
+    dock.new_button.click()                                   # must not touch a deleted `gallery`
+    assert dock.stack.currentPanel() is dock.gallery_page
+    assert dock.gallery.isVisible()                # not left invisible by release_content's old hide()
+    assert dock.gallery.tool_list.count() == len(Tool)         # still a live, working widget
+
+
+def test_escape_releases_the_page_before_reopening(tmp_path):
+    """Escape is `QgsPanelWidgetStack`'s own shortcut for `acceptPanel()`, bypassing `close_page()`
+    exactly like the back button."""
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtTest import QTest
+    from qgis.PyQt.QtWidgets import QApplication
+    from qgis_helpers import spin_event_loop
+
+    _iface, c, dock = panel(tmp_path)
+    dock.show()
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.select_id(dike.id)
+    QApplication.processEvents()
+    assert dock.stack.currentPanel() is dock.properties_page
+    dock.stack.setFocus()
+    QApplication.processEvents()
+    QTest.keyClick(dock.stack, Qt.Key.Key_Escape)
+    assert dock.stack.currentPanel() is dock.main_panel     # Escape really did close the page
+    spin_event_loop(50)                                       # let the deferred delete actually run
+    # select_id on the already-selected row is a no-op (Qt does not re-emit selectionChanged for a
+    # selection that does not change): clear first, so reselecting genuinely reopens the page.
+    dock.feature_view.clearSelection()
+    dock.feature_view.select_id(dike.id)                      # must not touch a deleted `properties`
+    assert dock.stack.currentPanel() is dock.properties_page
+    assert dock.properties.isVisible()             # not left invisible by release_content's old hide()
+    assert dock.properties.amount.value() == pytest.approx(dike.amount)   # still a live, working widget
 
 
 def test_gallery_offers_only_the_shapes_and_methods_a_tool_supports():

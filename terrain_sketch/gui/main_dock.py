@@ -91,7 +91,13 @@ class _IllustrationLabel(QLabel):
         super().changeEvent(event)
 
     def _apply(self) -> None:
-        self.setPixmap(illustrations.pixmap(self._name, self._size, self.palette()))
+        """Render the illustration. Guarded: this runs from `changeEvent`, a Qt virtual override,
+        and `illustrations.pixmap` reads the SVG source from disk — any exception escaping it here
+        would abort QGIS rather than merely leave the picture stale."""
+        try:
+            self.setPixmap(illustrations.pixmap(self._name, self._size, self.palette()))
+        except Exception:  # noqa: BLE001 — this runs from a Qt virtual override
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
 
 class _PagePanel(QgsPanelWidget):
@@ -104,29 +110,47 @@ class _PagePanel(QgsPanelWidget):
 
     `QgsPanelWidgetStack` defaults `autoDelete` to True and `acceptPanel()` schedules the panel for
     deletion: left alone, that `deleteLater()` takes `content` down with it, since `addWidget`
-    reparented it into this wrapper's layout. `release_content()` — called from `close_page` before
-    `acceptPanel()` — takes `content` back out first, so it survives; a fresh wrapper is then built
-    the next time the same content is opened again, so the (now-empty) old wrapper is still cleaned
-    up normally instead of leaking one shell widget per open."""
+    reparented it into this wrapper's layout. `release_content()` takes `content` back out first, so
+    it survives; a fresh wrapper is then built the next time the same content is opened again, so the
+    (now-empty) old wrapper is still cleaned up normally instead of leaking one shell widget per open.
+
+    It is hung off `panelAccepted` — the signal `acceptPanel()` itself emits — rather than called
+    only from `MainDock.close_page()`: `QgsPanelWidgetStack` owns a visible "Go back" button and an
+    Escape handler that call `acceptPanel()` directly, never through `close_page`. Connecting here
+    means every way a page can close — the back button, Escape, `close_page`, and anything QGIS adds
+    later — releases the content the same way, verified by probe."""
 
     def __init__(self, title: str, content: QWidget, parent=None):
         super().__init__(parent)
         self.setDockMode(True)
         self.setPanelTitle(title)
+        self._host = parent   # where release_content puts the content back; not necessarily still
+                              # this wrapper's Qt parent by the time it closes (the stack reparents
+                              # a pushed panel into its own internal container)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(content)
+        self.panelAccepted.connect(self._release_on_accept)
+
+    def _release_on_accept(self, _panel=None) -> None:
+        try:
+            self.release_content(self._host)
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def release_content(self, parent) -> None:
-        """Take the wrapped content out and reparent it to `parent`, hidden, before this wrapper is
+        """Take the wrapped content out and reparent it to `parent`, before this wrapper is
         destroyed. A no-op if it has already been taken (e.g. moved straight into a new wrapper for
-        the same content, as opening the same page again for a different feature does)."""
+        the same content, as opening the same page again for a different feature does). Not hidden
+        explicitly: `setParent` alone already leaves it invisible until it is shown again, and an
+        explicit `hide()` here would set `WA_WState_ExplicitShowHide` — which a later `addWidget`
+        into a new wrapper does not clear, leaving every page blank from the second open on
+        (verified by probe)."""
         layout = self.layout()
         item = layout.takeAt(0) if layout.count() else None
         content = item.widget() if item is not None else None
         if content is not None:
             content.setParent(parent)
-            content.hide()
 
 
 def _3d_types_loaded() -> bool:
@@ -438,35 +462,39 @@ class MainDock(QgsDockWidget):
         super().closeEvent(event)
 
     def _session_changed(self) -> None:
-        has_dem = self.controller.has_dem
-        if not has_dem:
-            self.stop_tools()  # a drawing or edit cannot outlive its session
-            self._update_highlight(None)
-        for widget in (self.export_button, self.new_button, self.delete_button,
-                       self.edit_button, self.feature_view, self.view_3d_button):
-            widget.setEnabled(has_dem)
-        for action in self.scenario_actions:
-            action.setEnabled(has_dem)
-        self.scenario_button.setEnabled(has_dem)
-        self.keep_sketching_button.setVisible(has_dem)
-        if self.controller.layers is not None:
-            project = self.controller.project
-            self.dem_combo.setExceptedLayerList([project.mapLayer(i) for i in self.controller.layers.layer_ids])
-        else:
-            self.dem_combo.setExceptedLayerList([])
-        if has_dem:
-            self.status_label.setText(SKETCHING_ON.format(html.escape(self._dem_name)) + CHANGE_DEM_LINK)
-        # new_scenario/save_scenario/open_scenario also emit sessionChanged while the same session
-        # keeps running (has_dem unchanged): only a real transition closes the open page and moves
-        # the view — a stale page over a scenario that was just replaced is featuresChanged's job
-        # (_sync_selection_page), not this signal's.
-        if has_dem != self._session_has_dem:
-            self.close_page()
-            self.views.setCurrentIndex(VIEW_SESSION if has_dem else VIEW_WELCOME)
-            self._disconnect_dem_name()
-        self._session_has_dem = has_dem
-        self._update_radius_units()
-        self._update_overlay_transform()
+        try:
+            has_dem = self.controller.has_dem
+            if not has_dem:
+                self.stop_tools()  # a drawing or edit cannot outlive its session
+                self._update_highlight(None)
+            for widget in (self.export_button, self.new_button, self.delete_button,
+                           self.edit_button, self.feature_view, self.view_3d_button):
+                widget.setEnabled(has_dem)
+            for action in self.scenario_actions:
+                action.setEnabled(has_dem)
+            self.scenario_button.setEnabled(has_dem)
+            self.keep_sketching_button.setVisible(has_dem)
+            if self.controller.layers is not None:
+                project = self.controller.project
+                self.dem_combo.setExceptedLayerList(
+                    [project.mapLayer(i) for i in self.controller.layers.layer_ids])
+            else:
+                self.dem_combo.setExceptedLayerList([])
+            if has_dem:
+                self.status_label.setText(SKETCHING_ON.format(html.escape(self._dem_name)) + CHANGE_DEM_LINK)
+            # new_scenario/save_scenario/open_scenario also emit sessionChanged while the same
+            # session keeps running (has_dem unchanged): only a real transition closes the open
+            # page and moves the view — a stale page over a scenario that was just replaced is
+            # featuresChanged's job (_sync_selection_page), not this signal's.
+            if has_dem != self._session_has_dem:
+                self.close_page()
+                self.views.setCurrentIndex(VIEW_SESSION if has_dem else VIEW_WELCOME)
+                self._disconnect_dem_name()
+            self._session_has_dem = has_dem
+            self._update_radius_units()
+            self._update_overlay_transform()
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def open_page(self, page) -> None:
         """Push `page` onto the stack, closing whatever page is already open first: the panel never
@@ -476,11 +504,11 @@ class MainDock(QgsDockWidget):
         self.main_panel.openPanel(page)
 
     def close_page(self) -> None:
-        """Accept the open page, if there is one, returning the stack to the main list."""
+        """Accept the open page, if there is one, returning the stack to the main list. `_PagePanel`
+        releases its own content on `panelAccepted`, so this covers the same ground as the stack's
+        own Go back button and Escape, which call `acceptPanel()` directly and never reach here."""
         current = self.stack.currentPanel()
         if current is not None and current is not self.main_panel:
-            if isinstance(current, _PagePanel):
-                current.release_content(self)   # save gallery/properties from the delete below
             current.acceptPanel()
 
     def _show_welcome_view(self, _link: str = "") -> None:
@@ -611,9 +639,12 @@ class MainDock(QgsDockWidget):
         return False
 
     def _new_feature(self) -> None:
-        self.feature_view.clearSelection()
-        self.gallery_page = _PagePanel(self.tr("New feature"), self.gallery, self)
-        self.open_page(self.gallery_page)
+        try:
+            self.feature_view.clearSelection()
+            self.gallery_page = _PagePanel(self.tr("New feature"), self.gallery, self)
+            self.open_page(self.gallery_page)
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _delete_selected(self) -> None:
         fid = self.feature_view.selected_id()
@@ -626,20 +657,23 @@ class MainDock(QgsDockWidget):
         self.overlay.show_change(preview.bounds, preview.change)
 
     def _selection_changed(self, *_args) -> None:
-        fid = self.feature_view.selected_id()
-        self.stop_editing()
-        if self._section_fid is not None and fid != self._section_fid:
-            self.end_drawing()          # the line being drawn is the other area's, which the panel no longer shows
-        if self.profiles is not None:
-            self.profiles.show_feature(fid)
-        self.edit_button.setEnabled(fid is not None)
-        self._update_highlight(fid)
-        if fid is not None:
-            self.properties.show_feature(fid)
-            self.properties_page = _PagePanel("", self.properties, self)
-            self.open_page(self.properties_page)
-        elif self.controller.has_dem:
-            self.close_page()
+        try:
+            fid = self.feature_view.selected_id()
+            self.stop_editing()
+            if self._section_fid is not None and fid != self._section_fid:
+                self.end_drawing()      # the line being drawn is the other area's, which the panel no longer shows
+            if self.profiles is not None:
+                self.profiles.show_feature(fid)
+            self.edit_button.setEnabled(fid is not None)
+            self._update_highlight(fid)
+            if fid is not None:
+                self.properties.show_feature(fid)
+                self.properties_page = _PagePanel("", self.properties, self)
+                self.open_page(self.properties_page)
+            elif self.controller.has_dem:
+                self.close_page()
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _begin_drawing(self, tool, mode, method) -> None:
         self.stop_tools()

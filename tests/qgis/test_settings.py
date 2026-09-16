@@ -116,6 +116,20 @@ def test_volumes_start_collapsed_and_an_opened_group_stays_open(tmp_path):
     assert not again.volumes.isCollapsed()
 
 
+def test_advanced_starts_collapsed_and_remembers_being_opened(tmp_path):
+    from qgis_helpers import start_session
+    from terrain_sketch.gui.properties_page import PropertiesPage
+    c = start_session(tmp_path)
+    page = PropertiesPage(c)
+    page.show()
+    assert page.advanced.isCollapsed()              # collapsed by default (spec §7 item 5)
+    page.advanced.setCollapsed(False)
+    assert settings.load("advanced_group/collapsed", True, bool) is False
+    again = PropertiesPage(c)
+    again.show()
+    assert not again.advanced.isCollapsed()
+
+
 def window_with(dock, area):
     from qgis.PyQt.QtWidgets import QMainWindow, QTextEdit
     window = QMainWindow()

@@ -257,3 +257,45 @@ def test_the_undo_button_leaves_a_value_the_user_is_still_typing(tmp_path):
     assert spin.lineEdit().text() == "2 m"
     QTest.keyClick(spin, Qt.Key.Key_Return)
     assert c.find(dike.id).amount == 2.0
+
+
+def test_ctrl_z_in_the_header_name_field_is_left_to_that_field_while_it_has_typed_text(tmp_path):
+    """The header's `name_edit` gets the same `UndoKeys` filter as the spins (`spin_undo_keys`):
+    while it has typed text of its own to undo, Ctrl+Z there is its own, not a rename commit of
+    whatever the field held before — and, critically, not the app's undo stack either, or a stale
+    Ctrl+Z here would silently undo the *previous* feature change instead of the field's own text."""
+    iface, c, dock = panel(tmp_path)
+    _window, qgis_undo = in_a_window(iface, dock)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    name = dock.properties.name_edit
+    name.setFocus()
+    spin_event_loop(10)
+    name.selectAll()
+    QTest.keyClicks(name, "Typed but not committed")
+    assert name.text() == "Typed but not committed"
+    steps = c.undo_stack.count()
+    press(name, QKeySequence.StandardKey.Undo)
+    assert name.text() == dike.name                       # the field undid its own text
+    assert c.undo_stack.count() == steps and qgis_undo == []   # neither the app's undo stack …
+    assert c.find(dike.id).name == dike.name                   # … nor a rename ever happened
+
+
+def test_ctrl_z_in_the_header_name_field_reaches_the_app_once_committed(tmp_path):
+    """Once a rename is committed the field has no text of its own left to undo, so Ctrl+Z there
+    goes on to undo the rename itself, through the app's own undo stack — exactly the spins'
+    "after stepping a setting" behaviour, now also true for the name field."""
+    iface, c, dock = panel(tmp_path)
+    _window, qgis_undo = in_a_window(iface, dock)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    name = dock.properties.name_edit
+    name.setFocus()
+    spin_event_loop(10)
+    name.selectAll()
+    QTest.keyClicks(name, "Renamed")
+    QTest.keyClick(name, Qt.Key.Key_Return)
+    spin_event_loop(10)
+    assert c.find(dike.id).name == "Renamed" and not name.isModified()
+    press(name, QKeySequence.StandardKey.Undo)
+    assert c.find(dike.id).name == dike.name and qgis_undo == []

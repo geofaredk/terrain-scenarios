@@ -17,9 +17,8 @@ from . import illustrations, settings
 from .controller import LOG_TAG
 from .feature_list import feature_subtitle
 from .help_texts import (AMOUNT_IS_CUSTOM, FIELD_TIPS, FLAG_TEXTS, NO_VOLUME_YET, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS,
-                         SCENARIO_TOTALS, TOOL_DESCRIPTIONS, TOOL_EXAMPLES, TOOL_LABELS, TOOL_SUMMARIES,
-                         VOLUME_CUT_TIP, VOLUME_FILL_TIP, VOLUME_STORAGE_NOTE, VOLUME_STORAGE_TIP, amount_label,
-                         cubic_metres)
+                         SCENARIO_TOTALS, TOOL_DESCRIPTIONS, TOOL_EXAMPLES, VOLUME_CUT_TIP, VOLUME_FILL_TIP,
+                         VOLUME_STORAGE_NOTE, VOLUME_STORAGE_TIP, amount_label, cubic_metres)
 from .muted import MutedLabel
 from .selection import EDIT_ICON, ZOOM_ICON
 
@@ -62,6 +61,7 @@ class PropertiesPage(QgsPanelWidget):
     deleteRequested = pyqtSignal(str)
     zoomRequested = pyqtSignal(str)
     editShapeToggled = pyqtSignal(bool)
+    titleChanged = pyqtSignal(str)   # panelTitle() just changed (spec §7: the title bar follows a rename)
 
     def __init__(self, controller, parent=None):
         super().__init__(parent)
@@ -188,23 +188,26 @@ class PropertiesPage(QgsPanelWidget):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.addLayout(header_row)
         content_layout.addLayout(action_row)
+        # Directly under the action row (spec §6 item 6, as amended): a hint for work started from
+        # this page — Edit shape, or Draw section line from the Profiles dock — must never scroll
+        # out of sight below Advanced/Volumes/About, which can each expand to any length.
+        content_layout.addWidget(self.hint)
         content_layout.addWidget(self.problems)
         content_layout.addWidget(self.diagram)
         content_layout.addLayout(self.form)
         content_layout.addWidget(self.advanced)
         content_layout.addWidget(self.volumes)
         content_layout.addWidget(self.about)
-        content_layout.addWidget(self.hint)
         content_layout.addStretch(1)
 
         # The page scrolls (spec §7) so a narrow, short dock never clips the fields.
-        scroll = QgsScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidget(content)
+        self.scroll_area = QgsScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setWidget(content)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(scroll)
+        layout.addWidget(self.scroll_area)
 
         self.amount.valueChanged.connect(lambda value: self._changed("amount", value))
         self.width.valueChanged.connect(lambda value: self._changed("width", value))
@@ -281,14 +284,19 @@ class PropertiesPage(QgsPanelWidget):
         return f"<p>{html.escape(FIELD_TIPS['pixel_mode'])}</p><table><tr>{pictures}</tr><tr>{names}</tr></table>"
 
     def show_feature(self, fid: str) -> None:
+        retargeting = fid == self._fid   # re-shown for the feature already on screen, not a fresh open
         self._fid = fid
         feature = self.controller.feature(fid)
         info = TOOL_INFO[feature.tool]
         label = amount_label(feature.tool, feature.mode)
         self._loading = True
         try:
-            self.setPanelTitle(feature.name)
-            self.name_edit.setText(feature.name)
+            self._set_title(feature.name)
+            # The "still typing" rule (as `_load_values` already gives every numeric field) only
+            # applies when this is the same feature re-shown — e.g. `MainDock` retargeting the open
+            # page after some other change. A genuinely different feature always replaces the text.
+            if not (retargeting and self.name_edit.isModified()):
+                self.name_edit.setText(feature.name)
             self.header_summary.setText(feature_subtitle(self.controller, fid))
             self.amount_label.setText(label or "")
             self._load_values(feature)
@@ -370,22 +378,34 @@ class PropertiesPage(QgsPanelWidget):
             self._fid = None
             return
         feature = self.controller.find(self._fid)
-        self.setPanelTitle(feature.name)   # follows a rename in the list
+        self._set_title(feature.name)   # follows a rename in the list
         if not self.name_edit.isModified():   # … without clobbering a name the user is still typing
             self.name_edit.setText(feature.name)
         flags = self.controller.stats(self._fid).flags
         self.problems.setText("\n".join(FLAG_TEXTS[flag] for flag in flags))
         self.problems.setVisible(bool(flags))
 
+    def _set_title(self, name: str) -> None:
+        """`setPanelTitle` has no notify signal of its own; `titleChanged` lets `MainDock` keep the
+        stack's own title bar in step with a rename (spec §7) without polling."""
+        self.setPanelTitle(name)
+        self.titleChanged.emit(name)
+
     def _commit_rename(self) -> None:
         """The header's name field: committed through the controller on editingFinished, so the
-        rename is undoable like every other change on this page."""
+        rename is undoable like every other change on this page. Either way — a real rename, an
+        empty field (rejected) or one with leading/trailing spaces (stripped) — the field ends up
+        showing exactly the name the controller now holds, never blank and never padded."""
         if self._fid is None or self._loading:
             return
         feature = self.controller.find(self._fid)
+        if feature is None:
+            return
         name = self.name_edit.text().strip()
-        if feature is not None and name and name != feature.name:
+        if name and name != feature.name:
             self.controller.update_feature(self._fid, name=name)
+            feature = self.controller.find(self._fid)
+        self.name_edit.setText(feature.name)
         self.name_edit.setModified(False)
 
     def _request_zoom(self) -> None:

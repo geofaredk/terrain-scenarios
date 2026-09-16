@@ -171,8 +171,10 @@ def _3d_types_loaded() -> bool:
     return True
 
 
-def _has_text_history(spin, redo: bool) -> bool:
-    edit = spin.lineEdit()
+def _has_text_history(edit, redo: bool) -> bool:
+    """Whether `edit` (a `QLineEdit`, or a spin box's own `lineEdit()`) has typed text of its own
+    left to undo or redo — the field's Ctrl+Z is its own only while this is true (see
+    `MainDock.spin_undo_keys`, which now also covers the header's `name_edit`)."""
     return edit.isRedoAvailable() if redo else edit.isUndoAvailable()
 
 
@@ -322,10 +324,17 @@ class MainDock(QgsDockWidget):
         self.status_label = MutedLabel()
         self.status_label.setOpenExternalLinks(False)
 
+        # A hint for work with no page open — a section line drawn from the Profiles dock after
+        # going back to the list (spec §6 item 6, as amended) — shows here, under the toolbar.
+        self.session_hint = QLabel()
+        self.session_hint.setWordWrap(True)
+        self.session_hint.hide()
+
         session_view = QWidget()
         session_layout = QVBoxLayout(session_view)
         session_layout.setContentsMargins(0, 0, 0, 0)
         session_layout.addWidget(self.toolbar)
+        session_layout.addWidget(self.session_hint)
         session_layout.addWidget(self.feature_view, 1)
         session_layout.addWidget(self.status_label)
 
@@ -344,11 +353,27 @@ class MainDock(QgsDockWidget):
         self.stack.setMainPanel(self.main_panel)
         self.setWidget(self.stack)
 
+        # A permanent, never-shown parking spot for `gallery`/`properties` while neither page is
+        # open — both are built once and reused for the dock's whole life (below), so each spends
+        # most of its life parented here rather than inside a page, instead of ever calling `hide()`
+        # on either widget itself: an explicit `hide()` sets `WA_WState_ExplicitShowHide`, which a
+        # later `addWidget` into a new wrapper does not clear, leaving every page blank from the
+        # second open on (verified by probe). This is what its *initial* parenting (below) actually
+        # fixes: a widget constructed with the dock itself as parent (as `gallery` was) picks up the
+        # dock's own visibility the moment `MainDock.show()` runs, and paints as an unplaced ~100×30
+        # box at (0, 0) until the New feature page is opened for the first time (verified by probe).
+        # `_PagePanel.release_content` also returns content here rather than to the dock directly —
+        # `setParent` alone already leaves a widget invisible once it has been reparented at least
+        # once (verified by probe), so this is not load-bearing the same way, but keeps every path a
+        # released page's content takes consistent with the one that matters.
+        self._released_pages = QWidget(self)
+        self._released_pages.hide()
+
         # `gallery` and `properties` keep their names and behaviour (spec §12); each is wrapped as a
         # drill-in page (see `_PagePanel`) — a single, persistent instance that survives being
         # closed and reopened for the dock's whole life, since state like the picked tool, the
         # brush radius, or `spin_undo_keys`' filters on `properties`' fields must keep working.
-        self.gallery = ToolGallery(self)
+        self.gallery = ToolGallery(self._released_pages)
         self.gallery.drawRequested.connect(self._begin_drawing)
         self.gallery.layerRequested.connect(self._use_layer)
         # `ToolGallery` is a `QgsPanelWidget`: its own `keyPressEvent` (dockMode True) answers
@@ -357,7 +382,13 @@ class MainDock(QgsDockWidget):
         # `close_page` is what makes Escape inside the tiles close the real page (verified by probe:
         # without this, Escape inside the gallery is silently swallowed).
         self.gallery.panelAccepted.connect(self.close_page)
-        self.properties = PropertiesPage(controller)
+        self.properties = PropertiesPage(controller, self._released_pages)
+        # `PropertiesPage` is a `QgsPanelWidget` too (dockMode True), with exactly the same Escape
+        # hazard as `gallery` above — its own keyPressEvent answers Escape by calling its own
+        # `acceptPanel()`, emitting `properties.panelAccepted` rather than the `_PagePanel` wrapper's,
+        # before the key ever reaches the wrapper actually on the stack. Same fix, same reason.
+        self.properties.panelAccepted.connect(self.close_page)
+        self.properties.titleChanged.connect(self._sync_feature_page_title)
         # spec §12: `delete_button` and `edit_button` keep their names, now as the feature page's
         # own buttons — there is no second set. `zoom_button` has no dock-level alias; nothing
         # outside `properties` reaches for it.
@@ -406,14 +437,18 @@ class MainDock(QgsDockWidget):
             profiles.drawSectionRequested.connect(self._draw_section_line)
             self.profiles_button.toggled.connect(profiles.setUserVisible)
             profiles.closedStateChanged.connect(lambda closed: self.profiles_button.setChecked(not closed))
-        # A spin box claims Ctrl+Z for its own text even when it has none to undo, as after its arrows
-        # committed each step; only while it has typed text to undo (or redo) is that key its own
+        # A spin box (or the header's name field) claims Ctrl+Z for its own text even when it has
+        # none to undo, as after a spin's arrows committed each step; only while there is typed
+        # text to undo (or redo) is that key its own — otherwise it must reach the undo stack, or a
+        # stale Ctrl+Z in name_edit would undo old typed text and the next focus-out would commit
+        # that text as a rename.
         self.spin_undo_keys = []
         page = self.properties
-        for spin in (page.amount, page.width, page.slope, page.reach):
-            keys = UndoKeys(controller.undo_stack, applies=lambda redo, s=spin: not _has_text_history(s, redo),
+        for edit in (page.amount, page.width, page.slope, page.reach, page.name_edit):
+            line_edit = edit.lineEdit() if hasattr(edit, "lineEdit") else edit
+            keys = UndoKeys(controller.undo_stack, applies=lambda redo, e=line_edit: not _has_text_history(e, redo),
                             parent=self)
-            spin.installEventFilter(keys)
+            edit.installEventFilter(keys)
             self.spin_undo_keys.append(keys)
         self.canvas_undo_keys = UndoKeys(controller.undo_stack, applies=lambda _redo: self._sketch_tool_active(),
                                        parent=self)
@@ -519,22 +554,39 @@ class MainDock(QgsDockWidget):
 
     @property
     def hint(self) -> QLabel:
-        """The drawing hint, on whichever page currently owns one. Kept as `dock.hint` so every
-        existing caller and test keeps working unchanged."""
-        return self.properties.hint if self.stack.currentPanel() is self.properties_page else self.gallery.hint
+        """The drawing hint, on whichever page (or, with none open, the session view itself)
+        currently owns one. Kept as `dock.hint` so every existing caller and test keeps working
+        unchanged."""
+        return self._hint_target()
 
     def show_hint(self, text: str) -> None:
-        """Show the instruction text for whichever activity is running, on whichever page owns a
-        hint for it. `METHOD_HINTS` and `BRUSH_EXTEND_HINT` belong to the New feature page.
-        `EDIT_HINT` (Edit shape) and `SECTION_LINE_HINT` (Draw section line, from the Profiles dock)
-        belong to the feature page (spec §6 item 6, §7) and show there whenever it is the page open;
-        routed here rather than at each call site, so every caller stays unchanged."""
-        page = self.properties if self.stack.currentPanel() is self.properties_page else self.gallery
-        page.show_hint(text)
+        """Show the instruction text for whichever activity is running. `METHOD_HINTS` and
+        `BRUSH_EXTEND_HINT` belong to the New feature page. `EDIT_HINT` (Edit shape) and
+        `SECTION_LINE_HINT` (Draw section line, from the Profiles dock) belong to the feature page
+        (spec §6 item 6, §7) and show there whenever it is the page open; with no page open at all —
+        a section line drawn from the Profiles dock after going back to the list — the hint shows
+        under the toolbar in the session view instead (spec §6 item 6, as amended). Routed here
+        rather than at each call site, so every caller stays unchanged."""
+        page = (self.properties if self.stack.currentPanel() is self.properties_page
+                else self.gallery if self.stack.currentPanel() is self.gallery_page else None)
+        if page is not None:
+            page.show_hint(text)
+        else:
+            self.session_hint.setText(text)
+            self.session_hint.show()
 
     def clear_hint(self) -> None:
         self.gallery.clear_hint()
         self.properties.clear_hint()
+        self.session_hint.hide()
+
+    def _hint_target(self) -> QLabel:
+        current = self.stack.currentPanel()
+        if current is self.properties_page:
+            return self.properties.hint
+        if current is self.gallery_page:
+            return self.gallery.hint
+        return self.session_hint
 
     def _stop_drawing_on_gallery_close(self, _panel=None) -> None:
         """Pressing the stack's own Back button, or Escape inside the tiles (forwarded from
@@ -679,7 +731,7 @@ class MainDock(QgsDockWidget):
     def _new_feature(self) -> None:
         try:
             self.feature_view.clearSelection()
-            self.gallery_page = _PagePanel(self.tr("New feature"), self.gallery, self)
+            self.gallery_page = _PagePanel(self.tr("New feature"), self.gallery, self._released_pages)
             self.gallery_page.panelAccepted.connect(self._stop_drawing_on_gallery_close)
             self.open_page(self.gallery_page)
         except Exception:  # noqa: BLE001 — this runs in a slot
@@ -695,13 +747,38 @@ class MainDock(QgsDockWidget):
         try:
             self.feature_view.select_id(fid)
             self.properties.show_feature(fid)
-            self.properties_page = _PagePanel(self.properties.panelTitle(), self.properties, self)
+            self.properties_page = _PagePanel(self.properties.panelTitle(), self.properties, self._released_pages)
+            # Edit shape's button lives on this page: closing it — Back, Escape, or the page
+            # closing itself because the feature it shows just disappeared — must stop editing,
+            # since there is no more way to switch it off from here (spec §7, §9).
+            self.properties_page.panelAccepted.connect(self._stop_editing_on_feature_page_close)
             self.open_page(self.properties_page)
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
-    def _delete_selected(self, _fid=None) -> None:
-        fid = self.feature_view.selected_id()
+    def _stop_editing_on_feature_page_close(self, _panel=None) -> None:
+        try:
+            self.stop_editing()
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _sync_feature_page_title(self, name: str) -> None:
+        """Spec §7: "The panel's title bar follows a rename." `QgsPanelWidgetStack` writes its
+        title label once, when a panel is pushed (`panelTitle()` read at that moment) — there is no
+        live-update signal or refresh method (verified by probe) — so a rename while the feature
+        page is open has to update both the open wrapper's own `panelTitle()` (in case it is ever
+        read back) and the stack's title `QLabel` directly, the same way tests already reach
+        `mBackButton`. Guarded: a differently-styled QGIS build without that label changes nothing
+        and never raises."""
+        if self.properties_page is None or self.stack.currentPanel() is not self.properties_page:
+            return
+        self.properties_page.setPanelTitle(name)
+        label = self.stack.findChild(QLabel, "mTitleText")
+        if label is not None:
+            label.setText(f" {name} ")   # the exact padding QgsPanelWidgetStack itself uses (verified by probe)
+
+    def _delete_selected(self, fid=None) -> None:
+        fid = fid or self.feature_view.selected_id()
         if fid is not None:
             self.controller.delete_feature(fid)
 
@@ -855,7 +932,23 @@ class MainDock(QgsDockWidget):
         """The list model resets on every change, which can clear the Qt selection without
         emitting `selectionChanged` (a clear that leaves nothing selected is a no-op) — so a
         deleted feature can be left showing on the Properties page with stale figures. Make the
-        dock behave as if the user had deselected whenever that happens."""
+        dock behave as if the user had deselected whenever that happens.
+
+        Two things a feature that just disappeared (deleted, or undone away) must never leave
+        running, whether or not its page happens to be open right now (spec §9): Edit shape — its
+        button lives on the feature page, but the map tool itself keeps running on the canvas even
+        while that page is closed — and a section line being drawn for it, started from the
+        Profiles dock. Runs from `featuresChanged`, a Qt signal: an exception here must be logged,
+        not raised."""
+        try:
+            ids = {f.id for f in self.controller.features}
+            fid = self.feature_view.selected_id()
+            if fid is None or fid not in ids:
+                self.stop_editing()
+            if self._section_fid is not None and self._section_fid not in ids:
+                self.end_drawing()
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
         if self.stack.currentPanel() is not self.properties_page:
             return
         fid = self.feature_view.selected_id()

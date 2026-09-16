@@ -272,10 +272,11 @@ def test_escape_inside_the_gallery_closes_the_new_feature_page(tmp_path):
     `keyPressEvent` answers Escape by calling its own `acceptPanel()` — emitting `gallery`'s own
     `panelAccepted`, not the `_PagePanel` wrapper's — before the key press ever reaches the wrapper
     that is actually on the stack. Unlike `test_escape_releases_the_page_before_reopening` (which
-    sends Escape to the stack itself, where a plain-`QWidget` page like `properties` has nothing of
-    its own to intercept it with), this sends Escape to a widget *inside* the gallery — the tool
-    tiles — to reproduce that exact path, and only passes because `gallery.panelAccepted` is
-    forwarded to `close_page` (`MainDock.__init__`); removing that connection makes it fail."""
+    sends Escape to the stack itself, where focus is not inside either page's own widgets), this
+    sends Escape to a widget *inside* the gallery — the tool tiles — to reproduce that exact path,
+    and only passes because `gallery.panelAccepted` is forwarded to `close_page`
+    (`MainDock.__init__`); removing that connection makes it fail. `properties` has the identical
+    hazard — see `test_escape_inside_the_feature_page_closes_it` — fixed the same way."""
     from qgis.PyQt import sip
     from qgis.PyQt.QtCore import Qt
     from qgis.PyQt.QtTest import QTest
@@ -493,11 +494,23 @@ def test_opening_a_feature_shows_its_page_with_name_and_volume(tmp_path):
 
 
 def test_renaming_in_the_header_is_undoable(tmp_path):
+    """Real typing (`QTest.keyClicks` + Return), not `setText` + a bare `editingFinished.emit()`:
+    only real typing sets `isModified()`, which is what the "still typing" guards elsewhere on this
+    page (and `_commit_rename` itself) actually react to."""
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtTest import QTest
+    from qgis_helpers import spin_event_loop
+
     _iface, c, dock = panel(tmp_path)
+    dock.show()
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.feature_view.rowOpened.emit(dike.id)
-    dock.properties.name_edit.setText("Dike north")
-    dock.properties.name_edit.editingFinished.emit()
+    dock.properties.name_edit.setFocus()
+    spin_event_loop(10)
+    dock.properties.name_edit.selectAll()
+    QTest.keyClicks(dock.properties.name_edit, "Dike north")
+    assert dock.properties.name_edit.isModified()
+    QTest.keyClick(dock.properties.name_edit, Qt.Key.Key_Return)
     assert c.feature(dike.id).name == "Dike north"
     c.undo_stack.undo()
     assert c.feature(dike.id).name == dike.name and dock.properties.name_edit.text() == dike.name
@@ -539,13 +552,29 @@ def test_undo_that_restores_a_deleted_feature_does_not_open_a_page(tmp_path):
     assert dock.stack.currentPanel() is dock.main_panel     # restoring it must not reopen dike's page
 
 
-def test_renaming_in_the_list_does_not_open_a_page(tmp_path):
+def test_renaming_in_the_list_does_not_reach_a_closed_page(tmp_path):
+    """A plain rename never fires `selectionChanged` at all — `FeatureListModel._sync` only emits
+    `dataChanged` when the id list itself is unchanged — so on its own it can never open a closed
+    page, whatever `_selection_changed`'s guard does or does not check (a version of this test that
+    only renamed `dike` and then asserted the page stayed closed could not fail no matter how that
+    guard was written). What genuinely drives a *selected, unchanged* row through
+    `selectionChanged` again is a model reset somewhere else in the list: `pond`'s deletion and its
+    undo (spec §9's "a model reset, undo") each reset the model while `dike` — renamed here through
+    the list in between, exactly as a user would — stays selected throughout, and is reselected by
+    `FeatureListView`'s own remember/restore every time (confirmed by probe to fire a genuine
+    `selectionChanged`, even though `dike` itself never left the list). Its page must stay closed
+    regardless."""
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.feature_view.rowOpened.emit(dike.id)
-    dock.close_page()
+    dock.close_page()                                      # the row stays selected, the page does not
     dock.model.setData(dock.model.index(dock.model.row_of(dike.id)), "Dike north")
     assert c.feature(dike.id).name == "Dike north"
+    assert dock.stack.currentPanel() is dock.main_panel
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
+    c.delete_feature(pond.id)
+    dock.undo_button.click()                               # restores pond; the model resets, reselecting dike
+    assert c.find(pond.id) is not None
     assert dock.stack.currentPanel() is dock.main_panel
 
 
@@ -598,3 +627,307 @@ def test_the_zoom_button_zooms_to_the_feature(tmp_path):
     before = dock.iface.mapCanvas().extent()
     dock.properties.zoom_button.click()
     assert dock.iface.mapCanvas().extent() != before
+
+
+# --- Review fixes: Escape, the title bar, hint placement, tools for a vanished feature ----------
+
+
+def test_escape_inside_the_feature_page_closes_it(tmp_path):
+    """CRITICAL regression: `PropertiesPage` is a `QgsPanelWidget` (dockMode True) exactly like
+    `ToolGallery` — its own inherited `keyPressEvent` answers Escape by calling its own
+    `acceptPanel()`, emitting `properties.panelAccepted` rather than the `_PagePanel` wrapper's,
+    before the key press ever reaches the wrapper actually on the stack. Without forwarding that to
+    `close_page` (`MainDock.__init__`, the same fix `gallery` already had), Escape anywhere inside
+    the feature page — the name field, a spin box — did nothing at all. Sent to two different
+    widgets inside the page, with a real event loop, on the genuinely shown dock."""
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtTest import QTest
+    from qgis.PyQt.QtWidgets import QApplication
+    from qgis_helpers import spin_event_loop
+
+    _iface, c, dock = panel(tmp_path)
+    dock.show()
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+
+    dock.feature_view.rowOpened.emit(dike.id)
+    QApplication.processEvents()
+    assert dock.stack.currentPanel() is dock.properties_page
+    dock.properties.name_edit.setFocus()
+    QApplication.processEvents()
+    QTest.keyClick(dock.properties.name_edit, Qt.Key.Key_Escape)
+    assert dock.stack.currentPanel() is dock.main_panel     # Escape in the name field closed the page
+    spin_event_loop(50)                                       # let the deferred delete actually run
+
+    dock.feature_view.rowOpened.emit(dike.id)
+    QApplication.processEvents()
+    assert dock.stack.currentPanel() is dock.properties_page
+    assert dock.properties.isVisible()                        # reopens a live, visible page
+    dock.properties.amount.setFocus()
+    QApplication.processEvents()
+    QTest.keyClick(dock.properties.amount, Qt.Key.Key_Escape)
+    assert dock.stack.currentPanel() is dock.main_panel     # Escape in a spin box closed it too
+    spin_event_loop(50)
+    dock.feature_view.rowOpened.emit(dike.id)
+    assert dock.stack.currentPanel() is dock.properties_page and dock.properties.isVisible()
+
+
+def test_the_title_bar_follows_a_rename(tmp_path):
+    """spec §7: "The panel's title bar follows a rename" — through the header field, through the
+    list, and through undo. `QgsPanelWidgetStack` writes its title `QLabel` (`mTitleText`) once,
+    when the panel is pushed, with no live-update signal of its own (verified by probe): without
+    `_sync_feature_page_title`, every assertion below would still see the name the page had when it
+    was opened."""
+    from qgis.PyQt.QtWidgets import QLabel
+
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    label = dock.stack.findChild(QLabel, "mTitleText")
+    assert label.text() == f" {dike.name} "
+
+    dock.properties.name_edit.setText("Dike north")
+    dock.properties.name_edit.editingFinished.emit()
+    assert label.text() == " Dike north "
+    assert dock.properties_page.panelTitle() == "Dike north"
+
+    dock.model.setData(dock.model.index(dock.model.row_of(dike.id)), "Sea wall")
+    assert label.text() == " Sea wall "
+
+    dock.undo_button.click()                # undoes the rename through the list
+    assert label.text() == " Dike north "
+
+
+def test_the_hint_sits_under_the_action_row_within_the_viewport(tmp_path):
+    """spec §6 item 6, as amended: the hint must sit directly under the action row so it is never
+    scrolled out of sight — checked on a small dock with Volumes and About both expanded, which
+    push the page's total content height well past what a 320×420 dock can show at once."""
+    from qgis.PyQt.QtWidgets import QApplication
+
+    _iface, c, dock = panel(tmp_path)
+    dock.resize(320, 420)
+    dock.show()
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    page = dock.properties
+    page.volumes.setCollapsed(False)
+    page.about.setCollapsed(False)
+    dock.edit_button.setChecked(True)
+    QApplication.processEvents()
+    # Expanding a group can itself scroll the area to keep the newly-revealed content in view; a
+    # fresh page (nothing yet manually scrolled) always starts at the top, so that is what is
+    # checked — whether the hint needs scrolling to reach is exactly what this test is about.
+    page.scroll_area.verticalScrollBar().setValue(0)
+    QApplication.processEvents()
+
+    assert page.hint.isVisible()
+    viewport = page.scroll_area.viewport()
+    top = page.hint.mapTo(viewport, page.hint.rect().topLeft()).y()
+    bottom = top + page.hint.height()
+    assert 0 <= top and bottom <= viewport.height(), (top, bottom, viewport.height())
+
+
+def test_a_hint_with_no_page_open_shows_under_the_toolbar(tmp_path):
+    """spec §6 item 6, as amended: a section line drawn from the Profiles dock after going back to
+    the list has no page open to show its hint on — it shows under the toolbar in the session view
+    instead."""
+    from terrain_sketch.gui.help_texts import SECTION_LINE_HINT
+    from terrain_sketch.gui.profile_dock import ProfileDock
+
+    iface = fake_iface()
+    c = SketchController(QgsProject.instance())
+    profiles = ProfileDock(c)
+    dock = MainDock(iface, c, profiles)
+    dock.show()
+    dock.dem_combo.setLayer(dem_layer(tmp_path))
+    dock.start_button.click()
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 12, 29, 22), UTM)
+    dock.feature_view.rowOpened.emit(pond.id)
+    dock.close_page()                                        # back to the list: no page open
+    assert dock.stack.currentPanel() is dock.main_panel
+
+    profiles.draw_section.click()
+    assert dock.draw_tool is not None
+    assert dock.session_hint.isVisible() and dock.session_hint.text() == SECTION_LINE_HINT
+    assert dock.hint is dock.session_hint
+
+
+def test_edit_shape_stops_when_the_feature_page_closes(tmp_path):
+    """spec §9: Edit shape's own button lives on the feature page — closing it (Back here; Escape
+    goes through the same `panelAccepted`) leaves no way to switch editing off from there, so
+    closing the page must stop it itself."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    dock.edit_button.setChecked(True)
+    assert dock.edit_tool is not None
+    dock.close_page()
+    assert dock.edit_tool is None and not dock.edit_button.isChecked()
+
+
+def test_a_section_line_keeps_running_after_the_feature_page_closes(tmp_path):
+    """Ruling: unlike Edit shape, a section line started from the Profiles dock keeps running when
+    the feature page closes — its own controls live on the Profiles dock, not the feature page."""
+    from terrain_sketch.gui.profile_dock import ProfileDock
+
+    iface = fake_iface()
+    c = SketchController(QgsProject.instance())
+    profiles = ProfileDock(c)
+    dock = MainDock(iface, c, profiles)
+    dock.dem_combo.setLayer(dem_layer(tmp_path))
+    dock.start_button.click()
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 12, 29, 22), UTM)
+    dock.feature_view.rowOpened.emit(pond.id)
+    profiles.draw_section.click()
+    tool = dock.draw_tool
+    assert tool is not None and dock._section_fid == pond.id
+    dock.close_page()
+    assert dock.draw_tool is tool and dock._section_fid == pond.id   # still running
+
+
+def test_a_section_line_stops_when_its_feature_disappears_with_the_page_closed(tmp_path):
+    """spec §9: a feature that disappears (delete, undo) must not leave a tool still working on it,
+    whether or not its page happens to be open right now. `_sync_selection_page` used to return
+    early unless the feature page was the current panel, leaving a section line's `_section_fid`
+    still set — and the map tool still running — whenever the page had already been closed (a
+    section line is the one tool that genuinely reaches that state at all: unlike Edit shape, spec
+    §9 has it keep running when the feature page closes, see
+    `test_a_section_line_keeps_running_after_the_feature_page_closes` above — Edit shape's own
+    button lives on that page, so it always stops the moment the page does, and this specific "tool
+    still running with the page already closed" state can never arise for it)."""
+    from terrain_sketch.gui.profile_dock import ProfileDock
+
+    iface = fake_iface()
+    c = SketchController(QgsProject.instance())
+    profiles = ProfileDock(c)
+    dock = MainDock(iface, c, profiles)
+    dock.dem_combo.setLayer(dem_layer(tmp_path))
+    dock.start_button.click()
+
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 12, 29, 22), UTM)
+    dock.feature_view.rowOpened.emit(pond.id)
+    profiles.draw_section.click()
+    assert dock.draw_tool is not None and dock._section_fid == pond.id
+    dock.close_page()
+    assert dock.draw_tool is not None and dock._section_fid == pond.id   # still running, page closed
+
+    c.delete_feature(pond.id)
+    assert dock.draw_tool is None and dock._section_fid is None          # now it stops
+
+
+def test_edit_shape_stops_when_its_feature_disappears_with_no_page_ever_open(tmp_path):
+    """The other reachable form of the same bug: Edit shape's button also works with no page open
+    at all — nothing about `_toggle_edit` requires the page to be showing — so a feature can be
+    edited without its page ever having been opened (selecting it is enough); deleting it through
+    the list's context menu (`controller.delete_feature`, exactly what `Delete` on the menu calls)
+    at that point used to leave `edit_tool` running on a feature that no longer exists, because
+    `_sync_selection_page` returned before ever checking, unless the feature page happened to be the
+    open panel."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.select_id(dike.id)
+    assert dock.stack.currentPanel() is dock.main_panel      # selection alone never opens the page
+    dock.edit_button.setChecked(True)
+    assert dock.edit_tool is not None
+
+    c.delete_feature(dike.id)
+    assert dock.edit_tool is None and not dock.edit_button.isChecked()
+
+
+def test_an_empty_header_name_restores_the_current_name(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    dock.properties.name_edit.setText("")
+    dock.properties.name_edit.editingFinished.emit()
+    assert c.feature(dike.id).name == dike.name
+    assert dock.properties.name_edit.text() == dike.name
+
+
+def test_a_padded_header_name_commits_and_shows_the_stripped_name(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    dock.properties.name_edit.setText("  Padded  ")
+    dock.properties.name_edit.editingFinished.emit()
+    assert c.feature(dike.id).name == "Padded"
+    assert dock.properties.name_edit.text() == "Padded"
+
+
+def test_show_feature_keeps_a_name_the_user_is_still_typing_when_retargeting(tmp_path):
+    """`_selection_changed` retargets the open page by calling `show_feature` again for the same
+    feature (e.g. an unrelated `featuresChanged`) — that must follow `_load_values`' rule for the
+    numeric fields and never overwrite a name the user has not finished typing yet. Retargeting a
+    *different* feature must still replace it unconditionally."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    dock.properties.name_edit.setText("Still typing")
+    dock.properties.name_edit.setModified(True)
+    dock.properties.show_feature(dike.id)                # retargeting the SAME feature
+    assert dock.properties.name_edit.text() == "Still typing"
+    dock.properties.show_feature(pond.id)                 # a DIFFERENT feature always replaces it
+    assert dock.properties.name_edit.text() == pond.name
+
+
+def test_delete_uses_the_id_the_page_sends_not_just_the_selection(tmp_path):
+    """`deleteRequested(str)` carries the feature the page is actually showing; `_delete_selected`
+    must delete that one, not whatever the list's own selection happens to be (only falling back to
+    the selection when called with none, e.g. a future caller with no id of its own)."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
+    dock.feature_view.select_id(pond.id)
+    dock._delete_selected(dike.id)
+    assert c.find(dike.id) is None and c.find(pond.id) is not None
+    dock._delete_selected()                               # no id given: falls back to the selection
+    assert c.find(pond.id) is None
+
+
+def test_deleting_from_the_page_stops_a_running_edit(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    dock.edit_button.setChecked(True)
+    assert dock.edit_tool is not None
+    dock.properties.delete_button.click()
+    assert dock.edit_tool is None and c.features == ()
+
+
+def test_from_layer_opens_the_new_features_page(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dock.new_button.click()
+    dock.gallery.select_tool(Tool.RAISE_PATH)
+    dock.gallery.select_mode(Mode.PATH)
+    layer = line_layer("Planned dikes", [line_through(5, 10, 30, 10)])
+    dock.gallery.layer_source.layer_combo.setLayer(layer)
+    dock.gallery.layer_source.use_button.click()
+    assert len(c.features) == 1
+    assert dock.stack.currentPanel() is dock.properties_page
+    assert dock.properties.name_edit.text() == c.features[0].name
+
+
+def test_gallery_and_properties_are_invisible_while_both_pages_are_closed(tmp_path):
+    """Neither `gallery` nor `properties` may paint anywhere while neither page is open — not as an
+    unplaced child of the dock at (0, 0) (the state `gallery` was in from construction, before ever
+    being opened once, verified by probe) and not after being opened and released either."""
+    _iface, c, dock = panel(tmp_path)
+    dock.show()
+    assert not dock.gallery.isVisible() and not dock.properties.isVisible()   # never yet opened
+
+    dock.new_button.click()
+    assert dock.gallery.isVisible()
+    dock.close_page()
+    assert not dock.gallery.isVisible()
+
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    assert dock.properties.isVisible()
+    dock.close_page()
+    assert not dock.properties.isVisible() and not dock.gallery.isVisible()
+
+    dock.new_button.click()
+    assert dock.gallery.isVisible() and not dock.properties.isVisible()
+    dock.close_page()
+    dock.feature_view.rowOpened.emit(dike.id)
+    assert dock.properties.isVisible() and not dock.gallery.isVisible()

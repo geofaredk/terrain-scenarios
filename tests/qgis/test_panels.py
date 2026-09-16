@@ -671,6 +671,34 @@ def test_escape_inside_the_feature_page_closes_it(tmp_path):
     assert dock.stack.currentPanel() is dock.properties_page and dock.properties.isVisible()
 
 
+def test_escape_in_the_name_field_cancels_instead_of_committing(tmp_path):
+    """Ruling: Escape cancels. `editingFinished` fires on focus-out as well as Return — and the
+    page closing (Escape's other effect there) takes focus away from `name_edit` — so without
+    discarding the typed text first, Escape used to commit it as a rename anyway, the moment the
+    page closed underneath it. Return still commits (`test_renaming_in_the_header_is_undoable`)."""
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtTest import QTest
+    from qgis.PyQt.QtWidgets import QApplication
+    from qgis_helpers import spin_event_loop
+
+    _iface, c, dock = panel(tmp_path)
+    dock.show()
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    dock.properties.name_edit.setFocus()
+    QApplication.processEvents()
+    dock.properties.name_edit.selectAll()
+    QTest.keyClicks(dock.properties.name_edit, "Typed but not committed")
+    steps = c.undo_stack.count()
+
+    QTest.keyClick(dock.properties.name_edit, Qt.Key.Key_Escape)
+    QApplication.processEvents()
+    spin_event_loop(20)
+    assert dock.stack.currentPanel() is dock.main_panel      # Escape still closed the page
+    assert c.feature(dike.id).name == dike.name               # …but the typed text was discarded
+    assert c.undo_stack.count() == steps                      # and no rename was ever committed
+
+
 def test_the_title_bar_follows_a_rename(tmp_path):
     """spec §7: "The panel's title bar follows a rename" — through the header field, through the
     list, and through undo. `QgsPanelWidgetStack` writes its title `QLabel` (`mTitleText`) once,
@@ -749,6 +777,72 @@ def test_a_hint_with_no_page_open_shows_under_the_toolbar(tmp_path):
     assert dock.draw_tool is not None
     assert dock.session_hint.isVisible() and dock.session_hint.text() == SECTION_LINE_HINT
     assert dock.hint is dock.session_hint
+
+
+def test_a_running_section_lines_hint_moves_to_the_session_view_on_back(tmp_path):
+    """spec §6 item 6, as amended: `show_hint` used to pick a label only once, when the activity
+    started — closing the feature page with a section line still running (spec §9: it keeps going)
+    left the hint on the now-hidden page's own label and nowhere else visible. `MainDock` must move
+    it to `session_hint` the moment the page closes, whichever way that happens — here, the stack's
+    own Back button, with a real event loop so the deferred reroute (`_schedule_reroute_hint` waits
+    for the stack's own pop, posted with `QTimer.singleShot(0, …)`) has a chance to run."""
+    from qgis.PyQt.QtWidgets import QApplication, QToolButton
+    from qgis_helpers import spin_event_loop
+    from terrain_sketch.gui.help_texts import SECTION_LINE_HINT
+    from terrain_sketch.gui.profile_dock import ProfileDock
+
+    iface = fake_iface()
+    c = SketchController(QgsProject.instance())
+    profiles = ProfileDock(c)
+    dock = MainDock(iface, c, profiles)
+    dock.show()
+    dock.dem_combo.setLayer(dem_layer(tmp_path))
+    dock.start_button.click()
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 12, 29, 22), UTM)
+    dock.feature_view.rowOpened.emit(pond.id)
+    profiles.draw_section.click()
+    assert dock.properties.hint.isVisible() and dock.properties.hint.text() == SECTION_LINE_HINT
+
+    back = dock.stack.findChild(QToolButton, "mBackButton")
+    back.click()
+    QApplication.processEvents()
+    spin_event_loop(20)                                        # let the deferred reroute actually run
+    assert dock.stack.currentPanel() is dock.main_panel
+    assert dock.draw_tool is not None                          # the line keeps running (spec §9)
+    assert dock.session_hint.isVisible() and dock.session_hint.text() == SECTION_LINE_HINT
+    assert not dock.properties.hint.isVisible() and not dock.gallery.hint.isVisible()
+
+
+def test_a_running_section_lines_hint_moves_onto_its_feature_page_on_open(tmp_path):
+    """The reverse of the test above: a section line started from the list — its hint on
+    `session_hint` — must move onto the feature page the moment that page opens (spec §6 item 6),
+    not stay stranded under the toolbar behind it."""
+    from qgis.PyQt.QtWidgets import QApplication
+    from qgis_helpers import spin_event_loop
+    from terrain_sketch.gui.help_texts import SECTION_LINE_HINT
+    from terrain_sketch.gui.profile_dock import ProfileDock
+
+    iface = fake_iface()
+    c = SketchController(QgsProject.instance())
+    profiles = ProfileDock(c)
+    dock = MainDock(iface, c, profiles)
+    dock.show()
+    dock.dem_combo.setLayer(dem_layer(tmp_path))
+    dock.start_button.click()
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 12, 29, 22), UTM)
+    dock.feature_view.rowOpened.emit(pond.id)
+    dock.close_page()
+    QApplication.processEvents()
+    spin_event_loop(20)   # flush this close's own deferred reroute before it can mask the one below
+    profiles.draw_section.click()
+    assert dock.session_hint.isVisible() and dock.session_hint.text() == SECTION_LINE_HINT
+
+    dock.feature_view.rowOpened.emit(pond.id)
+    QApplication.processEvents()
+    spin_event_loop(20)
+    assert dock.stack.currentPanel() is dock.properties_page
+    assert dock.properties.hint.isVisible() and dock.properties.hint.text() == SECTION_LINE_HINT
+    assert not dock.session_hint.isVisible()
 
 
 def test_edit_shape_stops_when_the_feature_page_closes(tmp_path):
@@ -844,11 +938,26 @@ def test_an_empty_header_name_restores_the_current_name(tmp_path):
 
 
 def test_a_padded_header_name_commits_and_shows_the_stripped_name(tmp_path):
+    """Real typing (`QTest.keyClicks` + Return), not `setText` + a bare `editingFinished.emit()`:
+    `setText` never sets `isModified()`, so `_refresh_problems`'s own "still typing" guard
+    (`if not self.name_edit.isModified(): self.name_edit.setText(feature.name)`) — an ordinary side
+    effect of the `featuresChanged` the commit itself triggers — would repair the field on its own
+    and mask `_commit_rename`'s own final `setText` being removed entirely. Real typing sets
+    `isModified()`, so that guard is skipped and only `_commit_rename`'s own line can be doing it."""
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtTest import QTest
+    from qgis_helpers import spin_event_loop
+
     _iface, c, dock = panel(tmp_path)
+    dock.show()
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.feature_view.rowOpened.emit(dike.id)
-    dock.properties.name_edit.setText("  Padded  ")
-    dock.properties.name_edit.editingFinished.emit()
+    dock.properties.name_edit.setFocus()
+    spin_event_loop(10)
+    dock.properties.name_edit.selectAll()
+    QTest.keyClicks(dock.properties.name_edit, "  Padded  ")
+    assert dock.properties.name_edit.isModified()
+    QTest.keyClick(dock.properties.name_edit, Qt.Key.Key_Return)
     assert c.feature(dike.id).name == "Padded"
     assert dock.properties.name_edit.text() == "Padded"
 

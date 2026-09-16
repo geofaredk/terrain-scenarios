@@ -222,6 +222,7 @@ class PropertiesPage(QgsPanelWidget):
                             (self.pixel_mode, "pixel_mode")):
             widget.setToolTip(FIELD_TIPS[key])
             widget.installEventFilter(self)
+        self.name_edit.installEventFilter(self)   # Escape there discards typed text — see eventFilter
         self._highlight_for = {self.amount: "amount", self.width: "width", self.slope: "slope",
                                self.reach: "reach"}
         controller.featuresChanged.connect(self._refresh_problems)
@@ -229,13 +230,33 @@ class PropertiesPage(QgsPanelWidget):
         controller.featuresChanged.connect(self._refresh_volumes)
 
     def eventFilter(self, watched, event):  # noqa: N802 — Qt override
-        """Highlight the part of the diagram that belongs to whichever field has focus."""
+        """Highlight the part of the diagram that belongs to whichever field has focus. Also: Escape
+        in the name field discards whatever has been typed there before it reaches this page's own
+        `keyPressEvent` (inherited from `QgsPanelWidget`, dockMode `True`) and closes the page —
+        losing focus as the page closes would otherwise commit that text as a rename through
+        `editingFinished`, and Escape is meant to cancel, not commit (spec §7). Not consumed: the
+        key still propagates on to close the page, same as Escape anywhere else on it."""
         if event.type() == QEvent.Type.FocusIn:
             try:
                 self._draw_diagram(self._highlight_for.get(watched))
             except Exception:  # noqa: BLE001 — an event filter must never take QGIS down
                 QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+        elif (event.type() == QEvent.Type.KeyPress and watched is self.name_edit
+              and event.key() == Qt.Key.Key_Escape):
+            try:
+                self._discard_name_edit()
+            except Exception:  # noqa: BLE001 — an event filter must never take QGIS down
+                QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
         return super().eventFilter(watched, event)
+
+    def _discard_name_edit(self) -> None:
+        """Restore the name field to the feature's current name and forget any typed text, so the
+        focus-out that follows Escape closing the page commits nothing (`_commit_rename` only acts
+        when the text actually differs)."""
+        feature = self.controller.find(self._fid) if self._fid is not None else None
+        if feature is not None:
+            self.name_edit.setText(feature.name)
+        self.name_edit.setModified(False)
 
     def changeEvent(self, event):  # noqa: N802 — Qt override
         if event.type() == QEvent.Type.PaletteChange and self._fid is not None:

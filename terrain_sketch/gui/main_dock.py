@@ -10,7 +10,7 @@ from qgis.core import (Qgis, QgsApplication, QgsCoordinateTransform, QgsCsExcept
                        QgsProject, QgsRasterLayer)
 from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsPanelWidget, QgsPanelWidgetStack, QgsRubberBand
 from qgis.PyQt import sip
-from qgis.PyQt.QtCore import QEvent, QSize, Qt
+from qgis.PyQt.QtCore import QEvent, QSize, Qt, QTimer
 from qgis.PyQt.QtGui import QAction
 from qgis.PyQt.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
                                  QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
@@ -210,6 +210,7 @@ class MainDock(QgsDockWidget):
         self._brush_fid = None
         self._brush_extends = False       # set with _brush_fid, but kept when that feature goes
         self._section_fid = None          # the area whose section line is being drawn
+        self._hint_text = None            # remembered so `_reroute_hint` can follow a page opening or closing
         self.highlight = QgsRubberBand(iface.mapCanvas(), Qgis.GeometryType.Line)
         self.highlight.setStrokeColor(QgsMapToolEdit.digitizingStrokeColor())
         self.highlight.setFillColor(Qt.GlobalColor.transparent)
@@ -566,19 +567,49 @@ class MainDock(QgsDockWidget):
         (spec §6 item 6, §7) and show there whenever it is the page open; with no page open at all —
         a section line drawn from the Profiles dock after going back to the list — the hint shows
         under the toolbar in the session view instead (spec §6 item 6, as amended). Routed here
-        rather than at each call site, so every caller stays unchanged."""
-        page = (self.properties if self.stack.currentPanel() is self.properties_page
-                else self.gallery if self.stack.currentPanel() is self.gallery_page else None)
-        if page is not None:
-            page.show_hint(text)
-        else:
-            self.session_hint.setText(text)
-            self.session_hint.show()
+        rather than at each call site, so every caller stays unchanged.
+
+        The text is remembered (`_hint_text`) so `_reroute_hint` can move it to wherever the hint
+        belongs whenever a page opens or closes while the activity it describes is still running —
+        a section line drawn from the Profiles dock, say, outlives the feature page it may have
+        been started from or later opened on (spec §9), and without this the hint would either be
+        left showing on a page that just closed (invisible) or not appear on one that just opened."""
+        self._hint_text = text
+        self._reroute_hint()
 
     def clear_hint(self) -> None:
+        self._hint_text = None
         self.gallery.clear_hint()
         self.properties.clear_hint()
         self.session_hint.hide()
+
+    def _schedule_reroute_hint(self, _panel=None) -> None:
+        """Reroute the hint once the page that just closed has actually left the stack.
+
+        Connected to a wrapper's own `panelAccepted` (see `_new_feature`, `_open_feature_page`),
+        which is also where `QgsPanelWidgetStack` connects its own internal handling that pops the
+        panel and makes `main_panel` current again — added *after* ours, since we connect before
+        ever calling `open_page`/`openPanel`. Qt runs a signal's slots in connection order, so a
+        `_reroute_hint` connected directly here would run before that pop and see the just-closed
+        page as still current (verified by probe). Posting it instead runs it once every slot
+        connected to this `panelAccepted` — including the stack's own — has already run."""
+        QTimer.singleShot(0, self._reroute_hint)
+
+    def _reroute_hint(self) -> None:
+        """Move the remembered hint text (if any) onto whichever label it now belongs on, hiding it
+        everywhere else first. Called after `show_hint`, and whenever the open page changes while
+        an activity with a hint of its own is still running — see `_new_feature`,
+        `_open_feature_page`, and the `panelAccepted` connections they make on their own wrapper
+        (through `_schedule_reroute_hint`), which fire on every way a page can close (the stack's
+        own Back button and Escape included, not just `close_page`)."""
+        self.gallery.clear_hint()
+        self.properties.clear_hint()
+        self.session_hint.hide()
+        if self._hint_text is None:
+            return
+        target = self._hint_target()
+        target.setText(self._hint_text)
+        target.show()
 
     def _hint_target(self) -> QLabel:
         current = self.stack.currentPanel()
@@ -733,7 +764,13 @@ class MainDock(QgsDockWidget):
             self.feature_view.clearSelection()
             self.gallery_page = _PagePanel(self.tr("New feature"), self.gallery, self._released_pages)
             self.gallery_page.panelAccepted.connect(self._stop_drawing_on_gallery_close)
+            # A hint whose activity outlives this page (there is none today — a New feature page
+            # drawing stops with the page, see `_stop_drawing_on_gallery_close` above — but this
+            # keeps both pages symmetric and correct if that ever changes) must move off this page
+            # the moment it closes, whichever way that happens (spec §6 item 6, as amended).
+            self.gallery_page.panelAccepted.connect(self._schedule_reroute_hint)
             self.open_page(self.gallery_page)
+            self._reroute_hint()
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
@@ -752,7 +789,15 @@ class MainDock(QgsDockWidget):
             # closing itself because the feature it shows just disappeared — must stop editing,
             # since there is no more way to switch it off from here (spec §7, §9).
             self.properties_page.panelAccepted.connect(self._stop_editing_on_feature_page_close)
+            # A section line started from the Profiles dock outlives this page closing (spec §9) —
+            # its hint must move to wherever it belongs next (the list's session view) the moment
+            # that happens, whichever way it does (Back, Escape, the feature itself disappearing).
+            self.properties_page.panelAccepted.connect(self._schedule_reroute_hint)
             self.open_page(self.properties_page)
+            # Opening this page can itself be what a hint's activity is waiting to land on — a
+            # section line started from the Profiles dock while looking at the list, its hint
+            # showing under the toolbar, whose area's own page is then opened (spec §6 item 6).
+            self._reroute_hint()
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 

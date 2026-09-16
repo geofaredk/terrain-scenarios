@@ -1,11 +1,12 @@
-"""'What do you want to build?' — the tool list, the Line/Area toggle and the 'Where?' methods."""
+"""The 'New feature' page: a tile grid of tools, a segmented Line/Area pair, the four ways to
+draw, and the drawing hint that shows while one of them is running."""
 from __future__ import annotations
 
 from qgis.core import Qgis, QgsApplication, QgsUnitTypes
-from qgis.gui import QgsDoubleSpinBox
+from qgis.gui import QgsDoubleSpinBox, QgsPanelWidget
 from qgis.PyQt.QtCore import QEvent, QSize, Qt, pyqtSignal
-from qgis.PyQt.QtWidgets import (QButtonGroup, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QRadioButton,
-                                 QToolButton, QVBoxLayout, QWidget)
+from qgis.PyQt.QtWidgets import (QButtonGroup, QGridLayout, QHBoxLayout, QLabel, QListView, QListWidget,
+                                 QListWidgetItem, QToolButton, QVBoxLayout)
 
 from ..core.tools import TOOL_INFO, Mode, Tool
 from . import illustrations
@@ -14,26 +15,46 @@ from .layer_source import LayerSource
 from .selection import METHOD_ICONS, METHOD_LABELS, METHOD_TIPS, Method
 
 DEFAULT_BRUSH_RADIUS = 5.0
-ICON_WIDTH, ICON_HEIGHT = 60, 32
+TILE_ICON_SIZE = QSize(96, 48)
+TILE_GRID_SIZE = QSize(116, 92)
+METHOD_GRID_POSITIONS = {Method.CLICK: (0, 0), Method.FREEHAND: (0, 1), Method.BRUSH: (1, 0), Method.LAYER: (1, 1)}
 
 
-class ToolGallery(QWidget):
+class ToolGallery(QgsPanelWidget):
     drawRequested = pyqtSignal(object, object, object)  # Tool, Mode, Method
     layerRequested = pyqtSignal(object, object, object, bool)  # Tool, Mode, QgsVectorLayer, selected_only
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setPanelTitle(self.tr("New feature"))
+        self.setDockMode(True)   # mandatory before openPanel, or it opens a modal dialog (hangs offscreen tests)
+        # A closed instance is never reused (MainDock._build_gallery makes a fresh one for every
+        # open — reopening the same QgsPanelWidget a second time corrupts the stack, verified by
+        # probe), but it can still be referenced: `dock.hint`/`dock.gallery.show_hint` are used by
+        # drawing flows unrelated to whether THIS particular page is still the one on screen (an
+        # edit or a section line drawn while the Properties page is open, say). Left at the default
+        # `autoDelete`, `acceptPanel()` would schedule this widget for deletion, and a later call
+        # through a stale `dock.gallery` reference would then crash QGIS rather than merely miss
+        # the screen. Disabling it trades a few harmless, unshown, dock-parented widgets — cleaned
+        # up when the dock itself is — for never dereferencing a deleted one.
+        self.setAutoDelete(False)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(QLabel(self.tr("What do you want to build?")))
         self.tool_list = QListWidget()
-        self.tool_list.setIconSize(QSize(ICON_WIDTH, ICON_HEIGHT))
+        self.tool_list.setViewMode(QListView.ViewMode.IconMode)
+        self.tool_list.setUniformItemSizes(True)
+        self.tool_list.setResizeMode(QListView.ResizeMode.Adjust)
+        self.tool_list.setMovement(QListView.Movement.Static)
+        self.tool_list.setWordWrap(True)
+        self.tool_list.setIconSize(TILE_ICON_SIZE)
+        self.tool_list.setGridSize(TILE_GRID_SIZE)
         for tool in Tool:
             item = QListWidgetItem(TOOL_LABELS[tool])
             item.setData(Qt.ItemDataRole.UserRole, tool.value)
             item.setToolTip(tool_tooltip(tool))
-            item.setIcon(illustrations.icon(f"tool_{tool.value}", QSize(ICON_WIDTH, ICON_HEIGHT),
-                                            self.palette()))
+            item.setIcon(illustrations.icon(f"tool_{tool.value}", TILE_ICON_SIZE, self.palette()))
             self.tool_list.addItem(item)
         layout.addWidget(self.tool_list)
         self.summary = QLabel()
@@ -42,8 +63,8 @@ class ToolGallery(QWidget):
 
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel(self.tr("Shape")))
-        self.line_mode = QRadioButton(self.tr("Line"))
-        self.area_mode = QRadioButton(self.tr("Area"))
+        self.line_mode = self._shape_button(self.tr("Line"))
+        self.area_mode = self._shape_button(self.tr("Area"))
         self.mode_group = QButtonGroup(self)
         self.mode_group.addButton(self.line_mode)
         self.mode_group.addButton(self.area_mode)
@@ -53,12 +74,11 @@ class ToolGallery(QWidget):
         layout.addLayout(mode_row)
 
         layout.addWidget(QLabel(self.tr("Where?")))
-        method_row = QHBoxLayout()
+        method_grid = QGridLayout()
         self.method_buttons = {method: self._method_button(method) for method in Method}
-        for button in self.method_buttons.values():
-            method_row.addWidget(button)
-        method_row.addStretch(1)
-        layout.addLayout(method_row)
+        for method, button in self.method_buttons.items():
+            method_grid.addWidget(button, *METHOD_GRID_POSITIONS[method])
+        layout.addLayout(method_grid)
 
         brush_row = QHBoxLayout()
         self.brush_label = QLabel(self.tr("Brush radius"))
@@ -75,6 +95,11 @@ class ToolGallery(QWidget):
         self.layer_source = LayerSource()
         self.layer_source.hide()
         layout.addWidget(self.layer_source)
+
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.hint.hide()
+        layout.addWidget(self.hint)
 
         self.tool_list.currentItemChanged.connect(self._tool_changed)
         self.line_mode.toggled.connect(self._mode_changed)
@@ -96,8 +121,7 @@ class ToolGallery(QWidget):
         for row in range(self.tool_list.count()):
             item = self.tool_list.item(row)
             tool = Tool(item.data(Qt.ItemDataRole.UserRole))
-            item.setIcon(illustrations.icon(f"tool_{tool.value}", QSize(ICON_WIDTH, ICON_HEIGHT),
-                                            self.palette()))
+            item.setIcon(illustrations.icon(f"tool_{tool.value}", TILE_ICON_SIZE, self.palette()))
 
     def selected_mode(self) -> Mode | None:
         if self.area_mode.isChecked():
@@ -122,12 +146,28 @@ class ToolGallery(QWidget):
         """Name the units the brush radius is really in — the canvas's map units, never converted."""
         self.brush_spin.setSuffix(f" {self._unit_label(units)}")
 
+    def show_hint(self, text: str) -> None:
+        """Show the instruction text for the drawing tool that is now running on the map."""
+        self.hint.setText(text)
+        self.hint.show()
+
+    def clear_hint(self) -> None:
+        self.hint.hide()
+
     def _unit_label(self, units) -> str:
         if units == Qgis.DistanceUnit.Meters:
             return self.tr("m")
         if units == Qgis.DistanceUnit.Degrees:
             return self.tr("degrees")
         return QgsUnitTypes.toAbbreviatedString(units) or self.tr("map units")
+
+    def _shape_button(self, text: str) -> QToolButton:
+        button = QToolButton()
+        button.setText(text)
+        button.setCheckable(True)
+        button.setAutoRaise(True)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        return button
 
     def _method_button(self, method: Method) -> QToolButton:
         button = QToolButton()
@@ -160,6 +200,8 @@ class ToolGallery(QWidget):
         brush_usable = self.method_buttons[Method.BRUSH].isEnabled()
         self.brush_label.setEnabled(brush_usable)
         self.brush_spin.setEnabled(brush_usable)
+        self.brush_label.setVisible(brush_usable)
+        self.brush_spin.setVisible(brush_usable)
         if mode is not None:
             self.layer_source.set_mode(mode)
         else:

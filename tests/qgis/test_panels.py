@@ -1,5 +1,6 @@
 import pytest
 from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsProject
+from qgis.PyQt.QtWidgets import QListView
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_layer, line_through, panel, sample, square, start_session
 from terrain_sketch.core.tools import Mode, PixelMode, Tool
@@ -258,6 +259,40 @@ def test_escape_releases_the_page_before_reopening(tmp_path):
     assert dock.stack.currentPanel() is dock.properties_page
     assert dock.properties.isVisible()             # not left invisible by release_content's old hide()
     assert dock.properties.amount.value() == pytest.approx(dike.amount)   # still a live, working widget
+
+
+def test_the_tools_are_shown_as_tiles(tmp_path):
+    _iface, _c, dock = panel(tmp_path)
+    dock.new_button.click()
+    gallery = dock.gallery
+    assert gallery.tool_list.viewMode() == QListView.ViewMode.IconMode
+    assert gallery.tool_list.count() == len(Tool)
+    assert not gallery.tool_list.item(0).icon().isNull()
+
+
+def test_the_brush_radius_is_only_there_when_the_brush_is(tmp_path):
+    _iface, _c, dock = panel(tmp_path)
+    dock.new_button.click()
+    dock.gallery.select_tool(Tool.RAISE_PATH)
+    dock.gallery.select_mode(Mode.PATH)
+    assert not dock.gallery.brush_spin.isVisibleTo(dock.gallery)     # no brush on a line
+    dock.gallery.select_mode(Mode.AREA)
+    assert dock.gallery.brush_spin.isVisibleTo(dock.gallery)
+
+
+def test_shape_is_a_segmented_pair_that_disables_what_the_tool_cannot_do(tmp_path):
+    _iface, _c, dock = panel(tmp_path)
+    dock.new_button.click()
+    dock.gallery.select_tool(Tool.LOWER_FLAT)
+    assert dock.gallery.line_mode.isCheckable() and dock.gallery.area_mode.isCheckable()
+    assert dock.gallery.mode_group.checkedButton() is not None
+
+
+def test_drawing_a_feature_closes_the_new_feature_page(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dock.new_button.click()
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    assert dock.stack.currentPanel() is dock.main_panel
 
 
 def test_gallery_offers_only_the_shapes_and_methods_a_tool_supports():

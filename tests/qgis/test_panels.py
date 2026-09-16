@@ -191,12 +191,14 @@ def test_undo_keys_on_the_properties_fields_survive_a_close_and_reopen(tmp_path)
 def test_the_gallery_survives_new_feature_draw_and_new_feature_again(tmp_path):
     """The exact sequence the reviewer's repro used: New feature (opens the gallery page), draw a
     feature (closes it, opens the feature's properties page), New feature again (closes the
-    properties page, reopens the gallery page) — `dock.gallery` must still be a live widget, not one
-    whose wrapper's deleteLater already took it down."""
+    properties page, reopens the gallery page) — `dock.gallery` is one persistent instance for the
+    dock's whole life (a fresh `_PagePanel` wraps it on every open), so it must still be the SAME
+    live widget, not a new one and not one a wrapper's deleteLater took down."""
     from qgis_helpers import spin_event_loop
 
     _iface, c, dock = panel(tmp_path)
     dock.show()
+    gallery = dock.gallery
     dock.new_button.click()
     dock.gallery.select_tool(Tool.RAISE_PATH)
     dock.gallery.select_mode(Mode.PATH)
@@ -206,6 +208,7 @@ def test_the_gallery_survives_new_feature_draw_and_new_feature_again(tmp_path):
     spin_event_loop(50)                            # let the New feature page's deferred delete run
     dock.new_button.click()                        # must not touch the deleted-by-then gallery page
     assert dock.stack.currentPanel() is dock.gallery_page
+    assert dock.gallery is gallery                 # the same instance, not a new one
     assert dock.gallery.tool_list.count() == len(Tool)             # still a live, working widget
     assert dock.gallery.isVisible()                # not left invisible by release_content's old hide()
 
@@ -214,12 +217,14 @@ def test_the_stacks_own_back_button_releases_the_page_before_reopening(tmp_path)
     """`QgsPanelWidgetStack` owns a visible "Go back" button (`mBackButton`) that calls
     `acceptPanel()` directly — never through `MainDock.close_page()`. `_PagePanel` must release its
     content from `panelAccepted` itself, or this exit path (the one a real user actually clicks)
-    destroys `gallery` right along with its wrapper."""
+    destroys `gallery` right along with its wrapper — and since `gallery` is one persistent instance
+    reused across every open, reopening it afterwards must find that very same object, still live."""
     from qgis.PyQt.QtWidgets import QApplication, QToolButton
     from qgis_helpers import spin_event_loop
 
     _iface, _c, dock = panel(tmp_path)
     dock.show()
+    gallery = dock.gallery
     dock.new_button.click()
     QApplication.processEvents()
     back = dock.stack.findChild(QToolButton, "mBackButton")
@@ -229,6 +234,7 @@ def test_the_stacks_own_back_button_releases_the_page_before_reopening(tmp_path)
     spin_event_loop(50)                                       # let the deferred delete actually run
     dock.new_button.click()                                   # must not touch a deleted `gallery`
     assert dock.stack.currentPanel() is dock.gallery_page
+    assert dock.gallery is gallery                 # the same instance, not a new one
     assert dock.gallery.isVisible()                # not left invisible by release_content's old hide()
     assert dock.gallery.tool_list.count() == len(Tool)         # still a live, working widget
 
@@ -273,7 +279,7 @@ def test_the_tools_are_shown_as_tiles(tmp_path):
 def test_the_brush_radius_is_only_there_when_the_brush_is(tmp_path):
     _iface, _c, dock = panel(tmp_path)
     dock.new_button.click()
-    dock.gallery.select_tool(Tool.RAISE_PATH)
+    dock.gallery.select_tool(Tool.ADD)   # a tool that reaches both shapes, unlike RAISE_PATH
     dock.gallery.select_mode(Mode.PATH)
     assert not dock.gallery.brush_spin.isVisibleTo(dock.gallery)     # no brush on a line
     dock.gallery.select_mode(Mode.AREA)
@@ -283,15 +289,89 @@ def test_the_brush_radius_is_only_there_when_the_brush_is(tmp_path):
 def test_shape_is_a_segmented_pair_that_disables_what_the_tool_cannot_do(tmp_path):
     _iface, _c, dock = panel(tmp_path)
     dock.new_button.click()
-    dock.gallery.select_tool(Tool.LOWER_FLAT)
+    dock.gallery.select_tool(Tool.RAISE_PATH)   # a tool that supports only one shape
     assert dock.gallery.line_mode.isCheckable() and dock.gallery.area_mode.isCheckable()
-    assert dock.gallery.mode_group.checkedButton() is not None
+    assert dock.gallery.line_mode.isEnabled() and not dock.gallery.area_mode.isEnabled()
+    assert dock.gallery.mode_group.checkedButton() is dock.gallery.line_mode
 
 
 def test_drawing_a_feature_closes_the_new_feature_page(tmp_path):
+    """Drawing goes through the ordinary path — `select_id` selects the new feature, which opens
+    its properties page, which `open_page` replaces the New feature page with — so nothing New-
+    feature-specific has to close it (a count-based close-on-add used to do this and was removed:
+    it also fired, wrongly, on an unrelated scenario reset or an undo)."""
     _iface, c, dock = panel(tmp_path)
     dock.new_button.click()
-    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    assert dock.stack.currentPanel() is dock.gallery_page   # the page really was open first
+    dock.gallery.select_tool(Tool.RAISE_PATH)
+    dock.gallery.select_mode(Mode.PATH)
+    dock.gallery.method_buttons[Method.CLICK].click()
+    dock.draw_tool.finished.emit(line_through(5, 20, 34, 20))
+    assert dock.stack.currentPanel() is dock.properties_page
+
+
+def test_reopening_new_feature_does_not_build_a_new_gallery(tmp_path):
+    """dock.gallery is one persistent instance for the dock's whole life (a fresh `_PagePanel`
+    wraps it on every open) — repeated opens must not construct a fresh `ToolGallery` each time,
+    which used to leak one gallery per click and reset every choice on reopen."""
+    _iface, _c, dock = panel(tmp_path)
+    gallery = dock.gallery
+    for _ in range(3):
+        dock.new_button.click()
+        assert dock.gallery is gallery
+        dock.close_page()
+    assert dock.gallery is gallery
+
+
+def test_the_gallery_keeps_its_state_across_close_and_reopen(tmp_path):
+    """Closing and reopening the New feature page must not reset the tool, shape or brush radius
+    the user picked — only meaningful because `dock.gallery` is the same instance every time
+    (see `test_reopening_new_feature_does_not_build_a_new_gallery`)."""
+    _iface, _c, dock = panel(tmp_path)
+    dock.new_button.click()
+    dock.gallery.select_tool(Tool.LOWER_FLAT)
+    dock.gallery.select_mode(Mode.AREA)
+    dock.gallery.set_brush_radius(17.0)
+    dock.close_page()
+    dock.new_button.click()
+    assert dock.gallery.selected_tool() is Tool.LOWER_FLAT
+    assert dock.gallery.selected_mode() is Mode.AREA
+    assert dock.gallery.brush_radius() == pytest.approx(17.0)
+
+
+def test_a_brush_strokes_radius_change_updates_the_one_gallery(tmp_path):
+    """[ and ] (or Ctrl+wheel) change the brush radius while painting; `BrushTool.radiusChanged` is
+    wired to `dock.gallery.set_brush_radius` — with one persistent gallery this always lands on the
+    spin box the user can see, not on a spin box belonging to some other, already-replaced page."""
+    _iface, _c, dock = panel(tmp_path)
+    dock.new_button.click()
+    dock.gallery.select_tool(Tool.LOWER_FLAT)
+    dock.gallery.select_mode(Mode.AREA)
+    dock.gallery.method_buttons[Method.BRUSH].click()
+    dock.draw_tool.radiusChanged.emit(9.0)
+    assert dock.gallery.brush_radius() == pytest.approx(9.0)
+
+
+def test_pressing_back_while_drawing_stops_the_map_tool(tmp_path):
+    """Spec §6.6: "Pressing back, or Esc-cancelling the drawing, leaves the map tool stopped and
+    returns to the list." Closing the New feature page via the stack's own Back button while its
+    drawing is still running must stop that drawing, not leave it running on the map behind a page
+    that no longer shows its hint or has a Finish/Cancel control for it."""
+    from qgis.PyQt.QtWidgets import QApplication, QToolButton
+    from qgis_helpers import spin_event_loop
+
+    _iface, _c, dock = panel(tmp_path)
+    dock.show()
+    dock.new_button.click()
+    dock.gallery.select_tool(Tool.RAISE_PATH)
+    dock.gallery.select_mode(Mode.PATH)
+    dock.gallery.method_buttons[Method.CLICK].click()
+    assert dock.draw_tool is not None
+    QApplication.processEvents()
+    back = dock.stack.findChild(QToolButton, "mBackButton")
+    back.click()
+    spin_event_loop(50)                              # let the deferred delete actually run
+    assert dock.draw_tool is None
     assert dock.stack.currentPanel() is dock.main_panel
 
 

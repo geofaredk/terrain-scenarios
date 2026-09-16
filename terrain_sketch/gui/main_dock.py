@@ -103,15 +103,18 @@ class _IllustrationLabel(QLabel):
 class _PagePanel(QgsPanelWidget):
     """Hosts an existing widget as one page of the panel stack, built fresh each time it is opened.
 
-    A temporary wrapper, now only for `PropertiesPage`: Task 5 turns it into a `QgsPanelWidget` of
-    its own, at which point `open_page` targets it directly and this class goes away — the same
-    change `ToolGallery` already went through in Task 4. `content` keeps its identity here — it is
-    only reparented — so `dock.properties` stays the same object other code already reaches for
-    (`spin_undo_keys` installs event filters directly on its children once, at dock construction).
-    `ToolGallery` needs no such wrapper: it carries no state that has to outlive one open, so
-    `MainDock._build_gallery` simply builds a fresh instance on every `_new_feature` — the same
-    "fresh object per open" idea this wrapper embodies, minus the reparenting, since there is
-    nothing on `ToolGallery` that must survive being closed.
+    A wrapper kept for both `ToolGallery` and `PropertiesPage`: each is a single, persistent
+    instance (`dock.gallery`, `dock.properties`) that must survive being closed and reopened many
+    times over the dock's life — reused across sessions and features so state like the picked tool,
+    the brush radius or the undo-key filters installed on `properties`' fields keeps working — but
+    pushing the very same `QgsPanelWidget` through `openPanel`/`acceptPanel` a second time corrupts
+    the stack (verified by probe). So neither is ever pushed itself: a *fresh* `_PagePanel` wraps
+    it on every open, and only the wrapper is ever pushed and accepted. `content` keeps its
+    identity — it is only reparented — so `dock.gallery` and `dock.properties` stay the same
+    objects other code already reaches for. Task 5 may still turn `PropertiesPage` into a
+    `QgsPanelWidget` of its own for other reasons, but that does not remove the need for this
+    wrapper, since the "same instance twice" restriction applies regardless of `content`'s type —
+    `ToolGallery` is a `QgsPanelWidget` already and still needs it.
 
     `QgsPanelWidgetStack` defaults `autoDelete` to True and `acceptPanel()` schedules the panel for
     deletion: left alone, that `deleteLater()` takes `content` down with it, since `addWidget`
@@ -206,7 +209,6 @@ class MainDock(QgsDockWidget):
         self._brush_fid = None
         self._brush_extends = False       # set with _brush_fid, but kept when that feature goes
         self._section_fid = None          # the area whose section line is being drawn
-        self._feature_count = len(controller.features)   # _close_new_feature_page_on_add's own memory
         self.highlight = QgsRubberBand(iface.mapCanvas(), Qgis.GeometryType.Line)
         self.highlight.setStrokeColor(QgsMapToolEdit.digitizingStrokeColor())
         self.highlight.setFillColor(Qt.GlobalColor.transparent)
@@ -355,16 +357,19 @@ class MainDock(QgsDockWidget):
         self.stack.setMainPanel(self.main_panel)
         self.setWidget(self.stack)
 
-        # `gallery` and `properties` keep their names and behaviour (spec §12). `properties` is
-        # still wrapped as a drill-in page until Task 5 makes it a `QgsPanelWidget` of its own (see
-        # `_PagePanel`) — that wrapper is rebuilt fresh each time it is opened, and `properties`
-        # itself survives, since other code (`spin_undo_keys` below) installs event filters
-        # directly on its children once and expects them to keep working. `gallery` is now a
-        # `QgsPanelWidget` in its own right and needs no wrapper — but it is rebuilt fresh by
-        # `_build_gallery` on every `_new_feature` open rather than reused: pushing the very same
-        # `QgsPanelWidget` instance through `openPanel`/`acceptPanel` a second time corrupts the
-        # stack (verified by probe), unlike `properties`, which is never pushed directly itself.
-        self.gallery = self._build_gallery()
+        # `gallery` and `properties` keep their names and behaviour (spec §12); each is wrapped as a
+        # drill-in page (see `_PagePanel`) — a single, persistent instance that survives being
+        # closed and reopened for the dock's whole life, since state like the picked tool, the
+        # brush radius, or `spin_undo_keys`' filters on `properties`' fields must keep working.
+        self.gallery = ToolGallery(self)
+        self.gallery.drawRequested.connect(self._begin_drawing)
+        self.gallery.layerRequested.connect(self._use_layer)
+        # `ToolGallery` is a `QgsPanelWidget`: its own `keyPressEvent` (dockMode True) answers
+        # Escape itself, by calling its own `acceptPanel()` — before the key press ever reaches the
+        # `_PagePanel` wrapper that is actually on the stack. Forwarding its `panelAccepted` to
+        # `close_page` is what makes Escape inside the tiles close the real page (verified by probe:
+        # without this, Escape inside the gallery is silently swallowed).
+        self.gallery.panelAccepted.connect(self.close_page)
         self.properties = PropertiesPage(controller)
         self.gallery_page = None
         self.properties_page = None
@@ -390,7 +395,6 @@ class MainDock(QgsDockWidget):
         controller.featuresChanged.connect(self._refresh_highlight)
         controller.featuresChanged.connect(self._drop_missing_brush_target)
         controller.featuresChanged.connect(self._sync_selection_page)
-        controller.featuresChanged.connect(self._close_new_feature_page_on_add)
         controller.sessionChanged.connect(self._session_changed)
         controller.message.connect(self._show_message)
         controller.previewUpdated.connect(self._preview_updated)
@@ -463,7 +467,7 @@ class MainDock(QgsDockWidget):
                     canvas.unsetMapTool(tool)
             tool.dispose()
             tool.deleteLater()
-            self.gallery.clear_hint()
+            self.clear_hint()
 
     def closeEvent(self, event):  # noqa: N802 — Qt override
         self.stop_tools()
@@ -522,35 +526,32 @@ class MainDock(QgsDockWidget):
     @property
     def hint(self) -> QLabel:
         """The drawing hint, which now lives on the New feature page. Kept as `dock.hint` so every
-        existing caller and test keeps working unchanged; it always names whichever `ToolGallery`
-        is current (see `_build_gallery`)."""
+        existing caller and test keeps working unchanged."""
         return self.gallery.hint
 
-    def _build_gallery(self) -> ToolGallery:
-        """A fresh `ToolGallery` — the New feature page itself, now a `QgsPanelWidget` of its own.
-        Built fresh on every `_new_feature` open rather than reused: pushing the very same
-        `QgsPanelWidget` instance through `openPanel`/`acceptPanel` a second time corrupts the
-        stack (verified by probe), the same reason `_PagePanel` still exists for `properties`."""
-        gallery = ToolGallery(self)
-        gallery.drawRequested.connect(self._begin_drawing)
-        gallery.layerRequested.connect(self._use_layer)
-        return gallery
+    def show_hint(self, text: str) -> None:
+        """Show the instruction text for whichever activity is running, on whichever page owns a
+        hint for it. `METHOD_HINTS` and `BRUSH_EXTEND_HINT` belong to the New feature page — the
+        only target today. `EDIT_HINT` and `SECTION_LINE_HINT` belong to the feature page Task 5
+        adds; routed here rather than at each call site, so Task 5 only has to teach this one method
+        a second target (e.g. by checking `self.stack.currentPanel()`) instead of rewriting every
+        caller."""
+        self.gallery.show_hint(text)
 
-    def _close_new_feature_page_on_add(self) -> None:
-        """The controller added a feature while the New feature page was open — e.g. drawn on the
-        map, or (as here) added directly by test or automation code that never goes through
-        `_drawn`. Task 5 opens the new feature's own page here instead; for now, closing is enough.
+    def clear_hint(self) -> None:
+        self.gallery.clear_hint()
 
-        `featuresChanged` also fires for edits and deletions, and for a scenario reset that leaves
-        the count unchanged (`new_scenario` while the page happens to be open must not close it) —
-        so only a genuine growth in the feature count counts as an add."""
+    def _stop_drawing_on_gallery_close(self, _panel=None) -> None:
+        """Pressing the stack's own Back button, or Escape inside the tiles (forwarded from
+        `gallery.panelAccepted`), while a drawing started from the New feature page is still running
+        must stop it and give the canvas back its previous tool (spec §6.6) — the page is gone, so
+        there is no more hint and no more UI to finish or cancel it from. A no-op when the drawing
+        already ended before the page closed (the ordinary case: `_drawn` calls `end_drawing` itself,
+        before selecting the new feature opens the next page, which is what actually closes this one)."""
         try:
-            count = len(self.controller.features)
-            added = count > self._feature_count
-            self._feature_count = count
-            if added and self.stack.currentPanel() is self.gallery_page:
-                self.close_page()
-        except Exception:  # noqa: BLE001 — this runs in a slot
+            if self.draw_tool is not None:
+                self.end_drawing()
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _show_welcome_view(self, _link: str = "") -> None:
@@ -683,8 +684,8 @@ class MainDock(QgsDockWidget):
     def _new_feature(self) -> None:
         try:
             self.feature_view.clearSelection()
-            self.gallery = self.gallery_page = self._build_gallery()
-            self._update_radius_units()
+            self.gallery_page = _PagePanel(self.tr("New feature"), self.gallery, self)
+            self.gallery_page.panelAccepted.connect(self._stop_drawing_on_gallery_close)
             self.open_page(self.gallery_page)
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
@@ -746,7 +747,7 @@ class MainDock(QgsDockWidget):
         self.draw_tool.cancelled.connect(self.end_drawing)
         self._previous_tool = canvas.mapTool()
         canvas.setMapTool(self.draw_tool)
-        self.gallery.show_hint(hint)
+        self.show_hint(hint)
 
     def _draw_section_line(self, fid: str) -> None:
         """Draw the line an area's section runs along (spec §5.4), asked for by the Profiles panel."""
@@ -817,7 +818,7 @@ class MainDock(QgsDockWidget):
         self.edit_tool.cancelled.connect(self.stop_editing)
         self._previous_tool = canvas.mapTool()
         canvas.setMapTool(self.edit_tool)
-        self.gallery.show_hint(EDIT_HINT)
+        self.show_hint(EDIT_HINT)
 
     def _edited(self, fid, geometry) -> None:
         self.controller.set_geometry(fid, geometry, self.iface.mapCanvas().mapSettings().destinationCrs())

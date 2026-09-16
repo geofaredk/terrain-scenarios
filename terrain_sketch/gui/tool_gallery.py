@@ -2,7 +2,9 @@
 draw, and the drawing hint that shows while one of them is running."""
 from __future__ import annotations
 
-from qgis.core import Qgis, QgsApplication, QgsUnitTypes
+import traceback
+
+from qgis.core import Qgis, QgsApplication, QgsMessageLog, QgsUnitTypes
 from qgis.gui import QgsDoubleSpinBox, QgsPanelWidget
 from qgis.PyQt.QtCore import QEvent, QSize, Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import (QButtonGroup, QGridLayout, QHBoxLayout, QLabel, QListView, QListWidget,
@@ -10,6 +12,7 @@ from qgis.PyQt.QtWidgets import (QButtonGroup, QGridLayout, QHBoxLayout, QLabel,
 
 from ..core.tools import TOOL_INFO, Mode, Tool
 from . import illustrations
+from .controller import LOG_TAG
 from .help_texts import TOOL_LABELS, TOOL_SUMMARIES, tool_tooltip
 from .layer_source import LayerSource
 from .selection import METHOD_ICONS, METHOD_LABELS, METHOD_TIPS, Method
@@ -28,16 +31,6 @@ class ToolGallery(QgsPanelWidget):
         super().__init__(parent)
         self.setPanelTitle(self.tr("New feature"))
         self.setDockMode(True)   # mandatory before openPanel, or it opens a modal dialog (hangs offscreen tests)
-        # A closed instance is never reused (MainDock._build_gallery makes a fresh one for every
-        # open — reopening the same QgsPanelWidget a second time corrupts the stack, verified by
-        # probe), but it can still be referenced: `dock.hint`/`dock.gallery.show_hint` are used by
-        # drawing flows unrelated to whether THIS particular page is still the one on screen (an
-        # edit or a section line drawn while the Properties page is open, say). Left at the default
-        # `autoDelete`, `acceptPanel()` would schedule this widget for deletion, and a later call
-        # through a stale `dock.gallery` reference would then crash QGIS rather than merely miss
-        # the screen. Disabling it trades a few harmless, unshown, dock-parented widgets — cleaned
-        # up when the dock itself is — for never dereferencing a deleted one.
-        self.setAutoDelete(False)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -112,9 +105,16 @@ class ToolGallery(QgsPanelWidget):
         return Tool(item.data(Qt.ItemDataRole.UserRole)) if item is not None else None
 
     def changeEvent(self, event):  # noqa: N802 — Qt override
-        """Redraw the illustrations when QGIS switches between its light and dark themes."""
+        """Redraw the illustrations when QGIS switches between its light and dark themes.
+
+        Guarded: this runs from a Qt virtual override, and `refresh_icons` reads SVG sources from
+        disk through `illustrations.icon` — any exception escaping it here would abort QGIS rather
+        than merely leave the tiles stale."""
         if event.type() == QEvent.Type.PaletteChange:
-            self.refresh_icons()
+            try:
+                self.refresh_icons()
+            except Exception:  # noqa: BLE001 — this runs from a Qt virtual override
+                QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
         super().changeEvent(event)
 
     def refresh_icons(self) -> None:

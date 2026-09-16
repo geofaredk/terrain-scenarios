@@ -26,6 +26,7 @@ def test_drawing_a_dike_from_the_panel(tmp_path):
     dem = dem_layer(tmp_path)
     controller = SketchController(QgsProject.instance())
     dock = MainDock(iface, controller)
+    dock.show()   # isVisible() below needs the dock actually shown, not just not explicitly hidden
     assert dock.views.currentIndex() == VIEW_WELCOME and not dock.new_button.isEnabled()
     dock.dem_combo.setLayer(dem)
     dock.start_button.click()
@@ -34,11 +35,11 @@ def test_drawing_a_dike_from_the_panel(tmp_path):
     dock.gallery.select_tool(Tool.RAISE_PATH)
     dock.gallery.select_mode(Mode.PATH)
     dock.gallery.method_buttons[Method.CLICK].click()
-    assert iface.mapCanvas().mapTool() is dock.draw_tool and not dock.hint.isHidden()
+    assert iface.mapCanvas().mapTool() is dock.draw_tool and dock.hint.isVisible()
     dock.draw_tool.finished.emit(line_through(5, 20, 34, 20))
     assert len(controller.features) == 1
     assert dock.feature_view.selected_id() == controller.features[0].id
-    assert dock.stack.currentPanel() is dock.properties_page and dock.hint.isHidden() and dock.draw_tool is None
+    assert dock.stack.currentPanel() is dock.properties_page and not dock.hint.isVisible() and dock.draw_tool is None
     assert sample(controller.layers.working, 20, 20) == pytest.approx(11.0)
     dock.ask_export_path = lambda: str(tmp_path / "exported.tif")
     dock.export_button.click()
@@ -231,15 +232,28 @@ def test_the_brush_hint_names_the_feature_it_extends(tmp_path):
     assert dock._brush_fid is None and pond.name not in dock.hint.text()
 
 
-def test_selecting_a_row_leaves_the_drawing_hint_up(tmp_path):
+def test_selecting_a_row_takes_the_new_feature_page_and_its_hint_off_screen(tmp_path):
+    """`isHidden()` is False for a widget that was never put on screen at all, so the original form
+    of this test (no `dock.show()`, no `dock.new_button.click()`) could not tell a visible hint from
+    one that was never shown in the first place — it passed regardless of what really happened on
+    screen. With the page genuinely opened and the dock genuinely shown: selecting a row (not
+    reachable through the real UI while the New feature page covers the feature list — this drives
+    the selection model directly, as the original test did) opens that row's properties page in the
+    New feature page's place (`open_page` never drills more than one level deep — see its
+    docstring), which — since the page the drawing's hint was on is now gone — stops the drawing
+    too (`_stop_drawing_on_gallery_close`), the same as pressing Back or Escape would."""
     _iface, controller, dock = _session_dock(tmp_path)
+    dock.show()
     dike = controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.new_button.click()
     dock.gallery.select_tool(Tool.RAISE_PATH)
     dock.gallery.select_mode(Mode.PATH)
     dock.gallery.method_buttons[Method.FREEHAND].click()
-    assert not dock.hint.isHidden()
-    dock.feature_view.select_id(dike.id)  # the user checks a row while the trace is still running
-    assert dock.draw_tool is not None and not dock.hint.isHidden()
+    assert dock.hint.isVisible()
+    dock.feature_view.select_id(dike.id)
+    assert dock.draw_tool is None          # the page it was drawing on is gone, so the drawing stopped
+    assert not dock.hint.isVisible()       # … and so did its hint
+    assert dock.stack.currentPanel() is dock.properties_page
 
 
 def test_closing_the_panel_stops_the_edit_tool_too(tmp_path):

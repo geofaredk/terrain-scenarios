@@ -131,7 +131,9 @@ Title "New feature", pushed on the stack. Contents, top to bottom:
 6. The drawing **hint** (`METHOD_HINTS`, `BRUSH_EXTEND_HINT`) shows on this page while a drawing started
    from it is running, so the user reads it where they started. Hints for work started from a feature —
    `EDIT_HINT` (Edit shape) and `SECTION_LINE_HINT` (Draw section line, from the Profiles panel) — show on
-   the feature page instead (§7). `MainDock` routes a hint to whichever page is open.
+   the feature page instead (§7), directly under its action row so it is never scrolled out of sight.
+   `MainDock` routes a hint to whichever page is open; with no page open (a section line drawn from the
+   Profiles panel after going back to the list) it shows under the toolbar in the session view.
 
 Picking a tool and a method starts the map tool, as today. When the drawing finishes and the controller adds
 the feature, the New feature page closes and the new feature's page opens in its place. Pressing back (or Escape on the page) stops a drawing that is still running and returns to the list. Esc-cancelling a drawing on the map keeps the New feature page open, so the user can try again with another method.
@@ -142,7 +144,9 @@ Title = the feature's name; it follows a rename.
 
 1. **Header:** the tool illustration (72×36) beside a `QLineEdit` holding the feature's name (committing
    renames through the controller, so it is undoable), with the tool label and the volume line under it in
-   muted text: `Raise path · fill 191 m³ · cut 0 m³`.
+   muted text: `Raise path · fill 191 m³` — the same line as the list row's subtitle (§5.2), which leaves out a zero side.
+   The panel's title bar follows a rename too.
+
 2. **Action row:** icon buttons — Edit shape (checkable, existing behaviour), Zoom to feature (the existing
    context-menu action), Delete. Delete closes the page and returns to the list.
 3. **Problems:** the flags label, shown only when the feature has flags, directly under the actions so a

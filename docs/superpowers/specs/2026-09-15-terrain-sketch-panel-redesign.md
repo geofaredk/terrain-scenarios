@@ -131,7 +131,8 @@ Title "New feature", pushed on the stack. Contents, top to bottom:
    the Brush button is enabled, instead of being permanently visible and greyed.
 5. **From layer** expands the existing `LayerSource` widget inline under the buttons.
 6. The drawing **hint** (`METHOD_HINTS`, `BRUSH_EXTEND_HINT`) shows on this page while a drawing started
-   from it is running, so the user reads it where they started. Hints for work started from a feature —
+   from it is running, so the user reads it where they started. It sits at the top of the page, above the
+   tiles, so a dock shorter than the page still shows it. Hints for work started from a feature —
    `EDIT_HINT` (Edit shape) and `SECTION_LINE_HINT` (Draw section line, from the Profiles panel) — show on
    the feature page instead (§7), directly under its action row so it is never scrolled out of sight.
    `MainDock` routes a hint to whichever page is open; with no page open (a section line drawn from the
@@ -168,8 +169,10 @@ The page scrolls (`QgsScrollArea`) so a narrow, short dock never clips the field
 ## 8. Muted text
 
 `gui/muted.py` provides `MutedLabel`, a `QLabel` whose text colour is the palette's text colour blended 45%
-toward the window colour, recomputed on `PaletteChange` so it follows a QGIS theme switch. The delegate uses
-the same helper function for its subtitle and chevron. No colour is hard-coded; light and dark both follow
+toward the window colour, recomputed on `PaletteChange` so it follows a QGIS theme switch. The blend stops
+short where it would leave less than 3:1 contrast against the background. The delegate mutes from the
+colours a row is painted with: HighlightedText toward Highlight on a selected row, Text toward Base on any
+other, for its subtitle and chevron; a selected row's picture takes the same two colours. No colour is hard-coded; light and dark both follow
 the theme.
 
 ## 9. Navigation rules
@@ -205,7 +208,7 @@ Every rule above is covered in `tests/qgis`, headless like the rest of the suite
 - The toolbar: the scenario menu holds the four actions and each triggers the same slot as before; the
   Profiles button still tracks the dock.
 - The welcome view: Start behaves as today, including the DEM error paths and the excepted layers, and
-  `Change…` returns to it with the unsaved-work question.
+  `Change…` returns to it without asking; Start then asks the unsaved-work question once.
 - New feature page: picking a tool enables the right shapes, brush radius appears only with Brush, drawing a
   feature lands on its page.
 - Feature page: rename through the header field is undoable; Delete returns to the list; fields keep the

@@ -77,7 +77,9 @@ session view is not shown then at all.
 
 ### 5.2 Feature list
 
-Same model, same drag-to-reorder, same context menu, same checkbox, same inline rename. Rows are drawn by a
+Same model, same drag-to-reorder, same context menu, same checkbox. Renaming happens in the feature page's
+header field, or in the list with F2 or the context menu's Rename — not by double-click, because the first
+click already opens the page. Rows are drawn by a
 `QStyledItemDelegate`:
 
 ```
@@ -107,9 +109,9 @@ undo or a rename would yank the user into a page they did not ask for.
 ### 5.3 Status line
 
 At the bottom of the session view, muted, word-wrapped: `Sketching on: <DEM layer name>` followed by a
-`Change…` link (`QLabel` with a link, `linkActivated`). Activating it goes back to the welcome view with the
-unsaved-work question first (the existing `_keep_unsaved_work` path). The session itself keeps running until
-a new DEM is started, exactly as pressing Start does today.
+`Change…` link (`QLabel` with a link, `linkActivated`). Activating it stops any running map tool and goes back to the welcome view without
+asking anything: the session keeps running, and a **Keep sketching** button returns to it. The unsaved-work
+question is asked once, when Start actually replaces the session.
 
 ## 6. New feature page
 

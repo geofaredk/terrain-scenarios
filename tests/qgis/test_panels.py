@@ -399,15 +399,16 @@ def test_the_tile_grid_is_sized_to_its_content_not_stretched(tmp_path):
 def test_the_tile_grid_reports_a_height_that_keeps_every_tile_reachable(tmp_path):
     """IMPORTANT 1: `heightForWidth` used to count columns from the outer WIDGET width, not the
     viewport the icon grid actually wraps inside, and treated an exact multiple of the grid width
-    as already enough to fit another column — both undercount the rows some widths need (348-350
-    and 464-466 px reproduce it for seven tiles at this grid size). The list then gets too little
+    as already enough to fit another column — both undercount the rows some widths need (232-234,
+    348-350 and 464-466 px reproduce it for seven tiles at this grid size — the sweep starts at
+    200, not 240, specifically to also cover the first of those). The list then gets too little
     height from the page's layout, the last tile falls below the viewport, and
     `ScrollBarAlwaysOff` (VISUAL b) leaves it permanently unreachable — silently, since nothing
     about the list looks wrong until you count the tiles.
 
     `verticalScrollBar().isVisible()` cannot catch this: with the scrollbar forced off, it is
     always `False`. This instead checks the view's own layout of the last tile directly — at every
-    width from 240 to 520 px, resizing the list itself to `heightForWidth`'s own answer (exactly
+    width from 200 to 520 px, resizing the list itself to `heightForWidth`'s own answer (exactly
     what `QVBoxLayout` would give it in the page) and asserting the tile the view actually lays out
     stays fully inside the viewport."""
     from qgis.PyQt.QtWidgets import QApplication
@@ -419,7 +420,7 @@ def test_the_tile_grid_reports_a_height_that_keeps_every_tile_reachable(tmp_path
     tiles.show()
 
     failures = []
-    for width in range(240, 521):
+    for width in range(200, 521):
         tiles.resize(width, tiles.heightForWidth(width))
         QApplication.processEvents()
         last = tiles.visualRect(tiles.model().index(tiles.count() - 1, 0))

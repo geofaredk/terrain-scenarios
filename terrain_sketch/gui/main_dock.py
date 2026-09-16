@@ -20,11 +20,12 @@ from ..qgis_io.convert import from_wkb
 from ..qgis_io.raster_io import DemError, GeographicDemError
 from ..qgis_io.scenario import ScenarioError
 from .help_texts import (CHANGE_DEM_LINK, DEM_NOT_READABLE, EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE,
-                         EXPORT_NOT_ADDED, EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS,
-                         SCENARIO_MENU_TIP, SCENARIO_NOT_APPLIED, SCENARIO_NOT_APPLIED_ON_ITS_DEM, SCENARIO_OPENED,
-                         SCENARIO_OTHER_DEM, SCENARIO_REPLACE, SCENARIO_SAVED, SCENARIO_SAVE_FAILED,
-                         SECTION_LINE_HINT, SHAPE_NOT_TRANSFORMED, SKETCHING_ON, START_HEADING, START_INTRO,
-                         UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES, PROFILES_TIP, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
+                         EXPORT_NOT_ADDED, EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SAVE_FAILED_BEFORE_CLOSING,
+                         SCENARIO_DEM_DIFFERS, SCENARIO_MENU_TIP, SCENARIO_NOT_APPLIED,
+                         SCENARIO_NOT_APPLIED_ON_ITS_DEM, SCENARIO_OPENED, SCENARIO_OTHER_DEM, SCENARIO_REPLACE,
+                         SCENARIO_SAVED, SCENARIO_SAVED_BUT_INCOMPLETE, SCENARIO_SAVE_FAILED, SECTION_LINE_HINT,
+                         SHAPE_NOT_TRANSFORMED, SKETCHING_ON, START_HEADING, START_INTRO, UNSAVED_BEFORE_CLOSING,
+                         UNSAVED_CHANGES, PROFILES_TIP, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
 from . import illustrations
 from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
@@ -202,6 +203,7 @@ class MainDock(QgsDockWidget):
         self.confirm_save = self._save_question
         self.choose_dem = self._dem_choice_dialog
         self._asked_about_unsaved = False
+        self._last_save_reason = None       # set by _save_scenario; read back by _offer_save_before_discard
         self._dem_name = ""                 # set by _start_session before its sessionChanged fires
         self._dem_layer = None              # tracked only to keep the status line's name in sync with a rename
         self._session_has_dem = False       # _session_changed's own memory of has_dem, to spot a real transition
@@ -1211,18 +1213,27 @@ class MainDock(QgsDockWidget):
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
-    def _save_scenario(self, save_as: bool = False) -> bool | None:
-        """Save, asking for a path when there is not one yet. True when it was written; False for
-        an ordinary failure (no path chosen, or a `ScenarioError`) worth asking about again; None
-        for an unexpected exception, which is not — the same retry would only fail the same way,
-        so `_offer_save_before_discard` treats `None` as a reason to stop asking rather than loop
-        forever, unlike an ordinary `False`.
+    def _save_scenario(self, save_as: bool = False) -> bool:
+        """Save, asking for a path when there is not one yet. True when the work is safe on disk —
+        an ordinary save, or an unexpected exception that only happened AFTER
+        `controller.save_scenario` had already written the file (its own bookkeeping —
+        `_mark_scenario`, `undo_stack.setClean`, `_place_files` — comes after the write, so a
+        failure there must not be treated as "nothing was saved": the file is right there).
+        `controller.scenario_path == path` is what tells the two apart — `_mark_scenario` sets it
+        the moment the write succeeds, before any of that later bookkeeping runs. False otherwise
+        (no path chosen, a `ScenarioError`, or an unexpected exception before/during the write) —
+        worth asking about again, since the work is genuinely still only in memory.
+
+        `_last_save_reason` is set to what to tell the user about a failure (None on an unremarkable
+        success), so `_offer_save_before_discard` can carry it into the question it asks again
+        (round 3 ruling: every failure, not just a recoverable one, is asked about again — see that
+        method's own docstring for why).
 
         Guarded: reached directly from the Scenario menu's Save / Save as… actions (a Qt signal via
         a lambda), as well as called directly by `_keep_unsaved_work` and
-        `_offer_save_before_discard`, both of which depend on the value it returns — an unexpected
-        exception here is shown to the user the same way a `ScenarioError` already is, rather than
-        escaping a Qt callback."""
+        `_offer_save_before_discard`, both of which depend on the value it returns."""
+        self._last_save_reason = None
+        path = None
         try:
             path = self.controller.scenario_path
             if save_as or not path:
@@ -1232,29 +1243,44 @@ class MainDock(QgsDockWidget):
             try:
                 self.controller.save_scenario(path)
             except ScenarioError as error:
-                self._show_message(Qgis.MessageLevel.Warning, str(error))
+                self._last_save_reason = str(error)
+                self._show_message(Qgis.MessageLevel.Warning, self._last_save_reason)
                 return False
             self._show_message(Qgis.MessageLevel.Success, SCENARIO_SAVED.format(path))
             return True
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-            self._show_message(Qgis.MessageLevel.Warning, SCENARIO_SAVE_FAILED)
-            return None
+            if path is not None and self.controller.scenario_path == path:
+                self._last_save_reason = SCENARIO_SAVED_BUT_INCOMPLETE.format(path)
+                self._show_message(Qgis.MessageLevel.Warning, self._last_save_reason)
+                return True   # the file itself is safe; only some later step did not finish
+            self._last_save_reason = SCENARIO_SAVE_FAILED
+            self._show_message(Qgis.MessageLevel.Warning, self._last_save_reason)
+            return False
 
     def _offer_save_before_discard(self) -> None:
         """The controller is about to drop a session with unsaved changes — the project is closing,
-        the DEM was removed or the plugin is unloading. None of those can be cancelled from here,
-        so the question is only Save or Discard — but choosing Save and then cancelling the file
-        dialog, or an ordinary save failure (`_save_scenario` returning `False`), must not drop the
-        session silently: the question repeats until a save succeeds or the user chooses Discard.
-        An unexpected failure (`_save_scenario` returning `None`) is different: it already told the
-        user through the message bar, and retrying would only repeat the same failure, so this
-        stops asking rather than looping on a question that can never get a useful new answer."""
+        the DEM was removed or the plugin is unloading. `before_discard` cannot cancel any of
+        those: `SketchController._drop_session` calls it and then always drops the session,
+        whatever it did. So the question here is only ever Save or Discard, and it must repeat
+        after ANY failed save — a recoverable one (a `ScenarioError`, or the file dialog cancelled)
+        exactly as before, but also an unexpected one (round 3 ruling, reverting round 2's "stop
+        asking on an unexpected failure": that stopped the question, but nothing else stops the
+        session from being dropped a moment later — one unexpected save failure silently discarded
+        the user's work on every path through here, which they never agreed to). Work is discarded
+        only when the user explicitly answers Discard.
+
+        The repeated question carries the reason the last attempt failed (`_last_save_reason`,
+        when there is one — an empty save-file dialog leaves no specific reason), so a second or
+        third ask is never an unexplained repeat of the first."""
         if self._asked_about_unsaved:
             return
-        while self.confirm_save(UNSAVED_BEFORE_CLOSING, can_cancel=False):
-            if self._save_scenario() is not False:
+        text = UNSAVED_BEFORE_CLOSING
+        while self.confirm_save(text, can_cancel=False):
+            if self._save_scenario():
                 return
+            text = (SAVE_FAILED_BEFORE_CLOSING.format(reason=self._last_save_reason)
+                   if self._last_save_reason else UNSAVED_BEFORE_CLOSING)
 
     def _keep_unsaved_work(self) -> bool:
         """Ask before discarding unsaved features. True means the user backed out."""

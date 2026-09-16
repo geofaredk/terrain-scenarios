@@ -206,27 +206,165 @@ def test_a_failed_save_before_closing_asks_again_until_it_succeeds(tmp_path):
     assert len(load(path)[0]) == 1
 
 
-def test_an_unexpected_save_failure_before_closing_asks_only_once(tmp_path):
-    """An ordinary failure (no path chosen, or a `ScenarioError`) is worth asking about again —
-    see the test above — but an unexpected exception is not: the same save would only fail the
-    same way again. Without `_save_scenario` distinguishing the two (`False` vs `None`), a stub
-    that always answers Save — the same as a real modal dialog if the user just keeps clicking it
-    — would loop forever asking a question that can never get a useful new answer."""
+def _recording_confirm(recorded, controller, answers):
+    """A `confirm_save` stub: records `(text, can_cancel, feature ids still present)` on every
+    call — so a test can check the session was not dropped before the recorded answer said to —
+    then answers from `answers` in order."""
+    iterator = iter(answers)
+
+    def stub(text, can_cancel=True):
+        recorded.append((text, can_cancel, tuple(f.id for f in controller.features)))
+        return next(iterator)
+
+    return stub
+
+
+def test_a_repeatedly_failing_save_before_the_project_closes_asks_until_an_explicit_discard(tmp_path):
+    """Round 3 ruling: `before_discard` cannot cancel anything — `SketchController._drop_session`
+    calls it and then always drops the session, whatever it did. Round 2's fix stopped the
+    question after one unexpected save failure, which left the session to be dropped a moment
+    later with no explicit Discard from the user — silent data loss. The question must instead
+    repeat, carrying the failure, until the user explicitly answers Discard: here, Save (fails),
+    Save (fails again), Discard."""
     _iface, c, dock = panel(tmp_path)
-    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.ask_save_path = lambda: str(tmp_path / "boom.gpkg")
-    asked = []
-    dock.confirm_save = lambda text, can_cancel=True: asked.append((text, can_cancel)) or True   # always Save
 
     def boom(_path):
         raise RuntimeError("boom")
 
     c.save_scenario = boom
-    QgsProject.instance().clear()                     # closing: before_discard runs, must not hang
+    recorded = []
+    dock.confirm_save = _recording_confirm(recorded, c, [True, True, False])   # Save, Save, Discard
 
-    assert asked == [(UNSAVED_BEFORE_CLOSING, False)]  # asked at most once, not looped forever
+    QgsProject.instance().clear()
+
+    assert len(recorded) == 3                                     # asked exactly 3 times
+    for text, can_cancel, feature_ids in recorded:
+        assert can_cancel is False                                # this path never offers Cancel
+        assert feature_ids == (dike.id,)                          # not dropped before this answer
+    assert SCENARIO_SAVE_FAILED in recorded[1][0]                  # the 2nd question carries the failure
+    assert SCENARIO_SAVE_FAILED in recorded[2][0]                  # …and so does the 3rd
+    assert not c.has_dem and c.features == ()                      # gone only now, after Discard
+
+
+def test_a_repeatedly_failing_save_before_the_dem_is_removed_asks_until_an_explicit_discard(tmp_path):
+    """The DEM-removed path, same shape as the test above."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dem_id = c.dem_layer_id
+    dock.ask_save_path = lambda: str(tmp_path / "boom.gpkg")
+
+    def boom(_path):
+        raise RuntimeError("boom")
+
+    c.save_scenario = boom
+    recorded = []
+    dock.confirm_save = _recording_confirm(recorded, c, [True, True, False])
+
+    QgsProject.instance().removeMapLayer(dem_id)
+
+    assert len(recorded) == 3
+    for text, can_cancel, feature_ids in recorded:
+        assert can_cancel is False
+        assert feature_ids == (dike.id,)
+    assert SCENARIO_SAVE_FAILED in recorded[1][0]
+    assert SCENARIO_SAVE_FAILED in recorded[2][0]
+    assert not c.has_dem and c.features == ()
+
+
+def test_a_repeatedly_failing_save_before_the_plugin_unloads_asks_until_an_explicit_discard(tmp_path):
+    """The plugin-unload path, same shape as the two tests above."""
+    iface = fake_iface()
+    plugin = classFactory(iface)
+    plugin.initGui()
+    plugin.action.setChecked(True)
+    dock, c = plugin.dock, plugin.controller
+    dock.dem_combo.setLayer(dem_layer(tmp_path))
+    dock.start_button.click()
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.ask_save_path = lambda: str(tmp_path / "boom.gpkg")
+
+    def boom(_path):
+        raise RuntimeError("boom")
+
+    c.save_scenario = boom
+    recorded = []
+    dock.confirm_save = _recording_confirm(recorded, c, [True, True, False])
+
+    plugin.unload()
+
+    assert len(recorded) == 3
+    for text, can_cancel, feature_ids in recorded:
+        assert can_cancel is False
+        assert feature_ids == (dike.id,)
+    assert SCENARIO_SAVE_FAILED in recorded[1][0]
+    assert SCENARIO_SAVE_FAILED in recorded[2][0]
+    assert not c.has_dem and c.features == ()
+
+
+def test_a_cancelled_save_dialog_on_a_cancellable_path_keeps_the_work(tmp_path):
+    """Unlike the three non-cancellable paths above, `_keep_unsaved_work`-driven paths (Start on
+    another DEM, Change… then Start, New scenario, Open scenario) can genuinely back out.
+    Choosing Save and then cancelling the file dialog (`ask_save_path` returning "") is "wanted to
+    save but did not" — `_keep_unsaved_work` already turns that into backing out rather than
+    discarding, and still does after the round-3 fix: the "no path chosen" case still returns
+    plain `False` from `_save_scenario`, unchanged."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.confirm_save = lambda text, can_cancel=True: True   # wants to save
+    dock.ask_save_path = lambda: ""                          # then cancels the file dialog
+
+    second = dem_layer(tmp_path, name="second")
+    dock.dem_combo.setLayer(second)
+    dock.start_button.click()                                # backs out: the file dialog was cancelled
+
+    assert c.has_dem and [f.id for f in c.features] == [dike.id]
+    dock.confirm_save = lambda text, can_cancel=True: False   # let the fixture's own teardown clear() finish
+    QgsProject.instance().clear()
+
+
+def test_new_scenario_backs_out_when_a_save_it_wanted_fails(tmp_path):
+    """Cancellable path (spec's own list): `_new_scenario` asks first through
+    `_keep_unsaved_work`, which can genuinely back out — unlike the three non-cancellable paths
+    above, nothing forces this session to be dropped regardless of what the question does."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.confirm_save = lambda text, can_cancel=True: True
+    dock.ask_save_path = lambda: str(tmp_path / "boom.gpkg")
+
+    def boom(_path):
+        raise RuntimeError("boom")
+
+    c.save_scenario = boom
+    dock.new_scenario_action.trigger()
+
+    assert c.has_dem and [f.id for f in c.features] == [dike.id]
+    dock.confirm_save = lambda text, can_cancel=True: False   # let the fixture's own teardown clear() finish
+    QgsProject.instance().clear()
+
+
+def test_a_save_failure_after_the_file_is_written_is_treated_as_saved(tmp_path):
+    """IMPORTANT: `controller.save_scenario` writes the file, marks it (`_mark_scenario`, which
+    sets `controller.scenario_path`), and only then does further bookkeeping
+    (`undo_stack.setClean`, `_place_files`) that can still fail unexpectedly — after the file is
+    already safely on disk. Telling the user it "could not be saved" would be wrong, and looping
+    to ask again pointless (a resave would hit the very same bug): `_save_scenario` must recognise
+    the file was actually written and treat it as done."""
+    _iface, c, dock = panel(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    path = str(tmp_path / "written.gpkg")
+    dock.ask_save_path = lambda: path
+
+    def boom():
+        raise RuntimeError("boom")
+
+    c._place_files = boom   # after the write and _mark_scenario, before this bug
+
+    assert dock._save_scenario() is True
+    assert c.scenario_path == path   # the write really did happen
     warnings = [call.args[1] for call in dock.iface.messageBar().pushMessage.call_args_list]
-    assert SCENARIO_SAVE_FAILED in warnings
+    assert any(path in w and "saved" in w.lower() for w in warnings)
 
 
 def test_removing_the_dem_offers_to_save_before_the_session_ends(tmp_path):

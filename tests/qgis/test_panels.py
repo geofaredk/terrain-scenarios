@@ -391,10 +391,41 @@ def test_the_tile_grid_is_sized_to_its_content_not_stretched(tmp_path):
 
     gallery = dock.gallery
     assert gallery.tool_list.count() == len(Tool) == 7
-    assert not gallery.tool_list.verticalScrollBar().isVisible()   # every tile fits without scrolling
     where_button = gallery.method_buttons[Method.CLICK]
     top = where_button.mapTo(dock, where_button.rect().topLeft()).y()
     assert 0 < top < dock.height() * 2 / 3   # well up the page, not crammed at the bottom
+
+
+def test_the_tile_grid_reports_a_height_that_keeps_every_tile_reachable(tmp_path):
+    """IMPORTANT 1: `heightForWidth` used to count columns from the outer WIDGET width, not the
+    viewport the icon grid actually wraps inside, and treated an exact multiple of the grid width
+    as already enough to fit another column — both undercount the rows some widths need (348-350
+    and 464-466 px reproduce it for seven tiles at this grid size). The list then gets too little
+    height from the page's layout, the last tile falls below the viewport, and
+    `ScrollBarAlwaysOff` (VISUAL b) leaves it permanently unreachable — silently, since nothing
+    about the list looks wrong until you count the tiles.
+
+    `verticalScrollBar().isVisible()` cannot catch this: with the scrollbar forced off, it is
+    always `False`. This instead checks the view's own layout of the last tile directly — at every
+    width from 240 to 520 px, resizing the list itself to `heightForWidth`'s own answer (exactly
+    what `QVBoxLayout` would give it in the page) and asserting the tile the view actually lays out
+    stays fully inside the viewport."""
+    from qgis.PyQt.QtWidgets import QApplication
+
+    _iface, _c, dock = panel(tmp_path)
+    dock.new_button.click()
+    tiles = dock.gallery.tool_list
+    tiles.setParent(None)   # freed from the page's own layout, which would otherwise re-assert its geometry
+    tiles.show()
+
+    failures = []
+    for width in range(240, 521):
+        tiles.resize(width, tiles.heightForWidth(width))
+        QApplication.processEvents()
+        last = tiles.visualRect(tiles.model().index(tiles.count() - 1, 0))
+        if last.isNull() or not tiles.viewport().rect().contains(last):
+            failures.append(width)
+    assert not failures, f"the last tile is clipped at width(s) {failures}"
 
 
 def test_the_new_feature_page_keeps_the_styles_normal_margin_from_the_panel_edge(tmp_path):

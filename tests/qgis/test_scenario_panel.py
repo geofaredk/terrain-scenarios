@@ -8,7 +8,8 @@ from terrain_sketch import classFactory
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.controller import SketchController
 from terrain_sketch.gui.help_texts import (SCENARIO_DEM_DIFFERS, SCENARIO_OPENED, SCENARIO_OTHER_DEM,
-                                           SCENARIO_REPLACE, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES)
+                                           SCENARIO_REPLACE, SCENARIO_SAVE_FAILED, UNSAVED_BEFORE_CLOSING,
+                                           UNSAVED_CHANGES)
 from terrain_sketch.gui.main_dock import MainDock
 from terrain_sketch.qgis_io.scenario import dem_meta, load, save
 
@@ -203,6 +204,29 @@ def test_a_failed_save_before_closing_asks_again_until_it_succeeds(tmp_path):
 
     assert asked == [(UNSAVED_BEFORE_CLOSING, False), (UNSAVED_BEFORE_CLOSING, False)]
     assert len(load(path)[0]) == 1
+
+
+def test_an_unexpected_save_failure_before_closing_asks_only_once(tmp_path):
+    """An ordinary failure (no path chosen, or a `ScenarioError`) is worth asking about again —
+    see the test above — but an unexpected exception is not: the same save would only fail the
+    same way again. Without `_save_scenario` distinguishing the two (`False` vs `None`), a stub
+    that always answers Save — the same as a real modal dialog if the user just keeps clicking it
+    — would loop forever asking a question that can never get a useful new answer."""
+    _iface, c, dock = panel(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.ask_save_path = lambda: str(tmp_path / "boom.gpkg")
+    asked = []
+    dock.confirm_save = lambda text, can_cancel=True: asked.append((text, can_cancel)) or True   # always Save
+
+    def boom(_path):
+        raise RuntimeError("boom")
+
+    c.save_scenario = boom
+    QgsProject.instance().clear()                     # closing: before_discard runs, must not hang
+
+    assert asked == [(UNSAVED_BEFORE_CLOSING, False)]  # asked at most once, not looped forever
+    warnings = [call.args[1] for call in dock.iface.messageBar().pushMessage.call_args_list]
+    assert SCENARIO_SAVE_FAILED in warnings
 
 
 def test_removing_the_dem_offers_to_save_before_the_session_ends(tmp_path):

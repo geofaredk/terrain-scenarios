@@ -47,8 +47,20 @@ class _ToolTileList(QListWidget):
         return True
 
     def heightForWidth(self, width: int) -> int:  # noqa: N802 — Qt override
+        """Columns must be counted the way the view itself will actually lay them out: from the
+        VIEWPORT width (`width` minus the frame on both sides, spec§ IMPORTANT 1) — the wrapped
+        icon grid lives inside the viewport, not the outer widget — and a column only really fits
+        if the viewport is wider than an exact multiple of the grid width, not merely as wide
+        (`(viewport_width - 1) // grid_width`, not `viewport_width // grid_width`): at an exact
+        multiple the view still only fits one column fewer (verified by probe, sweeping every
+        width from 240 to 520 against the view's own `visualRect` for the last tile). Counting
+        columns from the outer width, or accepting an exact multiple as enough, both under-count
+        the rows needed at some widths (348-350 and 464-466 px reproduce it for this tile count and
+        grid size) — this widget then gets too little height from the layout, the last tile falls
+        below the viewport, and `ScrollBarAlwaysOff` leaves it unreachable."""
         grid = self.gridSize()
-        columns = max(1, width // max(grid.width(), 1))
+        viewport_width = width - 2 * self.frameWidth()
+        columns = max(1, (viewport_width - 1) // max(grid.width(), 1))
         rows = -(-self.count() // columns)   # ceil division: enough rows for every tile
         return rows * grid.height() + 2 * self.frameWidth()
 

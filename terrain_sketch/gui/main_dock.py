@@ -22,9 +22,9 @@ from ..qgis_io.scenario import ScenarioError
 from .help_texts import (CHANGE_DEM_LINK, DEM_NOT_READABLE, EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE,
                          EXPORT_NOT_ADDED, EXPORT_REPLACE, REPROJECT_UNAVAILABLE, SCENARIO_DEM_DIFFERS,
                          SCENARIO_MENU_TIP, SCENARIO_NOT_APPLIED, SCENARIO_NOT_APPLIED_ON_ITS_DEM, SCENARIO_OPENED,
-                         SCENARIO_OTHER_DEM, SCENARIO_REPLACE, SCENARIO_SAVED, SECTION_LINE_HINT, SHAPE_NOT_TRANSFORMED,
-                         SKETCHING_ON, START_HEADING, START_INTRO, UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES,
-                         PROFILES_TIP, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
+                         SCENARIO_OTHER_DEM, SCENARIO_REPLACE, SCENARIO_SAVED, SCENARIO_SAVE_FAILED,
+                         SECTION_LINE_HINT, SHAPE_NOT_TRANSFORMED, SKETCHING_ON, START_HEADING, START_INTRO,
+                         UNSAVED_BEFORE_CLOSING, UNSAVED_CHANGES, PROFILES_TIP, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
 from . import illustrations
 from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
@@ -1106,13 +1106,13 @@ class MainDock(QgsDockWidget):
                 self.stop_editing()
             if self._section_fid is not None and self._section_fid not in ids:
                 self.end_drawing()
+            if self.stack.currentPanel() is not self.properties_page:
+                return
+            fid = self.feature_view.selected_id()
+            if fid is None or fid not in {f.id for f in self.controller.features}:
+                self._selection_changed()
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-        if self.stack.currentPanel() is not self.properties_page:
-            return
-        fid = self.feature_view.selected_id()
-        if fid is None or fid not in {f.id for f in self.controller.features}:
-            self._selection_changed()
 
     def _sketch_tool_active(self) -> bool:
         return isinstance(self.iface.mapCanvas().mapTool(), SketchTool)
@@ -1211,13 +1211,17 @@ class MainDock(QgsDockWidget):
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
-    def _save_scenario(self, save_as: bool = False) -> bool:
-        """Save, asking for a path when there is not one yet. True when it was written.
+    def _save_scenario(self, save_as: bool = False) -> bool | None:
+        """Save, asking for a path when there is not one yet. True when it was written; False for
+        an ordinary failure (no path chosen, or a `ScenarioError`) worth asking about again; None
+        for an unexpected exception, which is not — the same retry would only fail the same way,
+        so `_offer_save_before_discard` treats `None` as a reason to stop asking rather than loop
+        forever, unlike an ordinary `False`.
 
         Guarded: reached directly from the Scenario menu's Save / Save as… actions (a Qt signal via
         a lambda), as well as called directly by `_keep_unsaved_work` and
-        `_offer_save_before_discard`, both of which depend on the True/False it returns — an
-        unexpected exception here is treated the same as a save that failed (`False`), rather than
+        `_offer_save_before_discard`, both of which depend on the value it returns — an unexpected
+        exception here is shown to the user the same way a `ScenarioError` already is, rather than
         escaping a Qt callback."""
         try:
             path = self.controller.scenario_path
@@ -1232,20 +1236,25 @@ class MainDock(QgsDockWidget):
                 return False
             self._show_message(Qgis.MessageLevel.Success, SCENARIO_SAVED.format(path))
             return True
-        except Exception:  # noqa: BLE001 — this runs in a slot; False matches a save that failed
+        except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-            return False
+            self._show_message(Qgis.MessageLevel.Warning, SCENARIO_SAVE_FAILED)
+            return None
 
     def _offer_save_before_discard(self) -> None:
         """The controller is about to drop a session with unsaved changes — the project is closing,
         the DEM was removed or the plugin is unloading. None of those can be cancelled from here,
         so the question is only Save or Discard — but choosing Save and then cancelling the file
-        dialog, or a save that fails, must not drop the session silently: the question repeats
-        until a save succeeds or the user chooses Discard."""
+        dialog, or an ordinary save failure (`_save_scenario` returning `False`), must not drop the
+        session silently: the question repeats until a save succeeds or the user chooses Discard.
+        An unexpected failure (`_save_scenario` returning `None`) is different: it already told the
+        user through the message bar, and retrying would only repeat the same failure, so this
+        stops asking rather than looping on a question that can never get a useful new answer."""
         if self._asked_about_unsaved:
             return
-        while self.confirm_save(UNSAVED_BEFORE_CLOSING, can_cancel=False) and not self._save_scenario():
-            pass
+        while self.confirm_save(UNSAVED_BEFORE_CLOSING, can_cancel=False):
+            if self._save_scenario() is not False:
+                return
 
     def _keep_unsaved_work(self) -> bool:
         """Ask before discarding unsaved features. True means the user backed out."""

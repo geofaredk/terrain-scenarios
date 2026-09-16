@@ -100,10 +100,10 @@ def test_rename_from_the_menu_opens_the_name_for_editing(tmp_path):
 def test_the_properties_title_follows_a_rename_in_the_list(tmp_path):
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     assert dock.stack.currentPanel() is dock.properties_page
     dock.model.setData(dock.model.index(dock.model.row_of(dike.id)), "Sea wall")
-    assert dock.properties.title.text().startswith("Sea wall")
+    assert dock.properties.name_edit.text() == "Sea wall" and dock.properties.panelTitle() == "Sea wall"
 
 
 def test_rename_after_the_list_changed_under_the_open_menu_does_not_take_qgis_down(tmp_path):

@@ -154,7 +154,7 @@ def test_undo_that_removes_the_feature_a_brush_extends_stops_the_brush(tmp_path)
 def test_undo_reloads_the_properties_page(tmp_path):
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     assert dock.stack.currentPanel() is dock.properties_page
     dock.properties.amount.setValue(2.5)                   # through the page, as a user would
     assert c.find(dike.id).amount == 2.5
@@ -181,7 +181,7 @@ def test_ctrl_z_in_a_text_field_of_the_panel_is_left_to_that_field(tmp_path):
     iface, c, dock = panel(tmp_path)
     _window, qgis_undo = in_a_window(iface, dock)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     assert dock.stack.currentPanel() is dock.properties_page
     spin = dock.properties.amount
     spin.setFocus()
@@ -196,11 +196,13 @@ def test_ctrl_z_in_a_text_field_of_the_panel_is_left_to_that_field(tmp_path):
 
 def test_ctrl_z_after_stepping_a_setting_undoes_the_change(tmp_path):
     """The arrows commit each step, so the field has no text of its own to undo: Ctrl+Z there
-    undoes the whole adjustment, as one step, like it does anywhere else in the panel."""
+    undoes the whole adjustment, as one step, like it does anywhere else in the panel. The page
+    must actually be open: a real window is active here (`in_a_window`), and a widget outside it
+    cannot genuinely take Qt's application focus, which these key events rely on."""
     iface, c, dock = panel(tmp_path)
     _window, qgis_undo = in_a_window(iface, dock)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     spin = dock.properties.amount
     spin.setFocus()
     spin_event_loop(10)
@@ -216,11 +218,12 @@ def test_ctrl_z_after_stepping_a_setting_undoes_the_change(tmp_path):
 
 def test_ctrl_z_after_a_field_undid_its_own_text_undoes_the_last_change(tmp_path):
     """Once the typed text is undone the field has only a redo left, so the next Ctrl+Z goes on to
-    the feature change instead of doing nothing."""
+    the feature change instead of doing nothing. The page must be open for the same reason as
+    above: a widget outside the active window cannot take real application focus."""
     iface, c, dock = panel(tmp_path)
     _window, qgis_undo = in_a_window(iface, dock)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     spin = dock.properties.amount
     spin.setFocus()
     spin_event_loop(10)
@@ -236,11 +239,12 @@ def test_ctrl_z_after_a_field_undid_its_own_text_undoes_the_last_change(tmp_path
 
 def test_the_undo_button_leaves_a_value_the_user_is_still_typing(tmp_path):
     """The button takes no focus, so the field keeps it and its typed text. Undo changes the feature;
-    the typed value is still there to confirm with Enter, not silently thrown away."""
+    the typed value is still there to confirm with Enter, not silently thrown away. The page must be
+    open for the typed text to reach a genuinely focused field (see the two tests above)."""
     iface, c, dock = panel(tmp_path)
     _window, _qgis_undo = in_a_window(iface, dock)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     c.update_feature(dike.id, width=dike.width + 1.0)
     spin = dock.properties.amount
     spin.setFocus()

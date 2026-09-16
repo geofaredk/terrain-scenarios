@@ -1,25 +1,31 @@
-"""Values of the selected feature; every change is applied to the terrain immediately."""
+"""The feature page: header (illustration, name, tool + volume), actions, problems, the fields and
+the grouped Advanced/Volumes/About sections. Every change is applied to the terrain immediately."""
 from __future__ import annotations
 
 import html
 import traceback
 
-from qgis.core import Qgis, QgsMessageLog
-from qgis.gui import QgsCollapsibleGroupBox, QgsDoubleSpinBox
-from qgis.PyQt.QtCore import QEvent, QSize, Qt
-from qgis.PyQt.QtWidgets import QComboBox, QFormLayout, QLabel, QVBoxLayout, QWidget
+from qgis.core import Qgis, QgsApplication, QgsMessageLog
+from qgis.gui import QgsCollapsibleGroupBox, QgsDoubleSpinBox, QgsPanelWidget, QgsScrollArea
+from qgis.PyQt.QtCore import QEvent, QSize, Qt, pyqtSignal
+from qgis.PyQt.QtWidgets import (QComboBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QToolButton,
+                                 QVBoxLayout, QWidget)
 
 from ..core.sections import supports_long_profile
 from ..core.tools import TOOL_INFO, Mode, PixelMode, reports_storage
 from . import illustrations, settings
 from .controller import LOG_TAG
+from .feature_list import feature_subtitle
 from .help_texts import (AMOUNT_IS_CUSTOM, FIELD_TIPS, FLAG_TEXTS, NO_VOLUME_YET, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS,
                          SCENARIO_TOTALS, TOOL_DESCRIPTIONS, TOOL_EXAMPLES, TOOL_LABELS, TOOL_SUMMARIES,
                          VOLUME_CUT_TIP, VOLUME_FILL_TIP, VOLUME_STORAGE_NOTE, VOLUME_STORAGE_TIP, amount_label,
                          cubic_metres)
+from .muted import MutedLabel
+from .selection import EDIT_ICON, ZOOM_ICON
 
 DIAGRAM = QSize(200, 96)
 TOOL_PICTURE = QSize(120, 64)
+HEADER_PICTURE = QSize(72, 36)
 PIXEL_ICON = QSize(32, 32)
 PIXEL_PICTURE = 72   # each of the three pictures in the Pixels to change tooltip
 
@@ -35,18 +41,77 @@ def _spin(minimum: float, maximum: float, step: float, suffix: str, decimals: in
     return spin
 
 
-class PropertiesPage(QWidget):
+def _action_button(icon: str, text: str, tip: str, checkable: bool = False) -> QToolButton:
+    """An icon-only, auto-raised button for the action row — text is kept for screen readers and
+    heads the tooltip, the same shape `MainDock`'s own toolbar buttons use."""
+    button = QToolButton()
+    button.setIcon(QgsApplication.getThemeIcon(icon))
+    button.setText(text)
+    button.setToolTip(tip)
+    button.setAutoRaise(True)
+    button.setCheckable(checkable)
+    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+    return button
+
+
+class PropertiesPage(QgsPanelWidget):
+    """The feature page (spec §7): a persistent, single instance for the dock's whole life, opened
+    on `MainDock`'s panel stack through `MainDock.open_page` — see the note on `_PagePanel` in
+    `main_dock.py` for why it is never pushed onto the stack directly."""
+
+    deleteRequested = pyqtSignal(str)
+    zoomRequested = pyqtSignal(str)
+    editShapeToggled = pyqtSignal(bool)
+
     def __init__(self, controller, parent=None):
         super().__init__(parent)
+        self.setDockMode(True)   # mandatory before openPanel, or it opens a modal dialog (hangs offscreen tests)
         self.controller = controller
         self._fid = None
         self._loading = False
-        self.title = QLabel()
-        font = self.title.font()
-        font.setBold(True)
-        self.title.setFont(font)
-        self.summary = QLabel()
-        self.summary.setWordWrap(True)
+
+        # Header: the tool illustration beside the name — renames commit through the controller, so
+        # they are undoable — with the tool label and volume line under it, muted (spec §7.1).
+        self.header_picture = QLabel()
+        self.header_picture.setFixedSize(HEADER_PICTURE)
+        self.name_edit = QLineEdit()
+        self.name_edit.setToolTip(self.tr("The feature's name."))
+        name_font = self.name_edit.font()
+        name_font.setBold(True)
+        self.name_edit.setFont(name_font)
+        self.name_edit.editingFinished.connect(self._commit_rename)
+        self.header_summary = MutedLabel()
+        header_text = QVBoxLayout()
+        header_text.setContentsMargins(0, 0, 0, 0)
+        header_text.addWidget(self.name_edit)
+        header_text.addWidget(self.header_summary)
+        header_row = QHBoxLayout()
+        header_row.addWidget(self.header_picture)
+        header_row.addLayout(header_text, 1)
+
+        # Action row (spec §7.2): Edit shape, Zoom to feature, Delete. Each is a signal so
+        # `MainDock` keeps owning the slots it already has and nothing about undo changes.
+        self.edit_button = _action_button(
+            EDIT_ICON, self.tr("Edit shape"),
+            self.tr("Move, add or remove the points of the selected feature."), checkable=True)
+        self.zoom_button = _action_button(ZOOM_ICON, self.tr("Zoom to feature"), self.tr("Zoom to feature"))
+        self.delete_button = _action_button("/mActionDeleteSelected.svg", self.tr("Delete"), self.tr("Delete"))
+        self.edit_button.toggled.connect(self.editShapeToggled)
+        self.zoom_button.clicked.connect(self._request_zoom)
+        self.delete_button.clicked.connect(self._request_delete)
+        action_row = QHBoxLayout()
+        action_row.addWidget(self.edit_button)
+        action_row.addWidget(self.zoom_button)
+        action_row.addWidget(self.delete_button)
+        action_row.addStretch(1)
+
+        # The drawing hint for work started from this page (Edit shape; Draw section line, from the
+        # Profiles dock) — spec §6 item 6, §7. `MainDock.show_hint`/`clear_hint` route here whenever
+        # this page is the one open.
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.hint.hide()
+
         self.amount_label = QLabel()
         self.amount_label.setWordWrap(True)   # "Height above the highest point" must not set the panel's width
         self.amount = _spin(0.0, 100.0, 0.1, " m", 2)
@@ -70,10 +135,16 @@ class PropertiesPage(QWidget):
         self.form.addRow(self.tr("Side slope"), self.slope)
         self.form.addRow(self.tr("Max. slope reach"), self.reach)
         self.form.addRow(self.tr("Slopes"), self.slope_position)
-        self.form.addRow(self.tr("Pixels to change"), self.pixel_mode)
+
+        self.advanced = QgsCollapsibleGroupBox(self.tr("Advanced"))
+        self.advanced.setObjectName("TerrainSketchAdvanced")
+        settings.remember_collapsed("advanced_group", self.advanced, collapsed=True)
+        advanced_form = QFormLayout(self.advanced)
+        advanced_form.addRow(self.tr("Pixels to change"), self.pixel_mode)
+
         self.about = QgsCollapsibleGroupBox(self.tr("About this tool"))
         self.about.setObjectName("TerrainSketchAboutTool")
-        settings.remember_collapsed("about_group", self.about)
+        settings.remember_collapsed("about_group", self.about, collapsed=True)   # the summary is in the header now
         self.about_text = QLabel()
         self.about_text.setWordWrap(True)
         self.about_picture = QLabel()
@@ -111,16 +182,30 @@ class PropertiesPage(QWidget):
         self.problems = QLabel()
         self.problems.setWordWrap(True)
         self.problems.hide()
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.addLayout(header_row)
+        content_layout.addLayout(action_row)
+        content_layout.addWidget(self.problems)
+        content_layout.addWidget(self.diagram)
+        content_layout.addLayout(self.form)
+        content_layout.addWidget(self.advanced)
+        content_layout.addWidget(self.volumes)
+        content_layout.addWidget(self.about)
+        content_layout.addWidget(self.hint)
+        content_layout.addStretch(1)
+
+        # The page scrolls (spec §7) so a narrow, short dock never clips the fields.
+        scroll = QgsScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(content)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.title)
-        layout.addWidget(self.summary)
-        layout.addWidget(self.about)
-        layout.addWidget(self.diagram)
-        layout.addLayout(self.form)
-        layout.addWidget(self.volumes)
-        layout.addWidget(self.problems)
-        layout.addStretch(1)
+        layout.addWidget(scroll)
+
         self.amount.valueChanged.connect(lambda value: self._changed("amount", value))
         self.width.valueChanged.connect(lambda value: self._changed("width", value))
         self.slope.valueChanged.connect(lambda value: self._changed("slope_n", value))
@@ -157,6 +242,15 @@ class PropertiesPage(QWidget):
                 QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
         super().changeEvent(event)
 
+    def show_hint(self, text: str) -> None:
+        """Show the instruction text for the drawing tool that is now running, started from this
+        page (Edit shape, or Draw section line from the Profiles dock — spec §6 item 6)."""
+        self.hint.setText(text)
+        self.hint.show()
+
+    def clear_hint(self) -> None:
+        self.hint.hide()
+
     def _draw_diagram(self, highlight: str | None) -> None:
         self.diagram.setPixmap(illustrations.pixmap("parameters", DIAGRAM, self.palette(),
                                                     highlight=highlight))
@@ -165,6 +259,8 @@ class PropertiesPage(QWidget):
         feature = self.controller.find(self._fid) if self._fid is not None else None
         if feature is None:
             return
+        self.header_picture.setPixmap(illustrations.pixmap(f"tool_{feature.tool.value}",
+                                                            HEADER_PICTURE, self.palette()))
         self.about_picture.setPixmap(illustrations.pixmap(f"tool_{feature.tool.value}",
                                                           TOOL_PICTURE, self.palette()))
         self._draw_diagram(None)
@@ -191,8 +287,9 @@ class PropertiesPage(QWidget):
         label = amount_label(feature.tool, feature.mode)
         self._loading = True
         try:
-            self.title.setText(_title(feature))
-            self.summary.setText(TOOL_SUMMARIES[feature.tool])
+            self.setPanelTitle(feature.name)
+            self.name_edit.setText(feature.name)
+            self.header_summary.setText(feature_subtitle(self.controller, fid))
             self.amount_label.setText(label or "")
             self._load_values(feature)
             self.form.setRowVisible(self.amount, label is not None)
@@ -260,6 +357,7 @@ class PropertiesPage(QWidget):
                     if stats.storage is not None else NO_VOLUME_YET)
             cut, fill = self.controller.totals()
             self.totals_value.setText(SCENARIO_TOTALS.format(fill=cubic_metres(fill), cut=cubic_metres(cut)))
+            self.header_summary.setText(feature_subtitle(self.controller, self._fid))
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
@@ -272,11 +370,28 @@ class PropertiesPage(QWidget):
             self._fid = None
             return
         feature = self.controller.find(self._fid)
-        self.title.setText(_title(feature))   # follows a rename in the list
+        self.setPanelTitle(feature.name)   # follows a rename in the list
+        if not self.name_edit.isModified():   # … without clobbering a name the user is still typing
+            self.name_edit.setText(feature.name)
         flags = self.controller.stats(self._fid).flags
         self.problems.setText("\n".join(FLAG_TEXTS[flag] for flag in flags))
         self.problems.setVisible(bool(flags))
 
+    def _commit_rename(self) -> None:
+        """The header's name field: committed through the controller on editingFinished, so the
+        rename is undoable like every other change on this page."""
+        if self._fid is None or self._loading:
+            return
+        feature = self.controller.find(self._fid)
+        name = self.name_edit.text().strip()
+        if feature is not None and name and name != feature.name:
+            self.controller.update_feature(self._fid, name=name)
+        self.name_edit.setModified(False)
 
-def _title(feature) -> str:
-    return f"{feature.name} · {TOOL_LABELS[feature.tool]}"
+    def _request_zoom(self) -> None:
+        if self._fid is not None:
+            self.zoomRequested.emit(self._fid)
+
+    def _request_delete(self) -> None:
+        if self._fid is not None:
+            self.deleteRequested.emit(self._fid)

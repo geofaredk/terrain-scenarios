@@ -93,14 +93,14 @@ def test_a_collapsed_group_is_remembered_under_the_plugin_group(tmp_path):
     c = start_session(tmp_path)
     page = PropertiesPage(c)
     page.show()                                    # a box that is not shown does not report a collapse
-    assert not page.about.isCollapsed()
-    page.about.setCollapsed(True)
-    assert settings.load("about_group/collapsed", False, bool)
+    assert page.about.isCollapsed()                # collapsed by default now (the summary is in the header)
+    page.about.setCollapsed(False)
+    assert settings.load("about_group/collapsed", True, bool) is False
     assert not [key for key in QgsSettings().allKeys() if key.startswith("QgsCollapsibleGroupBox/")
                 and "TerrainSketch" in key]
     again = PropertiesPage(c)
     again.show()                                   # a box that saved its own state would load it here
-    assert again.about.isCollapsed() and again.volumes.isCollapsed()    # Volumes starts collapsed
+    assert not again.about.isCollapsed() and again.volumes.isCollapsed()    # About remembers being opened
 
 
 def test_volumes_start_collapsed_and_an_opened_group_stays_open(tmp_path):
@@ -109,7 +109,7 @@ def test_volumes_start_collapsed_and_an_opened_group_stays_open(tmp_path):
     c = start_session(tmp_path)
     page = PropertiesPage(c)
     page.show()
-    assert page.volumes.isCollapsed() and not page.about.isCollapsed()
+    assert page.volumes.isCollapsed() and page.about.isCollapsed()   # both start collapsed (spec §7 items 5-7)
     page.volumes.setCollapsed(False)
     again = PropertiesPage(c)
     again.show()

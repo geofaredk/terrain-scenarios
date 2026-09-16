@@ -8,7 +8,7 @@ from terrain_sketch.gui.controller import SketchController
 from terrain_sketch.gui.help_texts import UNSAVED_CHANGES
 from terrain_sketch.gui.main_dock import VIEW_SESSION, VIEW_WELCOME, MainDock
 from terrain_sketch.gui.properties_page import PropertiesPage
-from terrain_sketch.gui.selection import EDIT_ICON, METHOD_ICONS, Method
+from terrain_sketch.gui.selection import EDIT_HINT, EDIT_ICON, METHOD_ICONS, ZOOM_ICON, Method
 from terrain_sketch.gui.tool_gallery import ToolGallery
 
 
@@ -125,7 +125,7 @@ def test_changing_the_dem_with_unsaved_work_asks_first_and_can_be_cancelled(tmp_
 def test_ending_the_session_closes_any_open_page(tmp_path):
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     assert dock.stack.currentPanel() is dock.properties_page
     c.close()
     assert dock.stack.currentPanel() is dock.main_panel and dock.views.currentIndex() == VIEW_WELCOME
@@ -154,10 +154,10 @@ def test_a_page_survives_being_closed_and_reopened(tmp_path):
     _iface, c, dock = panel(tmp_path)
     dock.show()
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)          # opens the properties page
+    dock.feature_view.rowOpened.emit(dike.id)     # opens the properties page
     dock.feature_view.clearSelection()            # closes it
     spin_event_loop(50)                            # let the closed page's deferred delete actually run
-    dock.feature_view.select_id(dike.id)          # reopening must not touch a deleted `properties` widget
+    dock.feature_view.rowOpened.emit(dike.id)     # reopening must not touch a deleted `properties` widget
     assert dock.stack.currentPanel() is dock.properties_page
     assert dock.properties.amount.value() == pytest.approx(dike.amount)   # still a live, working widget
     assert dock.properties.isVisible()             # not left invisible by release_content's old hide()
@@ -173,10 +173,10 @@ def test_undo_keys_on_the_properties_fields_survive_a_close_and_reopen(tmp_path)
 
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     dock.feature_view.clearSelection()
     spin_event_loop(50)                            # let the first close's deferred delete run
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     spin = dock.properties.amount
     spin.setFocus()
     spin_event_loop(10)
@@ -250,7 +250,7 @@ def test_escape_releases_the_page_before_reopening(tmp_path):
     _iface, c, dock = panel(tmp_path)
     dock.show()
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     QApplication.processEvents()
     assert dock.stack.currentPanel() is dock.properties_page
     dock.stack.setFocus()
@@ -258,10 +258,10 @@ def test_escape_releases_the_page_before_reopening(tmp_path):
     QTest.keyClick(dock.stack, Qt.Key.Key_Escape)
     assert dock.stack.currentPanel() is dock.main_panel     # Escape really did close the page
     spin_event_loop(50)                                       # let the deferred delete actually run
-    # select_id on the already-selected row is a no-op (Qt does not re-emit selectionChanged for a
-    # selection that does not change): clear first, so reselecting genuinely reopens the page.
-    dock.feature_view.clearSelection()
-    dock.feature_view.select_id(dike.id)                      # must not touch a deleted `properties`
+    # The row stays selected after Escape closes the page (spec §9); rowOpened must still reopen
+    # it even though reselecting it fires no selectionChanged at all (Task 5's fix — see
+    # test_reopening_an_already_selected_row_after_back below for the Back-button/click version).
+    dock.feature_view.rowOpened.emit(dike.id)                 # must not touch a deleted `properties`
     assert dock.stack.currentPanel() is dock.properties_page
     assert dock.properties.isVisible()             # not left invisible by release_content's old hide()
     assert dock.properties.amount.value() == pytest.approx(dike.amount)   # still a live, working widget
@@ -460,7 +460,7 @@ def test_properties_show_the_tool_fields_and_apply_changes(tmp_path):
 def test_every_panel_icon_exists_in_the_qgis_theme():
     """getThemeIcon returns a null icon for an unknown name, and the button then renders blank."""
     from terrain_sketch.gui.main_dock import PROFILES_ICON
-    for name in (*METHOD_ICONS.values(), EDIT_ICON, PROFILES_ICON):
+    for name in (*METHOD_ICONS.values(), EDIT_ICON, ZOOM_ICON, PROFILES_ICON):
         assert not QgsApplication.getThemeIcon(name).isNull(), name
 
 
@@ -472,3 +472,129 @@ def test_the_brush_radius_is_labelled_with_the_units_it_is_really_in():
     assert gallery.brush_spin.suffix() == " degrees"
     gallery.set_radius_units(Qgis.DistanceUnit.Unknown)
     assert gallery.brush_spin.suffix() == " map units"
+
+
+# --- Task 5: the feature page ------------------------------------------------------------------
+
+
+def test_opening_a_feature_shows_its_page_with_name_and_volume(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    page = dock.properties
+    # `page` (dock.properties) is the single, persistent feature-page instance (like dock.gallery);
+    # it is never pushed onto the stack directly (see `_PagePanel` in main_dock.py — pushing the same
+    # `QgsPanelWidget` instance twice over the dock's life corrupts the stack, verified by probe), so
+    # what the stack actually shows is `dock.properties_page`, the fresh wrapper `open_page` built
+    # for this open — the same pattern every other test in this file uses for `dock.gallery_page`.
+    assert dock.stack.currentPanel() is dock.properties_page and page.panelTitle() == dike.name
+    assert page.name_edit.text() == dike.name and "Raise path" in page.header_summary.text()
+    assert "m³" in page.header_summary.text()
+
+
+def test_renaming_in_the_header_is_undoable(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    dock.properties.name_edit.setText("Dike north")
+    dock.properties.name_edit.editingFinished.emit()
+    assert c.feature(dike.id).name == "Dike north"
+    c.undo_stack.undo()
+    assert c.feature(dike.id).name == dike.name and dock.properties.name_edit.text() == dike.name
+
+
+def test_deleting_from_the_page_goes_back_to_the_list(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    dock.properties.delete_button.click()
+    assert dock.stack.currentPanel() is dock.main_panel and c.features == ()
+
+
+def test_pixels_to_change_sits_under_advanced_and_starts_collapsed(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    page = dock.properties
+    assert page.advanced.isCollapsed() and page.pixel_mode.parent() is page.advanced
+    assert page.volumes.isCollapsed() and page.about.isCollapsed()
+
+
+def test_undo_that_restores_a_deleted_feature_does_not_open_a_page(tmp_path):
+    """spec §5.2, §9: selection alone never opens a *closed* page. `dike` stays selected the whole
+    time (its own page was closed with Back) while `pond` is deleted and the delete undone — the
+    list resets twice, which reselects `dike` through `FeatureListView`'s own remember/restore (a
+    real `selectionChanged` fires, confirmed by probe) even though nothing about `dike` changed.
+    Before Task 5, `_selection_changed` opened a page whenever a feature became selected at all;
+    now it only ever retargets or closes a page that is *already* open."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    dock.close_page()                                     # the row stays selected, the page does not
+    assert dock.stack.currentPanel() is dock.main_panel
+    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
+    c.delete_feature(pond.id)
+    dock.undo_button.click()                               # restores pond; the list resets, reselecting dike
+    assert c.find(pond.id) is not None
+    assert dock.stack.currentPanel() is dock.main_panel     # restoring it must not reopen dike's page
+
+
+def test_renaming_in_the_list_does_not_open_a_page(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    dock.close_page()
+    dock.model.setData(dock.model.index(dock.model.row_of(dike.id)), "Dike north")
+    assert c.feature(dike.id).name == "Dike north"
+    assert dock.stack.currentPanel() is dock.main_panel
+
+
+def test_reopening_an_already_selected_row_reaches_its_page(tmp_path):
+    """Carried from Task 3's review: after Back closes the feature page, the row stays selected
+    (spec §9) — and a click on an already-selected row fires no `selectionChanged` at all (Qt does
+    not re-emit for a selection that does not change), so before this task that row could not be
+    reopened at all. Wiring `FeatureListView.rowOpened` — not `selectionChanged` — is the fix; this
+    reproduces the real path, a click on the view's own viewport, not a direct signal emit."""
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtTest import QTest
+    from qgis.PyQt.QtWidgets import QApplication, QToolButton
+    from qgis_helpers import spin_event_loop
+
+    _iface, c, dock = panel(tmp_path)
+    dock.show()
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    QApplication.processEvents()
+    assert dock.stack.currentPanel() is dock.properties_page
+    back = dock.stack.findChild(QToolButton, "mBackButton")
+    back.click()
+    assert dock.stack.currentPanel() is dock.main_panel
+    spin_event_loop(50)                                      # let the deferred delete actually run
+    assert dock.feature_view.selected_id() == dike.id         # the row really did stay selected
+    position = dock.feature_view.visualRect(dock.model.index(0)).center()
+    QTest.mouseClick(dock.feature_view.viewport(), Qt.MouseButton.LeftButton, pos=position)
+    assert dock.stack.currentPanel() is dock.properties_page   # the same click reopens the page
+    assert dock.properties.isVisible()
+
+
+def test_the_edit_hint_shows_on_the_feature_page_while_it_is_open(tmp_path):
+    """spec §6 item 6: EDIT_HINT belongs to the feature page, not the New feature page — `dock.hint`
+    (used by every existing hint test) must follow whichever page is actually open."""
+    _iface, c, dock = panel(tmp_path)
+    dock.show()
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    dock.edit_button.setChecked(True)
+    assert dock.properties.hint.isVisible() and dock.properties.hint.text() == EDIT_HINT
+    assert dock.hint is dock.properties.hint and dock.hint.text() == EDIT_HINT
+    dock.edit_button.setChecked(False)
+    assert not dock.properties.hint.isVisible()
+
+
+def test_the_zoom_button_zooms_to_the_feature(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    before = dock.iface.mapCanvas().extent()
+    dock.properties.zoom_button.click()
+    assert dock.iface.mapCanvas().extent() != before

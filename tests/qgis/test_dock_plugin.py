@@ -187,7 +187,7 @@ def test_deleting_the_shown_feature_leaves_the_properties_page(tmp_path):
     _iface, controller, dock = _session_dock(tmp_path)
     dike = controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     controller.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     assert dock.stack.currentPanel() is dock.properties_page
 
     dock.delete_button.click()
@@ -232,16 +232,16 @@ def test_the_brush_hint_names_the_feature_it_extends(tmp_path):
     assert dock._brush_fid is None and pond.name not in dock.hint.text()
 
 
-def test_selecting_a_row_takes_the_new_feature_page_and_its_hint_off_screen(tmp_path):
+def test_opening_a_row_takes_the_new_feature_page_and_its_hint_off_screen(tmp_path):
     """`isHidden()` is False for a widget that was never put on screen at all, so the original form
     of this test (no `dock.show()`, no `dock.new_button.click()`) could not tell a visible hint from
     one that was never shown in the first place — it passed regardless of what really happened on
-    screen. With the page genuinely opened and the dock genuinely shown: selecting a row (not
-    reachable through the real UI while the New feature page covers the feature list — this drives
-    the selection model directly, as the original test did) opens that row's properties page in the
-    New feature page's place (`open_page` never drills more than one level deep — see its
-    docstring), which — since the page the drawing's hint was on is now gone — stops the drawing
-    too (`_stop_drawing_on_gallery_close`), the same as pressing Back or Escape would."""
+    screen. With the page genuinely opened and the dock genuinely shown: opening a row (not
+    reachable through the real UI while the New feature page covers the feature list — this fires
+    `rowOpened` directly, as the original test drove the selection model directly) opens that row's
+    properties page in the New feature page's place (`open_page` never drills more than one level
+    deep — see its docstring), which — since the page the drawing's hint was on is now gone — stops
+    the drawing too (`_stop_drawing_on_gallery_close`), the same as pressing Back or Escape would."""
     _iface, controller, dock = _session_dock(tmp_path)
     dock.show()
     dike = controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
@@ -250,7 +250,7 @@ def test_selecting_a_row_takes_the_new_feature_page_and_its_hint_off_screen(tmp_
     dock.gallery.select_mode(Mode.PATH)
     dock.gallery.method_buttons[Method.FREEHAND].click()
     assert dock.hint.isVisible()
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     assert dock.draw_tool is None          # the page it was drawing on is gone, so the drawing stopped
     assert not dock.hint.isVisible()       # … and so did its hint
     assert dock.stack.currentPanel() is dock.properties_page
@@ -412,8 +412,8 @@ def test_a_panel_without_a_profiles_panel_has_no_profiles_button():
 
 def test_the_new_feature_button_sits_above_the_feature_list(tmp_path):
     """The primary action lives in the toolbar, above the list, in the session view now (spec §5).
-    `delete_button` and `edit_button` move onto the feature page in Task 5 and are not laid out
-    anywhere until then, so their position is not asserted here — see the Task 3 report."""
+    `delete_button` and `edit_button` are the feature page's own buttons since Task 5 (spec §12) and
+    are laid out there, not in the toolbar, so their position is not asserted here."""
     dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
     dock.dem_combo.setLayer(dem_layer(tmp_path))
     dock.start_button.click()

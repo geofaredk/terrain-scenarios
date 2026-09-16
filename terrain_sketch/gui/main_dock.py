@@ -37,7 +37,7 @@ from .map_tools.vertex_edit import VertexEditTool
 from .muted import MutedLabel
 from .overlay import PreviewOverlay
 from .properties_page import PropertiesPage
-from .selection import BRUSH_EXTEND_HINT, EDIT_HINT, EDIT_ICON, METHOD_HINTS, Method
+from .selection import BRUSH_EXTEND_HINT, EDIT_HINT, METHOD_HINTS, ZOOM_ICON, Method
 from .tool_gallery import ToolGallery
 from .undo import UndoKeys
 
@@ -111,10 +111,9 @@ class _PagePanel(QgsPanelWidget):
     the stack (verified by probe). So neither is ever pushed itself: a *fresh* `_PagePanel` wraps
     it on every open, and only the wrapper is ever pushed and accepted. `content` keeps its
     identity — it is only reparented — so `dock.gallery` and `dock.properties` stay the same
-    objects other code already reaches for. Task 5 may still turn `PropertiesPage` into a
-    `QgsPanelWidget` of its own for other reasons, but that does not remove the need for this
-    wrapper, since the "same instance twice" restriction applies regardless of `content`'s type —
-    `ToolGallery` is a `QgsPanelWidget` already and still needs it.
+    objects other code already reaches for. `PropertiesPage` is a `QgsPanelWidget` in its own right
+    too (Task 5), the same as `ToolGallery` — neither is exempt from the "same instance twice"
+    restriction, which is why both still go through this wrapper rather than being pushed directly.
 
     `QgsPanelWidgetStack` defaults `autoDelete` to True and `acceptPanel()` schedules the panel for
     deletion: left alone, that `deleteLater()` takes `content` down with it, since `addWidget`
@@ -320,18 +319,6 @@ class MainDock(QgsDockWidget):
         self.model = FeatureListModel(controller, self)
         self.feature_view = FeatureListView(self.model)
 
-        # The drawing hint now lives on the New feature page (`self.gallery.hint`); `dock.hint`
-        # stays a working alias below (a `hint` property) so every existing caller keeps working.
-        # `delete_button` and `edit_button` move onto a later page (Task 5); kept constructed and
-        # working here, parented but not laid out, so nothing that reaches for them mid-plan breaks.
-        self.delete_button = QPushButton(QgsApplication.getThemeIcon("/mActionDeleteSelected.svg"),
-                                         self.tr("Delete"), self)
-        self.delete_button.hide()
-        self.edit_button = QPushButton(QgsApplication.getThemeIcon(EDIT_ICON), self.tr("Edit shape"), self)
-        self.edit_button.setCheckable(True)
-        self.edit_button.setToolTip(self.tr("Move, add or remove the points of the selected feature."))
-        self.edit_button.hide()
-
         self.status_label = MutedLabel()
         self.status_label.setOpenExternalLinks(False)
 
@@ -371,6 +358,11 @@ class MainDock(QgsDockWidget):
         # without this, Escape inside the gallery is silently swallowed).
         self.gallery.panelAccepted.connect(self.close_page)
         self.properties = PropertiesPage(controller)
+        # spec §12: `delete_button` and `edit_button` keep their names, now as the feature page's
+        # own buttons — there is no second set. `zoom_button` has no dock-level alias; nothing
+        # outside `properties` reaches for it.
+        self.delete_button = self.properties.delete_button
+        self.edit_button = self.properties.edit_button
         self.gallery_page = None
         self.properties_page = None
 
@@ -382,10 +374,12 @@ class MainDock(QgsDockWidget):
         self.save_scenario_action.triggered.connect(lambda: self._save_scenario())
         self.save_as_scenario_action.triggered.connect(lambda: self._save_scenario(save_as=True))
         self.new_button.clicked.connect(self._new_feature)
-        self.delete_button.clicked.connect(self._delete_selected)
+        self.feature_view.rowOpened.connect(self._open_feature_page)
+        self.properties.deleteRequested.connect(self._delete_selected)
+        self.properties.zoomRequested.connect(self._zoom_to)
+        self.properties.editShapeToggled.connect(self._toggle_edit)
         self.feature_view.selectionModel().selectionChanged.connect(self._selection_changed)
         self.feature_view.customContextMenuRequested.connect(self._context_menu)
-        self.edit_button.toggled.connect(self._toggle_edit)
         self.status_label.linkActivated.connect(self._show_welcome_view)
         self.keep_sketching_button.clicked.connect(self._keep_sketching)
         self.iface.mapCanvas().mapToolSet.connect(self._map_tool_set)
@@ -525,21 +519,22 @@ class MainDock(QgsDockWidget):
 
     @property
     def hint(self) -> QLabel:
-        """The drawing hint, which now lives on the New feature page. Kept as `dock.hint` so every
+        """The drawing hint, on whichever page currently owns one. Kept as `dock.hint` so every
         existing caller and test keeps working unchanged."""
-        return self.gallery.hint
+        return self.properties.hint if self.stack.currentPanel() is self.properties_page else self.gallery.hint
 
     def show_hint(self, text: str) -> None:
         """Show the instruction text for whichever activity is running, on whichever page owns a
-        hint for it. `METHOD_HINTS` and `BRUSH_EXTEND_HINT` belong to the New feature page — the
-        only target today. `EDIT_HINT` and `SECTION_LINE_HINT` belong to the feature page Task 5
-        adds; routed here rather than at each call site, so Task 5 only has to teach this one method
-        a second target (e.g. by checking `self.stack.currentPanel()`) instead of rewriting every
-        caller."""
-        self.gallery.show_hint(text)
+        hint for it. `METHOD_HINTS` and `BRUSH_EXTEND_HINT` belong to the New feature page.
+        `EDIT_HINT` (Edit shape) and `SECTION_LINE_HINT` (Draw section line, from the Profiles dock)
+        belong to the feature page (spec §6 item 6, §7) and show there whenever it is the page open;
+        routed here rather than at each call site, so every caller stays unchanged."""
+        page = self.properties if self.stack.currentPanel() is self.properties_page else self.gallery
+        page.show_hint(text)
 
     def clear_hint(self) -> None:
         self.gallery.clear_hint()
+        self.properties.clear_hint()
 
     def _stop_drawing_on_gallery_close(self, _panel=None) -> None:
         """Pressing the stack's own Back button, or Escape inside the tiles (forwarded from
@@ -690,7 +685,22 @@ class MainDock(QgsDockWidget):
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
-    def _delete_selected(self) -> None:
+    def _open_feature_page(self, fid: str) -> None:
+        """Open `fid`'s feature page — the only two ways in (spec §5.2, §9): a click or Enter on its
+        row (`feature_view.rowOpened`), or a finished drawing / From layer for a brand-new feature
+        (`_drawn`, `_use_layer`). Selection alone never opens a page — see `_selection_changed` —
+        so this also selects the row itself: a real click already will have (`rowOpened` fires after
+        `QListView`'s own click handling), but reopening an already-selected row (spec §9's back-then-
+        reclick case) produces no `selectionChanged` at all, and this must still work."""
+        try:
+            self.feature_view.select_id(fid)
+            self.properties.show_feature(fid)
+            self.properties_page = _PagePanel(self.properties.panelTitle(), self.properties, self)
+            self.open_page(self.properties_page)
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _delete_selected(self, _fid=None) -> None:
         fid = self.feature_view.selected_id()
         if fid is not None:
             self.controller.delete_feature(fid)
@@ -701,6 +711,10 @@ class MainDock(QgsDockWidget):
         self.overlay.show_change(preview.bounds, preview.change)
 
     def _selection_changed(self, *_args) -> None:
+        """Keep the map highlight and the Profiles dock in step with the list selection (spec §5.2,
+        §9) — this never opens a closed page by itself. When the feature page is already open it
+        follows the selection instead: shows whichever feature is now selected, or closes if none
+        is — an undo, a model reset or a rename must not leave it showing a stale feature."""
         try:
             fid = self.feature_view.selected_id()
             self.stop_editing()
@@ -710,12 +724,11 @@ class MainDock(QgsDockWidget):
                 self.profiles.show_feature(fid)
             self.edit_button.setEnabled(fid is not None)
             self._update_highlight(fid)
-            if fid is not None:
-                self.properties.show_feature(fid)
-                self.properties_page = _PagePanel("", self.properties, self)
-                self.open_page(self.properties_page)
-            elif self.controller.has_dem:
-                self.close_page()
+            if self.stack.currentPanel() is self.properties_page:
+                if fid is not None:
+                    self.properties.show_feature(fid)
+                elif self.controller.has_dem:
+                    self.close_page()
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
@@ -790,12 +803,12 @@ class MainDock(QgsDockWidget):
             return
         feature = self.controller.add_drawn(tool, mode, geometry, crs)
         if feature is not None:
-            self.feature_view.select_id(feature.id)
+            self._open_feature_page(feature.id)   # a finished drawing opens the new feature's page (spec §9)
 
     def _use_layer(self, tool, mode, layer, selected_only) -> None:
         feature = self.controller.add_from_layer(tool, mode, layer, selected_only)
         if feature is not None:
-            self.feature_view.select_id(feature.id)
+            self._open_feature_page(feature.id)   # From layer opens the new feature's page too (spec §9)
 
     def _toggle_edit(self, checked: bool) -> None:
         if not checked:
@@ -1046,7 +1059,7 @@ class MainDock(QgsDockWidget):
         menu.addAction(self.tr("Rename"), lambda: self._rename(fid))
         menu.addAction(QgsApplication.getThemeIcon("/mActionDuplicateFeature.svg"), self.tr("Duplicate"),
                        lambda: self._duplicate(fid))
-        menu.addAction(QgsApplication.getThemeIcon("/mActionZoomToLayer.svg"), self.tr("Zoom to feature"),
+        menu.addAction(QgsApplication.getThemeIcon(ZOOM_ICON), self.tr("Zoom to feature"),
                        lambda: self._zoom_to(fid))
         menu.addSeparator()
         menu.addAction(QgsApplication.getThemeIcon("/mActionDeleteSelected.svg"), self.tr("Delete"),

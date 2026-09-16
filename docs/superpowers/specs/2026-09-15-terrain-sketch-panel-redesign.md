@@ -128,8 +128,10 @@ Title "New feature", pushed on the stack. Contents, top to bottom:
    wraps, enabled by mode as today. Brush radius (`QgsDoubleSpinBox`, map units suffix) appears only while
    the Brush button is enabled, instead of being permanently visible and greyed.
 5. **From layer** expands the existing `LayerSource` widget inline under the buttons.
-6. The drawing **hint** (`METHOD_HINTS`, `BRUSH_EXTEND_HINT`, `SECTION_LINE_HINT`) shows on this page while a
-   drawing is running, so the user reads it where they started.
+6. The drawing **hint** (`METHOD_HINTS`, `BRUSH_EXTEND_HINT`) shows on this page while a drawing started
+   from it is running, so the user reads it where they started. Hints for work started from a feature —
+   `EDIT_HINT` (Edit shape) and `SECTION_LINE_HINT` (Draw section line, from the Profiles panel) — show on
+   the feature page instead (§7). `MainDock` routes a hint to whichever page is open.
 
 Picking a tool and a method starts the map tool, as today. When the drawing finishes and the controller adds
 the feature, the New feature page closes and the new feature's page opens in its place. Pressing back, or

@@ -364,6 +364,49 @@ def test_shape_is_a_segmented_pair_that_disables_what_the_tool_cannot_do(tmp_pat
     assert dock.gallery.mode_group.checkedButton() is dock.gallery.line_mode
 
 
+def test_the_shape_buttons_look_like_buttons_in_either_state(tmp_path):
+    """VISUAL d: `autoRaise` used to be on, so the unchecked one of the pair had no visible border
+    at all — reading as plain text next to the checked one's highlight, rather than as a pair of
+    buttons."""
+    _iface, _c, dock = panel(tmp_path)
+    dock.new_button.click()
+    assert not dock.gallery.line_mode.autoRaise() and not dock.gallery.area_mode.autoRaise()
+
+
+def test_the_tile_grid_is_sized_to_its_content_not_stretched(tmp_path):
+    """VISUAL b: the tile view's vertical size policy used to be `Expanding` (a `QListWidget`'s
+    default), so it stretched to fill the whole New feature page, crowding the summary, Shape and
+    Where controls into whatever space was left at the bottom of a tall dock. Sized to content
+    (`_ToolTileList.heightForWidth`) instead: all seven tiles show without a scrollbar, and the
+    Where buttons sit well up the page rather than pushed to its bottom."""
+    from qgis.PyQt.QtWidgets import QApplication
+    from qgis_helpers import spin_event_loop
+
+    _iface, _c, dock = panel(tmp_path)
+    dock.resize(360, 900)
+    dock.show()
+    dock.new_button.click()
+    QApplication.processEvents()
+    spin_event_loop(20)
+
+    gallery = dock.gallery
+    assert gallery.tool_list.count() == len(Tool) == 7
+    assert not gallery.tool_list.verticalScrollBar().isVisible()   # every tile fits without scrolling
+    where_button = gallery.method_buttons[Method.CLICK]
+    top = where_button.mapTo(dock, where_button.rect().topLeft()).y()
+    assert 0 < top < dock.height() * 2 / 3   # well up the page, not crammed at the bottom
+
+
+def test_the_new_feature_page_keeps_the_styles_normal_margin_from_the_panel_edge(tmp_path):
+    """VISUAL c: the New feature page used to have zero content margins, so its content touched
+    the panel edge, unlike QGIS's own panels."""
+    _iface, _c, dock = panel(tmp_path)
+    dock.show()
+    dock.new_button.click()
+    left = dock.gallery.tool_list.mapTo(dock, dock.gallery.tool_list.rect().topLeft()).x()
+    assert left > 0
+
+
 def test_drawing_a_feature_closes_the_new_feature_page(tmp_path):
     """Drawing goes through the ordinary path — `select_id` selects the new feature, which opens
     its properties page, which `open_page` replaces the New feature page with — so nothing New-
@@ -528,6 +571,17 @@ def test_opening_a_feature_shows_its_page_with_name_and_volume(tmp_path):
     assert dock.stack.currentPanel() is dock.properties_page and page.panelTitle() == dike.name
     assert page.name_edit.text() == dike.name and "Raise path" in page.header_summary.text()
     assert "m³" in page.header_summary.text()
+
+
+def test_the_feature_page_keeps_the_styles_normal_margin_from_the_panel_edge(tmp_path):
+    """VISUAL c: the feature page used to have zero content margins, so its fields touched the
+    panel edge, unlike QGIS's own panels."""
+    _iface, c, dock = panel(tmp_path)
+    dock.show()
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    label = dock.properties.amount_label
+    assert label.mapTo(dock, label.rect().topLeft()).x() > 0
 
 
 def test_renaming_in_the_header_is_undoable(tmp_path):
@@ -764,6 +818,32 @@ def test_escape_in_a_spin_box_cancels_instead_of_committing(tmp_path):
     assert dock.stack.currentPanel() is dock.main_panel      # Escape still closed the page
     assert c.feature(dike.id).amount == before                # …but the typed value was discarded
     assert c.undo_stack.count() == steps                       # and no change was ever committed
+
+
+def test_return_commits_a_spin_boxs_typed_value(tmp_path):
+    """The other half of the Escape-cancels rule above: typing into `amount` and pressing Return —
+    not just `setValue` — must commit it, through the real keyboard path (`interpretText` on
+    `editingFinished`/Return), as one undo step. There was no keyboard-driven test of this; every
+    existing coverage of a committed change (`test_properties_show_the_tool_fields_and_apply_changes`)
+    calls `setValue` directly, which bypasses typing and `keyboardTracking(False)` entirely."""
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtTest import QTest
+    from qgis.PyQt.QtWidgets import QApplication
+
+    _iface, c, dock = panel(tmp_path)
+    dock.show()
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    dock.properties.amount.setFocus()
+    QApplication.processEvents()
+    dock.properties.amount.selectAll()
+    QTest.keyClicks(dock.properties.amount, "7.5")
+    steps = c.undo_stack.count()
+
+    QTest.keyClick(dock.properties.amount, Qt.Key.Key_Return)
+    QApplication.processEvents()
+    assert c.feature(dike.id).amount == pytest.approx(7.5)
+    assert c.undo_stack.count() == steps + 1
 
 
 def test_the_title_bar_follows_a_rename(tmp_path):
@@ -1067,11 +1147,19 @@ def test_delete_uses_the_id_the_page_sends_not_just_the_selection(tmp_path):
 
 
 def test_a_guarded_slots_failure_is_logged_not_raised(tmp_path, monkeypatch):
-    """Every `MainDock` slot reachable from a Qt signal, event or timer must log rather than raise
-    (an exception escaping a Qt callback aborts QGIS) — `_delete_selected` stands in for the whole
-    list of guarded slots (`_context_menu`, `_export`, `_open_scenario`, `_use_layer`,
-    `_section_drawn`, `_drop_missing_brush_target`, `_refresh_highlight`, `stop_editing`, `_edited`,
-    `_reroute_hint`), each wrapped in the same try/except + `QgsMessageLog` pattern."""
+    """Every `MainDock` slot reachable from a Qt signal, event filter or timer must log rather than
+    raise (an exception escaping a Qt callback aborts QGIS) — `_delete_selected` stands in for the
+    whole list of guarded slots, each wrapped in the same try/except + `QgsMessageLog` pattern:
+    `_context_menu`, `_export`, `_open_scenario`, `_use_layer`, `_section_drawn`,
+    `_drop_missing_brush_target`, `_refresh_highlight`, `stop_editing`, `_edited`, `_reroute_hint`
+    (Task 6's original sweep), plus `_start`, `_new_scenario`, `_zoom_to`, `_toggle_edit`,
+    `_map_tool_set`, `_update_radius_units`, `_show_message`, `_preview_updated`,
+    `_history_restored`, `_begin_drawing`, `_drawn`, `end_drawing`, `close_page`, `_save_scenario`,
+    `_sync_feature_page_title`, `_draw_section_line`, `_schedule_reroute_hint`,
+    `_update_overlay_transform`, `_clear_preview`, `_profiles_closed_state_changed` and
+    `closeEvent` (the review's follow-up sweep, including two bare lambdas — `previewCleared` and
+    `profiles.closedStateChanged` — replaced with named guarded methods so they could be guarded
+    at all). See the Task 6 fix report for the full final sweep."""
     import terrain_sketch.gui.main_dock as main_dock_module
 
     _iface, c, dock = panel(tmp_path)

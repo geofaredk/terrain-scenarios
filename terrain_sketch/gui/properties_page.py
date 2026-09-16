@@ -20,6 +20,7 @@ from .help_texts import (AMOUNT_IS_CUSTOM, FIELD_TIPS, FLAG_TEXTS, NO_VOLUME_YET
                          SCENARIO_TOTALS, TOOL_DESCRIPTIONS, TOOL_EXAMPLES, VOLUME_CUT_TIP, VOLUME_FILL_TIP,
                          VOLUME_STORAGE_NOTE, VOLUME_STORAGE_TIP, amount_label, cubic_metres)
 from .muted import MutedLabel
+from .page_layout import apply_page_margins
 from .selection import EDIT_ICON, ZOOM_ICON
 
 DIAGRAM = QSize(200, 96)
@@ -185,7 +186,7 @@ class PropertiesPage(QgsPanelWidget):
 
         content = QWidget()
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
+        apply_page_margins(content_layout, content)   # VISUAL c: a normal gap from the panel edge
         content_layout.addLayout(header_row)
         content_layout.addLayout(action_row)
         # Directly under the action row (spec §6 item 6, as amended): a hint for work started from

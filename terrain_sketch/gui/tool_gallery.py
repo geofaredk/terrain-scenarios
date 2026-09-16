@@ -8,19 +8,53 @@ from qgis.core import Qgis, QgsApplication, QgsMessageLog, QgsUnitTypes
 from qgis.gui import QgsDoubleSpinBox, QgsPanelWidget
 from qgis.PyQt.QtCore import QEvent, QSize, Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import (QButtonGroup, QGridLayout, QHBoxLayout, QLabel, QListView, QListWidget,
-                                 QListWidgetItem, QToolButton, QVBoxLayout)
+                                 QListWidgetItem, QSizePolicy, QToolButton, QVBoxLayout)
 
 from ..core.tools import TOOL_INFO, Mode, Tool
 from . import illustrations
 from .controller import LOG_TAG
 from .help_texts import TOOL_LABELS, TOOL_SUMMARIES, tool_tooltip
 from .layer_source import LayerSource
+from .page_layout import apply_page_margins
 from .selection import METHOD_ICONS, METHOD_LABELS, METHOD_TIPS, Method
 
 DEFAULT_BRUSH_RADIUS = 5.0
 TILE_ICON_SIZE = QSize(96, 48)
 TILE_GRID_SIZE = QSize(116, 92)
 METHOD_GRID_POSITIONS = {Method.CLICK: (0, 0), Method.FREEHAND: (0, 1), Method.BRUSH: (1, 0), Method.LAYER: (1, 1)}
+
+
+class _ToolTileList(QListWidget):
+    """The tile grid, sized to fit exactly the rows its current width needs — not stretched to
+    fill whatever space `QVBoxLayout` leaves it (`QAbstractScrollArea`'s default vertical size
+    policy is `Expanding`), which used to crowd the summary, Shape and Where controls into
+    whatever was left at the bottom of the New feature page (VISUAL b). `IconMode` with
+    `ResizeMode.Adjust` already reflows the tiles into more or fewer columns as the width changes;
+    `heightForWidth` is what lets `QVBoxLayout` ask this widget how tall it needs to be for THAT
+    width, rather than the other way around — the standard Qt mechanism for a flow layout whose
+    height depends on the width it is given (used the same way a word-wrapped `QLabel` reports its
+    own height), so the grid keeps reflowing and staying sized-to-content on every resize."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        policy = self.sizePolicy()
+        policy.setVerticalPolicy(QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 — Qt override
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 — Qt override
+        grid = self.gridSize()
+        columns = max(1, width // max(grid.width(), 1))
+        rows = -(-self.count() // columns)   # ceil division: enough rows for every tile
+        return rows * grid.height() + 2 * self.frameWidth()
+
+    def sizeHint(self):  # noqa: N802 — Qt override
+        width = self.viewport().width() or TILE_GRID_SIZE.width()
+        return QSize(width, self.heightForWidth(width))
 
 
 class ToolGallery(QgsPanelWidget):
@@ -33,9 +67,9 @@ class ToolGallery(QgsPanelWidget):
         self.setDockMode(True)   # mandatory before openPanel, or it opens a modal dialog (hangs offscreen tests)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        apply_page_margins(layout, self)   # VISUAL c: a normal gap from the panel edge
         layout.addWidget(QLabel(self.tr("What do you want to build?")))
-        self.tool_list = QListWidget()
+        self.tool_list = _ToolTileList()
         self.tool_list.setViewMode(QListView.ViewMode.IconMode)
         self.tool_list.setUniformItemSizes(True)
         self.tool_list.setResizeMode(QListView.ResizeMode.Adjust)
@@ -93,6 +127,10 @@ class ToolGallery(QgsPanelWidget):
         self.hint.setWordWrap(True)
         self.hint.hide()
         layout.addWidget(self.hint)
+
+        # VISUAL b: the stretch sits below every control, not on the tile grid itself, so leftover
+        # space in a tall dock collects here instead of the grid being stretched to fill it.
+        layout.addStretch(1)
 
         self.tool_list.currentItemChanged.connect(self._tool_changed)
         self.line_mode.toggled.connect(self._mode_changed)
@@ -162,10 +200,13 @@ class ToolGallery(QgsPanelWidget):
         return QgsUnitTypes.toAbbreviatedString(units) or self.tr("map units")
 
     def _shape_button(self, text: str) -> QToolButton:
+        """VISUAL d: `autoRaise` off, on both Line and Area, so each looks like a button in either
+        state — checked or not — instead of the unchecked one reading as plain text next to the
+        checked one's flat highlight."""
         button = QToolButton()
         button.setText(text)
         button.setCheckable(True)
-        button.setAutoRaise(True)
+        button.setAutoRaise(False)
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         return button
 

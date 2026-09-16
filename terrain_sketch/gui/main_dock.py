@@ -424,7 +424,7 @@ class MainDock(QgsDockWidget):
         controller.sessionChanged.connect(self._session_changed)
         controller.message.connect(self._show_message)
         controller.previewUpdated.connect(self._preview_updated)
-        controller.previewCleared.connect(lambda: self.overlay.clear())
+        controller.previewCleared.connect(self._clear_preview)
         controller.featuresRestored.connect(self._history_restored)
         # Ctrl+Z / Ctrl+Shift+Z: in the panel always, on the map only while a Terrain Sketch tool is active
         self.undo_keys = UndoKeys(controller.undo_stack, parent=self)
@@ -437,7 +437,7 @@ class MainDock(QgsDockWidget):
             profiles.installEventFilter(self.undo_keys)   # the Profiles panel is Terrain Sketch too
             profiles.drawSectionRequested.connect(self._draw_section_line)
             self.profiles_button.toggled.connect(profiles.setUserVisible)
-            profiles.closedStateChanged.connect(lambda closed: self.profiles_button.setChecked(not closed))
+            profiles.closedStateChanged.connect(self._profiles_closed_state_changed)
         # A spin box (or the header's name field) claims Ctrl+Z for its own text even when it has
         # none to undo, as after a spin's arrows committed each step; only while there is typed
         # text to undo (or redo) is that key its own — otherwise it must reach the undo stack, or a
@@ -457,10 +457,16 @@ class MainDock(QgsDockWidget):
         self._session_changed()
 
     def end_drawing(self) -> None:
-        """Stop a drawing in progress and give the canvas its previous map tool back."""
-        tool, self.draw_tool, self._brush_fid, self._brush_extends = self.draw_tool, None, None, False
-        self._section_fid = None
-        self._release_tool(tool)
+        """Stop a drawing in progress and give the canvas its previous map tool back. Guarded:
+        reached directly from `draw_tool.cancelled`, a Qt signal (`_activate_drawing`), as well as
+        from many plain callers that only depend on it running — it never returns a value, so a
+        caller loses nothing when the guard below swallows an exception instead of raising it."""
+        try:
+            tool, self.draw_tool, self._brush_fid, self._brush_extends = self.draw_tool, None, None, False
+            self._section_fid = None
+            self._release_tool(tool)
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def stop_editing(self) -> None:
         """Leave vertex editing and give the canvas its previous map tool back. Guarded: reached
@@ -506,7 +512,12 @@ class MainDock(QgsDockWidget):
             self.clear_hint()
 
     def closeEvent(self, event):  # noqa: N802 — Qt override
-        self.stop_tools()
+        """Guarded: a Qt virtual override — an exception here must not stop `super().closeEvent`
+        from running, which is what actually lets the dock close."""
+        try:
+            self.stop_tools()
+        except Exception:  # noqa: BLE001 — this runs from a Qt virtual override
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
         super().closeEvent(event)
 
     def _session_changed(self) -> None:
@@ -554,10 +565,17 @@ class MainDock(QgsDockWidget):
     def close_page(self) -> None:
         """Accept the open page, if there is one, returning the stack to the main list. `_PagePanel`
         releases its own content on `panelAccepted`, so this covers the same ground as the stack's
-        own Go back button and Escape, which call `acceptPanel()` directly and never reach here."""
-        current = self.stack.currentPanel()
-        if current is not None and current is not self.main_panel:
-            current.acceptPanel()
+        own Go back button and Escape, which call `acceptPanel()` directly and never reach here.
+
+        Guarded: connected directly to `gallery.panelAccepted` and `properties.panelAccepted`, both
+        Qt signals, as well as called directly from plain code — it never returns a value, so a
+        caller loses nothing when the guard below swallows an exception instead of raising it."""
+        try:
+            current = self.stack.currentPanel()
+            if current is not None and current is not self.main_panel:
+                current.acceptPanel()
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     @property
     def hint(self) -> QLabel:
@@ -598,8 +616,13 @@ class MainDock(QgsDockWidget):
         ever calling `open_page`/`openPanel`. Qt runs a signal's slots in connection order, so a
         `_reroute_hint` connected directly here would run before that pop and see the just-closed
         page as still current (verified by probe). Posting it instead runs it once every slot
-        connected to this `panelAccepted` — including the stack's own — has already run."""
-        QTimer.singleShot(0, self._reroute_hint)
+        connected to this `panelAccepted` — including the stack's own — has already run.
+
+        Guarded: connected directly to a `_PagePanel`'s own `panelAccepted`, a Qt signal."""
+        try:
+            QTimer.singleShot(0, self._reroute_hint)
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _reroute_hint(self) -> None:
         """Move the remembered hint text (if any) onto whichever label it now belongs on, hiding it
@@ -674,30 +697,39 @@ class MainDock(QgsDockWidget):
         Its bounds come from the engine in the DEM's CRS, while the canvas item is placed in the
         project CRS: without this the cut/fill image lands somewhere else on the map, silently,
         whenever the two differ. Runs from `sessionChanged` and `destinationCrsChanged` — both
-        slots, so a CRS that cannot be projected leaves the preview unshown instead of raising."""
-        canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
-        dem_crs = self.controller.dem_crs
-        transform, failed = None, False
-        if not self.controller.has_dem:
-            pass                                   # no session, so no preview to place
-        elif not (dem_crs.isValid() and canvas_crs.isValid()):
-            failed = True                          # nothing to project between
-        elif dem_crs != canvas_crs:
-            try:
-                transform = QgsCoordinateTransform(dem_crs, canvas_crs, QgsProject.instance())
-                failed = not transform.isValid()
-            except Exception:                      # noqa: BLE001 — this runs in a slot
-                failed = True
+        slots, so a CRS that cannot be projected leaves the preview unshown instead of raising
+        (the inner guard below), and the outer one catches anything else this slot could still
+        raise."""
+        try:
+            canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+            dem_crs = self.controller.dem_crs
+            transform, failed = None, False
+            if not self.controller.has_dem:
+                pass                                   # no session, so no preview to place
+            elif not (dem_crs.isValid() and canvas_crs.isValid()):
+                failed = True                          # nothing to project between
+            elif dem_crs != canvas_crs:
+                try:
+                    transform = QgsCoordinateTransform(dem_crs, canvas_crs, QgsProject.instance())
+                    failed = not transform.isValid()
+                except Exception:                      # noqa: BLE001 — this runs in a slot
+                    failed = True
+                if failed:
+                    transform = None
+            self._overlay_transform_failed = failed
+            self.overlay.crs_transform = transform
             if failed:
-                transform = None
-        self._overlay_transform_failed = failed
-        self.overlay.crs_transform = transform
-        if failed:
-            self.overlay.clear()
+                self.overlay.clear()
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _update_radius_units(self) -> None:
-        """Label the brush radius with the canvas's own map units — the brush buffers in them."""
-        self.gallery.set_radius_units(self.iface.mapCanvas().mapUnits())
+        """Label the brush radius with the canvas's own map units — the brush buffers in them.
+        Guarded: reached from `destinationCrsChanged`, a Qt signal."""
+        try:
+            self.gallery.set_radius_units(self.iface.mapCanvas().mapUnits())
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _drop_missing_brush_target(self) -> None:
         """The feature a brush stroke extends can be deleted while the stroke is still running.
@@ -709,12 +741,16 @@ class MainDock(QgsDockWidget):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _start(self) -> None:
-        layer = self.dem_combo.currentLayer()
-        if layer is None:
-            return
-        if self._keep_unsaved_work():
-            return
-        self._start_session(layer)
+        """Guarded: reached from `start_button.clicked`, a Qt signal."""
+        try:
+            layer = self.dem_combo.currentLayer()
+            if layer is None:
+                return
+            if self._keep_unsaved_work():
+                return
+            self._start_session(layer)
+        except Exception:  # noqa: BLE001 — this runs in a click slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _start_session(self, layer) -> bool:
         """Start on `layer` once any unsaved work has been dealt with. True when the session started."""
@@ -829,14 +865,17 @@ class MainDock(QgsDockWidget):
         live-update signal or refresh method (verified by probe) — so a rename while the feature
         page is open has to update both the open wrapper's own `panelTitle()` (in case it is ever
         read back) and the stack's title `QLabel` directly, the same way tests already reach
-        `mBackButton`. Guarded: a differently-styled QGIS build without that label changes nothing
-        and never raises."""
-        if self.properties_page is None or self.stack.currentPanel() is not self.properties_page:
-            return
-        self.properties_page.setPanelTitle(name)
-        label = self.stack.findChild(QLabel, "mTitleText")
-        if label is not None:
-            label.setText(f" {name} ")   # the exact padding QgsPanelWidgetStack itself uses (verified by probe)
+        `mBackButton`. Guarded: reached from `properties.titleChanged`, a Qt signal — a
+        differently-styled QGIS build without that label must change nothing and never raise."""
+        try:
+            if self.properties_page is None or self.stack.currentPanel() is not self.properties_page:
+                return
+            self.properties_page.setPanelTitle(name)
+            label = self.stack.findChild(QLabel, "mTitleText")
+            if label is not None:
+                label.setText(f" {name} ")   # the exact padding QgsPanelWidgetStack itself uses (verified by probe)
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _delete_selected(self, fid=None) -> None:
         """Guarded: reached from `properties.deleteRequested`, a Qt signal."""
@@ -848,9 +887,30 @@ class MainDock(QgsDockWidget):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _preview_updated(self, _fid, preview) -> None:
-        if self._overlay_transform_failed:
-            return  # the bounds cannot be placed on this canvas; showing them would mislead
-        self.overlay.show_change(preview.bounds, preview.change)
+        """Guarded: reached from `controller.previewUpdated`, a Qt signal."""
+        try:
+            if self._overlay_transform_failed:
+                return  # the bounds cannot be placed on this canvas; showing them would mislead
+            self.overlay.show_change(preview.bounds, preview.change)
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _clear_preview(self) -> None:
+        """Guarded: reached from `controller.previewCleared`, a Qt signal (a bare lambda calling
+        `self.overlay.clear()` directly used to sit on this connection with no guard at all)."""
+        try:
+            self.overlay.clear()
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _profiles_closed_state_changed(self, closed: bool) -> None:
+        """Guarded: reached from `profiles.closedStateChanged`, a Qt signal (a bare lambda calling
+        `self.profiles_button.setChecked(...)` directly used to sit on this connection with no
+        guard at all)."""
+        try:
+            self.profiles_button.setChecked(not closed)
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _selection_changed(self, *_args) -> None:
         """Keep the map highlight and the Profiles dock in step with the list selection (spec §5.2,
@@ -875,26 +935,31 @@ class MainDock(QgsDockWidget):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _begin_drawing(self, tool, mode, method) -> None:
-        self.stop_tools()
-        canvas = self.iface.mapCanvas()
-        if method is Method.BRUSH:
-            self._brush_fid = self._brush_target(tool, mode)
-            self._brush_extends = self._brush_fid is not None
-            try:
-                initial = self._to_canvas(self.controller.feature_geometry(self._brush_fid)) if self._brush_fid else None
-            except QgsCsException:
-                self._brush_fid, self._brush_extends = None, False
-                self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
-                return
-            self.draw_tool = BrushTool(canvas, self.gallery.brush_radius(), initial)
-            self.draw_tool.radiusChanged.connect(self.gallery.set_brush_radius)
-        elif method is Method.FREEHAND:
-            shape = Qgis.GeometryType.Line if mode is Mode.PATH else Qgis.GeometryType.Polygon
-            self.draw_tool = FreehandTool(canvas, shape)
-        else:
-            self.draw_tool = (DrawLineTool if mode is Mode.PATH else DrawPolygonTool)(canvas)
-        self.draw_tool.finished.connect(lambda geometry, t=tool, m=mode: self._drawn(t, m, geometry))
-        self._activate_drawing(self._drawing_hint(method))
+        """Guarded: reached from `gallery.drawRequested`, a Qt signal."""
+        try:
+            self.stop_tools()
+            canvas = self.iface.mapCanvas()
+            if method is Method.BRUSH:
+                self._brush_fid = self._brush_target(tool, mode)
+                self._brush_extends = self._brush_fid is not None
+                try:
+                    initial = (self._to_canvas(self.controller.feature_geometry(self._brush_fid))
+                              if self._brush_fid else None)
+                except QgsCsException:
+                    self._brush_fid, self._brush_extends = None, False
+                    self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
+                    return
+                self.draw_tool = BrushTool(canvas, self.gallery.brush_radius(), initial)
+                self.draw_tool.radiusChanged.connect(self.gallery.set_brush_radius)
+            elif method is Method.FREEHAND:
+                shape = Qgis.GeometryType.Line if mode is Mode.PATH else Qgis.GeometryType.Polygon
+                self.draw_tool = FreehandTool(canvas, shape)
+            else:
+                self.draw_tool = (DrawLineTool if mode is Mode.PATH else DrawPolygonTool)(canvas)
+            self.draw_tool.finished.connect(lambda geometry, t=tool, m=mode: self._drawn(t, m, geometry))
+            self._activate_drawing(self._drawing_hint(method))
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _activate_drawing(self, hint: str) -> None:
         """Put `draw_tool` on the map, remembering the tool it replaces, and show what to do."""
@@ -905,14 +970,18 @@ class MainDock(QgsDockWidget):
         self.show_hint(hint)
 
     def _draw_section_line(self, fid: str) -> None:
-        """Draw the line an area's section runs along (spec §5.4), asked for by the Profiles panel."""
-        if self.controller.find(fid) is None:
-            return
-        self.stop_tools()
-        self._section_fid = fid
-        self.draw_tool = DrawLineTool(self.iface.mapCanvas())
-        self.draw_tool.finished.connect(lambda geometry, f=fid: self._section_drawn(f, geometry))
-        self._activate_drawing(SECTION_LINE_HINT)
+        """Draw the line an area's section runs along (spec §5.4), asked for by the Profiles panel.
+        Guarded: reached from `profiles.drawSectionRequested`, a Qt signal."""
+        try:
+            if self.controller.find(fid) is None:
+                return
+            self.stop_tools()
+            self._section_fid = fid
+            self.draw_tool = DrawLineTool(self.iface.mapCanvas())
+            self.draw_tool.finished.connect(lambda geometry, f=fid: self._section_drawn(f, geometry))
+            self._activate_drawing(SECTION_LINE_HINT)
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _section_drawn(self, fid: str, geometry) -> None:
         """Guarded: reached from `draw_tool.finished`, a Qt signal."""
@@ -940,16 +1009,21 @@ class MainDock(QgsDockWidget):
         return fid if feature.tool is tool and feature.mode is Mode.AREA else None
 
     def _drawn(self, tool, mode, geometry) -> None:
-        crs = self.iface.mapCanvas().mapSettings().destinationCrs()
-        fid = self._brush_fid
-        self.end_drawing()
-        if fid is not None:
-            self.controller.set_geometry(fid, geometry, crs)
-            self.feature_view.select_id(fid)
-            return
-        feature = self.controller.add_drawn(tool, mode, geometry, crs)
-        if feature is not None:
-            self._open_feature_page(feature.id)   # a finished drawing opens the new feature's page (spec §9)
+        """Guarded: reached from `draw_tool.finished` (via the lambda `_begin_drawing` connects),
+        a Qt signal."""
+        try:
+            crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+            fid = self._brush_fid
+            self.end_drawing()
+            if fid is not None:
+                self.controller.set_geometry(fid, geometry, crs)
+                self.feature_view.select_id(fid)
+                return
+            feature = self.controller.add_drawn(tool, mode, geometry, crs)
+            if feature is not None:
+                self._open_feature_page(feature.id)   # a finished drawing opens the new feature's page (spec §9)
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _use_layer(self, tool, mode, layer, selected_only) -> None:
         """Guarded: reached from `gallery.layerRequested`, a Qt signal."""
@@ -961,27 +1035,31 @@ class MainDock(QgsDockWidget):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _toggle_edit(self, checked: bool) -> None:
-        if not checked:
-            self.stop_editing()
-            return
-        fid = self.feature_view.selected_id()
-        if fid is None:
-            self.edit_button.setChecked(False)
-            return
-        self.end_drawing()
-        canvas = self.iface.mapCanvas()
+        """Guarded: reached from `properties.editShapeToggled`, a Qt signal."""
         try:
-            shape = self._to_canvas(self.controller.feature_geometry(fid))
-        except QgsCsException:
-            self.edit_button.setChecked(False)
-            self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
-            return
-        self.edit_tool = VertexEditTool(canvas, shape)
-        self.edit_tool.geometryChanged.connect(lambda geometry, f=fid: self._edited(f, geometry))
-        self.edit_tool.cancelled.connect(self.stop_editing)
-        self._previous_tool = canvas.mapTool()
-        canvas.setMapTool(self.edit_tool)
-        self.show_hint(EDIT_HINT)
+            if not checked:
+                self.stop_editing()
+                return
+            fid = self.feature_view.selected_id()
+            if fid is None:
+                self.edit_button.setChecked(False)
+                return
+            self.end_drawing()
+            canvas = self.iface.mapCanvas()
+            try:
+                shape = self._to_canvas(self.controller.feature_geometry(fid))
+            except QgsCsException:
+                self.edit_button.setChecked(False)
+                self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
+                return
+            self.edit_tool = VertexEditTool(canvas, shape)
+            self.edit_tool.geometryChanged.connect(lambda geometry, f=fid: self._edited(f, geometry))
+            self.edit_tool.cancelled.connect(self.stop_editing)
+            self._previous_tool = canvas.mapTool()
+            canvas.setMapTool(self.edit_tool)
+            self.show_hint(EDIT_HINT)
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _edited(self, fid, geometry) -> None:
         """Guarded: reached from `edit_tool.geometryChanged`, a Qt signal."""
@@ -991,11 +1069,15 @@ class MainDock(QgsDockWidget):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _map_tool_set(self, new_tool, _old_tool=None) -> None:
-        """The user picked another map tool: stop our drawing or editing."""
-        if self.draw_tool is not None and new_tool is not self.draw_tool:
-            self.end_drawing()
-        if self.edit_tool is not None and new_tool is not self.edit_tool:
-            self.stop_editing()
+        """The user picked another map tool: stop our drawing or editing. Guarded: reached from
+        `iface.mapCanvas().mapToolSet`, a Qt signal."""
+        try:
+            if self.draw_tool is not None and new_tool is not self.draw_tool:
+                self.end_drawing()
+            if self.edit_tool is not None and new_tool is not self.edit_tool:
+                self.stop_editing()
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _to_canvas(self, geometry: QgsGeometry) -> QgsGeometry:
         """A geometry in the DEM CRS, expressed in the canvas CRS."""
@@ -1041,10 +1123,15 @@ class MainDock(QgsDockWidget):
         put it straight back, so both stop; drawing a new feature does not depend on the list and
         carries on. (The Properties page follows every change on its own.)
         `_brush_extends`, not `_brush_fid`: an undo that removes the feature itself has already cleared
-        the id (featuresChanged comes first), and the brush would then add the old outline as a new feature."""
-        self.stop_editing()
-        if self._brush_extends:
-            self.end_drawing()
+        the id (featuresChanged comes first), and the brush would then add the old outline as a new feature.
+
+        Guarded: reached from `controller.featuresRestored`, a Qt signal."""
+        try:
+            self.stop_editing()
+            if self._brush_extends:
+                self.end_drawing()
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _refresh_highlight(self) -> None:
         """Guarded: reached from `featuresChanged` and `destinationCrsChanged`, both Qt signals."""
@@ -1080,10 +1167,14 @@ class MainDock(QgsDockWidget):
             self.section_band.setToGeometry(geometry, None)
 
     def _new_scenario(self) -> None:
-        if self._keep_unsaved_work():
-            return
-        self.stop_tools()               # an edit in progress belongs to a feature that is about to go
-        self.controller.new_scenario()
+        """Guarded: reached from `new_scenario_action.triggered`, a Qt signal."""
+        try:
+            if self._keep_unsaved_work():
+                return
+            self.stop_tools()               # an edit in progress belongs to a feature that is about to go
+            self.controller.new_scenario()
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _open_scenario(self) -> None:
         """Ask about unsaved work first, then for the file — the order QGIS's own Open Project uses.
@@ -1121,19 +1212,29 @@ class MainDock(QgsDockWidget):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _save_scenario(self, save_as: bool = False) -> bool:
-        """Save, asking for a path when there is not one yet. True when it was written."""
-        path = self.controller.scenario_path
-        if save_as or not path:
-            path = self.ask_save_path()
-        if not path:
-            return False
+        """Save, asking for a path when there is not one yet. True when it was written.
+
+        Guarded: reached directly from the Scenario menu's Save / Save as… actions (a Qt signal via
+        a lambda), as well as called directly by `_keep_unsaved_work` and
+        `_offer_save_before_discard`, both of which depend on the True/False it returns — an
+        unexpected exception here is treated the same as a save that failed (`False`), rather than
+        escaping a Qt callback."""
         try:
-            self.controller.save_scenario(path)
-        except ScenarioError as error:
-            self._show_message(Qgis.MessageLevel.Warning, str(error))
+            path = self.controller.scenario_path
+            if save_as or not path:
+                path = self.ask_save_path()
+            if not path:
+                return False
+            try:
+                self.controller.save_scenario(path)
+            except ScenarioError as error:
+                self._show_message(Qgis.MessageLevel.Warning, str(error))
+                return False
+            self._show_message(Qgis.MessageLevel.Success, SCENARIO_SAVED.format(path))
+            return True
+        except Exception:  # noqa: BLE001 — this runs in a slot; False matches a save that failed
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
             return False
-        self._show_message(Qgis.MessageLevel.Success, SCENARIO_SAVED.format(path))
-        return True
 
     def _offer_save_before_discard(self) -> None:
         """The controller is about to drop a session with unsaved changes — the project is closing,
@@ -1265,20 +1366,24 @@ class MainDock(QgsDockWidget):
             self.feature_view.select_id(copy.id)
 
     def _zoom_to(self, fid: str) -> None:
-        """Runs from the context menu, so a feature that has gone or an outline that cannot be
-        projected into the map's CRS becomes a message rather than an exception in a slot."""
-        if self.controller.find(fid) is None:
-            return
-        canvas = self.iface.mapCanvas()
-        transform = QgsCoordinateTransform(self.controller.dem_crs, canvas.mapSettings().destinationCrs(),
-                                           QgsProject.instance())
+        """Runs from the context menu and from `properties.zoomRequested` (a Qt signal), so a
+        feature that has gone or an outline that cannot be projected into the map's CRS becomes a
+        message rather than an exception in a slot."""
         try:
-            extent = transform.transformBoundingBox(self.controller.feature_geometry(fid).boundingBox())
-        except QgsCsException:
-            self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
-            return
-        canvas.setExtent(extent.buffered(max(extent.width(), extent.height()) * 0.25 + 1.0))
-        canvas.refresh()
+            if self.controller.find(fid) is None:
+                return
+            canvas = self.iface.mapCanvas()
+            transform = QgsCoordinateTransform(self.controller.dem_crs, canvas.mapSettings().destinationCrs(),
+                                               QgsProject.instance())
+            try:
+                extent = transform.transformBoundingBox(self.controller.feature_geometry(fid).boundingBox())
+            except QgsCsException:
+                self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
+                return
+            canvas.setExtent(extent.buffered(max(extent.width(), extent.height()) * 0.25 + 1.0))
+            canvas.refresh()
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _offer_reproject(self, text: str) -> None:
         """A geographic DEM is refused with a button that opens Processing's warp tool, so the
@@ -1312,7 +1417,13 @@ class MainDock(QgsDockWidget):
             self._show_message(Qgis.MessageLevel.Warning, REPROJECT_UNAVAILABLE)
 
     def _show_message(self, level, text: str) -> None:
-        self.iface.messageBar().pushMessage(self.tr("Terrain Sketch"), text, level, 8)
+        """Guarded: reached from `controller.message`, a Qt signal, as well as from many already-
+        guarded callers — kept redundant here since this is also the one path every one of them
+        shares."""
+        try:
+            self.iface.messageBar().pushMessage(self.tr("Terrain Sketch"), text, level, 8)
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _confirm_dialog(self, text: str) -> bool:
         return QMessageBox.question(self, self.tr("Terrain Sketch"), text) == QMessageBox.StandardButton.Yes

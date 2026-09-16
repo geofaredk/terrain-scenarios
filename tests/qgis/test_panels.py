@@ -131,6 +131,43 @@ def test_ending_the_session_closes_any_open_page(tmp_path):
     assert dock.stack.currentPanel() is dock.main_panel and dock.views.currentIndex() == VIEW_WELCOME
 
 
+def test_the_page_closes_when_its_feature_is_deleted_elsewhere(tmp_path):
+    """spec §9: a feature deleted from outside its own page (here, straight through the controller
+    — e.g. the layer panel's own delete, or anything else that is not the page's own Delete button)
+    still closes the page it is shown on."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    assert dock.stack.currentPanel() is dock.properties_page
+    c.delete_feature(dike.id)
+    assert dock.stack.currentPanel() is dock.main_panel
+
+
+def test_undo_that_removes_the_open_feature_closes_its_page(tmp_path):
+    """spec §9: a feature that disappears through undo (here, undoing the add that created it)
+    closes its own open page exactly as an outright delete does."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    assert dock.stack.currentPanel() is dock.properties_page
+    c.undo_stack.undo()                       # undoes the add
+    assert dock.stack.currentPanel() is dock.main_panel
+
+
+def test_going_back_keeps_the_feature_selected_and_highlighted(tmp_path):
+    """spec §9: Back from any page returns to the list with the feature still selected and still
+    highlighted on the map — `properties.acceptPanel()` reaches `close_page` the same way the
+    stack's own Back button and Escape do (see `PropertiesPage`'s own Escape handling)."""
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    assert dock.highlight.numberOfVertices() > 0
+    dock.properties.acceptPanel()
+    assert dock.stack.currentPanel() is dock.main_panel
+    assert dock.feature_view.selected_id() == dike.id
+    assert dock.highlight.numberOfVertices() > 0
+
+
 def test_a_scenario_action_in_the_same_session_does_not_close_the_open_page(tmp_path):
     """`sessionChanged` also fires from new_scenario/save_scenario/open_scenario with `has_dem`
     still true; only a real transition (a session starting or ending) should close the open page."""
@@ -699,6 +736,36 @@ def test_escape_in_the_name_field_cancels_instead_of_committing(tmp_path):
     assert c.undo_stack.count() == steps                      # and no rename was ever committed
 
 
+def test_escape_in_a_spin_box_cancels_instead_of_committing(tmp_path):
+    """Ruling: Escape cancels in every field, not just the name field. `amount`'s
+    `setKeyboardTracking(False)` means typing does not commit as it goes, but the spin's own
+    `interpretText()` still commits whatever is displayed on focus-out — which the page closing
+    (Escape's other effect) would otherwise trigger, same hazard `_discard_name_edit` fixes for the
+    name field. Return still commits (`test_properties_show_the_tool_fields_and_apply_changes`)."""
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtTest import QTest
+    from qgis.PyQt.QtWidgets import QApplication
+    from qgis_helpers import spin_event_loop
+
+    _iface, c, dock = panel(tmp_path)
+    dock.show()
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    before = c.feature(dike.id).amount
+    dock.properties.amount.setFocus()
+    QApplication.processEvents()
+    dock.properties.amount.selectAll()
+    QTest.keyClicks(dock.properties.amount, "77")
+    steps = c.undo_stack.count()
+
+    QTest.keyClick(dock.properties.amount, Qt.Key.Key_Escape)
+    QApplication.processEvents()
+    spin_event_loop(20)
+    assert dock.stack.currentPanel() is dock.main_panel      # Escape still closed the page
+    assert c.feature(dike.id).amount == before                # …but the typed value was discarded
+    assert c.undo_stack.count() == steps                       # and no change was ever committed
+
+
 def test_the_title_bar_follows_a_rename(tmp_path):
     """spec §7: "The panel's title bar follows a rename" — through the header field, through the
     list, and through undo. `QgsPanelWidgetStack` writes its title `QLabel` (`mTitleText`) once,
@@ -810,7 +877,10 @@ def test_a_running_section_lines_hint_moves_to_the_session_view_on_back(tmp_path
     assert dock.stack.currentPanel() is dock.main_panel
     assert dock.draw_tool is not None                          # the line keeps running (spec §9)
     assert dock.session_hint.isVisible() and dock.session_hint.text() == SECTION_LINE_HINT
-    assert not dock.properties.hint.isVisible() and not dock.gallery.hint.isVisible()
+    # `isVisible()` is already False here regardless of routing — the feature page's own ancestor
+    # is hidden once it is no longer the current panel — so only `isHidden()` (the widget's own
+    # explicit hidden state) can actually catch a hint left showing on the closed page.
+    assert dock.properties.hint.isHidden() and dock.gallery.hint.isHidden()
 
 
 def test_a_running_section_lines_hint_moves_onto_its_feature_page_on_open(tmp_path):
@@ -842,7 +912,10 @@ def test_a_running_section_lines_hint_moves_onto_its_feature_page_on_open(tmp_pa
     spin_event_loop(20)
     assert dock.stack.currentPanel() is dock.properties_page
     assert dock.properties.hint.isVisible() and dock.properties.hint.text() == SECTION_LINE_HINT
-    assert not dock.session_hint.isVisible()
+    # As above: `session_hint`'s own ancestor is hidden once a page is open, which would make
+    # `isVisible()` false whether or not the reroute actually ran — `isHidden()` checks the label's
+    # own explicit state instead.
+    assert dock.session_hint.isHidden()
 
 
 def test_edit_shape_stops_when_the_feature_page_closes(tmp_path):
@@ -991,6 +1064,31 @@ def test_delete_uses_the_id_the_page_sends_not_just_the_selection(tmp_path):
     assert c.find(dike.id) is None and c.find(pond.id) is not None
     dock._delete_selected()                               # no id given: falls back to the selection
     assert c.find(pond.id) is None
+
+
+def test_a_guarded_slots_failure_is_logged_not_raised(tmp_path, monkeypatch):
+    """Every `MainDock` slot reachable from a Qt signal, event or timer must log rather than raise
+    (an exception escaping a Qt callback aborts QGIS) — `_delete_selected` stands in for the whole
+    list of guarded slots (`_context_menu`, `_export`, `_open_scenario`, `_use_layer`,
+    `_section_drawn`, `_drop_missing_brush_target`, `_refresh_highlight`, `stop_editing`, `_edited`,
+    `_reroute_hint`), each wrapped in the same try/except + `QgsMessageLog` pattern."""
+    import terrain_sketch.gui.main_dock as main_dock_module
+
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.select_id(dike.id)
+
+    log = []
+    monkeypatch.setattr(main_dock_module.QgsMessageLog, "logMessage",
+                        staticmethod(lambda text, *a, **kw: log.append(text)))
+
+    def boom(_fid):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(c, "delete_feature", boom)
+    dock._delete_selected(dike.id)          # must not raise
+
+    assert log and "RuntimeError" in log[-1]
 
 
 def test_deleting_from_the_page_stops_a_running_edit(tmp_path):

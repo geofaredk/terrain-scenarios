@@ -463,11 +463,17 @@ class MainDock(QgsDockWidget):
         self._release_tool(tool)
 
     def stop_editing(self) -> None:
-        """Leave vertex editing and give the canvas its previous map tool back."""
-        tool, self.edit_tool = self.edit_tool, None
-        self._release_tool(tool)
-        if self.edit_button.isChecked():
-            self.edit_button.setChecked(False)
+        """Leave vertex editing and give the canvas its previous map tool back. Guarded: reached
+        directly from `edit_tool.cancelled`, a Qt signal, as well as from many plain callers that
+        depend on nothing but it running — it never returns a value, so a caller loses nothing when
+        the guard below swallows an exception instead of raising it."""
+        try:
+            tool, self.edit_tool = self.edit_tool, None
+            self._release_tool(tool)
+            if self.edit_button.isChecked():
+                self.edit_button.setChecked(False)
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def stop_tools(self) -> None:
         """Stop drawing and editing — the panel is hidden, the session ended or the tool changed."""
@@ -601,15 +607,21 @@ class MainDock(QgsDockWidget):
         an activity with a hint of its own is still running — see `_new_feature`,
         `_open_feature_page`, and the `panelAccepted` connections they make on their own wrapper
         (through `_schedule_reroute_hint`), which fire on every way a page can close (the stack's
-        own Back button and Escape included, not just `close_page`)."""
-        self.gallery.clear_hint()
-        self.properties.clear_hint()
-        self.session_hint.hide()
-        if self._hint_text is None:
-            return
-        target = self._hint_target()
-        target.setText(self._hint_text)
-        target.show()
+        own Back button and Escape included, not just `close_page`).
+
+        Guarded: `_schedule_reroute_hint` reaches this from a `QTimer.singleShot` callback, where an
+        exception would abort QGIS same as from any other Qt callback."""
+        try:
+            self.gallery.clear_hint()
+            self.properties.clear_hint()
+            self.session_hint.hide()
+            if self._hint_text is None:
+                return
+            target = self._hint_target()
+            target.setText(self._hint_text)
+            target.show()
+        except Exception:  # noqa: BLE001 — this runs from a QTimer callback
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _hint_target(self) -> QLabel:
         current = self.stack.currentPanel()
@@ -688,9 +700,13 @@ class MainDock(QgsDockWidget):
         self.gallery.set_radius_units(self.iface.mapCanvas().mapUnits())
 
     def _drop_missing_brush_target(self) -> None:
-        """The feature a brush stroke extends can be deleted while the stroke is still running."""
-        if self._brush_fid is not None and self._brush_fid not in {f.id for f in self.controller.features}:
-            self._brush_fid = None
+        """The feature a brush stroke extends can be deleted while the stroke is still running.
+        Guarded: runs from `featuresChanged`, a Qt signal."""
+        try:
+            if self._brush_fid is not None and self._brush_fid not in {f.id for f in self.controller.features}:
+                self._brush_fid = None
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _start(self) -> None:
         layer = self.dem_combo.currentLayer()
@@ -823,9 +839,13 @@ class MainDock(QgsDockWidget):
             label.setText(f" {name} ")   # the exact padding QgsPanelWidgetStack itself uses (verified by probe)
 
     def _delete_selected(self, fid=None) -> None:
-        fid = fid or self.feature_view.selected_id()
-        if fid is not None:
-            self.controller.delete_feature(fid)
+        """Guarded: reached from `properties.deleteRequested`, a Qt signal."""
+        try:
+            fid = fid or self.feature_view.selected_id()
+            if fid is not None:
+                self.controller.delete_feature(fid)
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _preview_updated(self, _fid, preview) -> None:
         if self._overlay_transform_failed:
@@ -895,11 +915,15 @@ class MainDock(QgsDockWidget):
         self._activate_drawing(SECTION_LINE_HINT)
 
     def _section_drawn(self, fid: str, geometry) -> None:
-        if fid != self._section_fid:
-            return                      # the drawing already ended: the selection moved to another feature
-        crs = self.iface.mapCanvas().mapSettings().destinationCrs()
-        self.end_drawing()
-        self.controller.set_section_line(fid, geometry, crs)
+        """Guarded: reached from `draw_tool.finished`, a Qt signal."""
+        try:
+            if fid != self._section_fid:
+                return                  # the drawing already ended: the selection moved to another feature
+            crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+            self.end_drawing()
+            self.controller.set_section_line(fid, geometry, crs)
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _drawing_hint(self, method) -> str:
         """The instruction text for `method`, naming the feature when the brush extends one."""
@@ -928,9 +952,13 @@ class MainDock(QgsDockWidget):
             self._open_feature_page(feature.id)   # a finished drawing opens the new feature's page (spec §9)
 
     def _use_layer(self, tool, mode, layer, selected_only) -> None:
-        feature = self.controller.add_from_layer(tool, mode, layer, selected_only)
-        if feature is not None:
-            self._open_feature_page(feature.id)   # From layer opens the new feature's page too (spec §9)
+        """Guarded: reached from `gallery.layerRequested`, a Qt signal."""
+        try:
+            feature = self.controller.add_from_layer(tool, mode, layer, selected_only)
+            if feature is not None:
+                self._open_feature_page(feature.id)   # From layer opens the new feature's page too (spec §9)
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _toggle_edit(self, checked: bool) -> None:
         if not checked:
@@ -956,7 +984,11 @@ class MainDock(QgsDockWidget):
         self.show_hint(EDIT_HINT)
 
     def _edited(self, fid, geometry) -> None:
-        self.controller.set_geometry(fid, geometry, self.iface.mapCanvas().mapSettings().destinationCrs())
+        """Guarded: reached from `edit_tool.geometryChanged`, a Qt signal."""
+        try:
+            self.controller.set_geometry(fid, geometry, self.iface.mapCanvas().mapSettings().destinationCrs())
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _map_tool_set(self, new_tool, _old_tool=None) -> None:
         """The user picked another map tool: stop our drawing or editing."""
@@ -1015,7 +1047,11 @@ class MainDock(QgsDockWidget):
             self.end_drawing()
 
     def _refresh_highlight(self) -> None:
-        self._update_highlight(self.feature_view.selected_id())
+        """Guarded: reached from `featuresChanged` and `destinationCrsChanged`, both Qt signals."""
+        try:
+            self._update_highlight(self.feature_view.selected_id())
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _update_highlight(self, fid) -> None:
         """Outline the selected feature on the map, with the line its section runs along if it is an area."""
@@ -1051,34 +1087,38 @@ class MainDock(QgsDockWidget):
 
     def _open_scenario(self) -> None:
         """Ask about unsaved work first, then for the file — the order QGIS's own Open Project uses.
-        A scenario made on a different DEM is only opened once the user has agreed to it."""
-        if self._keep_unsaved_work():
-            return
-        path = self.ask_open_path()
-        if not path:
-            return
-        started = False
+        A scenario made on a different DEM is only opened once the user has agreed to it. Guarded:
+        reached from `open_scenario_action.triggered`, a Qt signal."""
         try:
-            differences = ", ".join(self.controller.scenario_differences(path))
-            if differences:
-                source = self.controller.scenario_dem_source(path)
-                if source is None:        # its DEM is gone or unknown: this one or nothing
-                    choice = "current" if self.confirm(SCENARIO_DEM_DIFFERS.format(differences)) else None
-                else:
-                    choice = self.choose_dem(SCENARIO_OTHER_DEM.format(dem=os.path.basename(source),
-                                                                       differences=differences))
-                if choice is None or (choice == "scenario" and not self._start_on_file(source)):
-                    return
-                started = choice == "scenario"
-            self.stop_tools()
-            self.controller.open_scenario(path)
-        except ScenarioError as error:
-            text = str(error)
-            if started and text == SCENARIO_NOT_APPLIED:
-                text = SCENARIO_NOT_APPLIED_ON_ITS_DEM   # starting on its DEM already closed the features' session
-            self._show_message(Qgis.MessageLevel.Warning, text)
-            return
-        self._show_message(Qgis.MessageLevel.Success, SCENARIO_OPENED.format(path))
+            if self._keep_unsaved_work():
+                return
+            path = self.ask_open_path()
+            if not path:
+                return
+            started = False
+            try:
+                differences = ", ".join(self.controller.scenario_differences(path))
+                if differences:
+                    source = self.controller.scenario_dem_source(path)
+                    if source is None:        # its DEM is gone or unknown: this one or nothing
+                        choice = "current" if self.confirm(SCENARIO_DEM_DIFFERS.format(differences)) else None
+                    else:
+                        choice = self.choose_dem(SCENARIO_OTHER_DEM.format(dem=os.path.basename(source),
+                                                                           differences=differences))
+                    if choice is None or (choice == "scenario" and not self._start_on_file(source)):
+                        return
+                    started = choice == "scenario"
+                self.stop_tools()
+                self.controller.open_scenario(path)
+            except ScenarioError as error:
+                text = str(error)
+                if started and text == SCENARIO_NOT_APPLIED:
+                    text = SCENARIO_NOT_APPLIED_ON_ITS_DEM  # starting on its DEM already closed the features' session
+                self._show_message(Qgis.MessageLevel.Warning, text)
+                return
+            self._show_message(Qgis.MessageLevel.Success, SCENARIO_OPENED.format(path))
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _save_scenario(self, save_as: bool = False) -> bool:
         """Save, asking for a path when there is not one yet. True when it was written."""
@@ -1118,18 +1158,22 @@ class MainDock(QgsDockWidget):
         return False
 
     def _export(self) -> None:
-        path = self.ask_export_path()
-        if not path:
-            return
+        """Guarded: reached from `export_button.clicked`, a Qt signal."""
         try:
-            self.controller.export_dem(path)
-        except (OSError, RuntimeError) as error:
-            self._show_message(Qgis.MessageLevel.Critical, self.tr("Export failed: {}").format(error))
-            return
-        text = EXPORT_DONE.format(path)
-        if self.controller.dem_is_integer:
-            text = f"{text}. {EXPORT_INTEGER_NOTE}"
-        self._offer_to_add_export(path, text)
+            path = self.ask_export_path()
+            if not path:
+                return
+            try:
+                self.controller.export_dem(path)
+            except (OSError, RuntimeError) as error:
+                self._show_message(Qgis.MessageLevel.Critical, self.tr("Export failed: {}").format(error))
+                return
+            text = EXPORT_DONE.format(path)
+            if self.controller.dem_is_integer:
+                text = f"{text}. {EXPORT_INTEGER_NOTE}"
+            self._offer_to_add_export(path, text)
+        except Exception:  # noqa: BLE001 — this runs in a click slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _offer_to_add_export(self, path: str, text: str) -> None:
         """Spec §8.5's "adds the result to the project", offered after the export rather than as a
@@ -1183,10 +1227,14 @@ class MainDock(QgsDockWidget):
         self._show_message(Qgis.MessageLevel.Warning, VIEW_3D_NOT_OPENED)
 
     def _context_menu(self, position) -> None:
-        menu = self.feature_menu(self.feature_view.indexAt(position))
-        if menu is not None:
-            menu.exec(self.feature_view.viewport().mapToGlobal(position))
-            menu.deleteLater()   # parented to the dock, it and its actions would otherwise stay for good
+        """Guarded: reached from `feature_view.customContextMenuRequested`, a Qt signal."""
+        try:
+            menu = self.feature_menu(self.feature_view.indexAt(position))
+            if menu is not None:
+                menu.exec(self.feature_view.viewport().mapToGlobal(position))
+                menu.deleteLater()   # parented to the dock, it and its actions would otherwise stay for good
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def feature_menu(self, index) -> QMenu | None:
         """The list's context menu for the row at `index` (spec §7.2), or None off the rows."""

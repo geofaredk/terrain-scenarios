@@ -89,6 +89,23 @@ def test_hiding_the_panel_stops_a_drawing_and_leaves_no_rubber_band(tmp_path):
     assert len(iface.mapCanvas().scene().items()) == n0
 
 
+def test_the_open_page_stays_while_the_panel_is_toggled_off(tmp_path):
+    """spec §9: toggling the plugin's own panel off (`plugin.action`, not `MainDock.closeEvent` —
+    `_toggle` calls `stop_tools()` directly, never `close_page()`) stops tools, as it already did,
+    but must not close whatever page is open — it is there again for when the panel returns."""
+    iface = fake_iface()
+    plugin = classFactory(iface)
+    plugin.initGui()
+    plugin.action.setChecked(True)
+    plugin.dock.dem_combo.setLayer(dem_layer(tmp_path))
+    plugin.dock.start_button.click()
+    dike = plugin.controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    plugin.dock.feature_view.rowOpened.emit(dike.id)
+    assert plugin.dock.stack.currentPanel() is plugin.dock.properties_page
+    plugin.action.setChecked(False)
+    assert plugin.dock.stack.currentPanel() is plugin.dock.properties_page
+
+
 def test_plugin_adds_and_removes_its_button_menu_and_panel(tmp_path):
     flat = QgsFlatTerrainProvider()
     flat.setOffset(5.0)

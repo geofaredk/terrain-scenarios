@@ -100,13 +100,16 @@ def test_the_profiles_panel_offers_the_section_buttons_for_an_area_only(tmp_path
 
 
 def test_draw_section_line_puts_a_line_tool_on_the_map_and_stores_what_is_drawn(tmp_path):
+    """The hint routes to whichever page is open (spec §6 item 6); the feature page is open here,
+    same as it would be for a user who reaches Draw section line from the Profiles dock while
+    looking at the area's own page."""
     iface, c, profiles, dock = panels(tmp_path)
     pond, _dike = pond_and_dike(c)
-    dock.feature_view.select_id(pond.id)
+    dock.feature_view.rowOpened.emit(pond.id)
     profiles.draw_section.click()
     canvas = iface.mapCanvas()
     assert isinstance(dock.draw_tool, DrawLineTool) and canvas.mapTool() is dock.draw_tool
-    assert dock.hint.text() == SECTION_LINE_HINT
+    assert dock.hint is dock.properties.hint and dock.hint.text() == SECTION_LINE_HINT
     dock.draw_tool.finished.emit(line_through(20, 5, 20, 35))
     assert dock.draw_tool is None and c.find(pond.id).section_line is not None
     assert len(c.features) == 2                                  # a section line, not a new feature

@@ -16,7 +16,7 @@ from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.selection import Method
 from terrain_sketch.gui.controller import SketchController
 from terrain_sketch.gui.help_texts import SCENARIO_TOTALS, cubic_metres
-from terrain_sketch.gui.main_dock import PAGE_GALLERY, PAGE_PROPERTIES, PAGE_START, MainDock
+from terrain_sketch.gui.main_dock import VIEW_SESSION, VIEW_WELCOME, MainDock
 from terrain_sketch.gui.map_tools.draw_line import DrawLineTool
 from terrain_sketch.qgis_io.layers import GROUP_NAME
 
@@ -26,18 +26,20 @@ def test_drawing_a_dike_from_the_panel(tmp_path):
     dem = dem_layer(tmp_path)
     controller = SketchController(QgsProject.instance())
     dock = MainDock(iface, controller)
-    assert dock.pages.currentIndex() == PAGE_START and not dock.new_button.isEnabled()
+    dock.show()   # isVisible() below needs the dock actually shown, not just not explicitly hidden
+    assert dock.views.currentIndex() == VIEW_WELCOME and not dock.new_button.isEnabled()
     dock.dem_combo.setLayer(dem)
     dock.start_button.click()
-    assert controller.has_dem and dock.pages.currentIndex() == PAGE_GALLERY
+    assert controller.has_dem and dock.views.currentIndex() == VIEW_SESSION
+    dock.new_button.click()                             # drills into the New feature page
     dock.gallery.select_tool(Tool.RAISE_PATH)
     dock.gallery.select_mode(Mode.PATH)
     dock.gallery.method_buttons[Method.CLICK].click()
-    assert iface.mapCanvas().mapTool() is dock.draw_tool and not dock.hint.isHidden()
+    assert iface.mapCanvas().mapTool() is dock.draw_tool and dock.hint.isVisible()
     dock.draw_tool.finished.emit(line_through(5, 20, 34, 20))
     assert len(controller.features) == 1
     assert dock.feature_view.selected_id() == controller.features[0].id
-    assert dock.pages.currentIndex() == PAGE_PROPERTIES and dock.hint.isHidden() and dock.draw_tool is None
+    assert dock.stack.currentPanel() is dock.properties_page and not dock.hint.isVisible() and dock.draw_tool is None
     assert sample(controller.layers.working, 20, 20) == pytest.approx(11.0)
     dock.ask_export_path = lambda: str(tmp_path / "exported.tif")
     dock.export_button.click()
@@ -87,6 +89,23 @@ def test_hiding_the_panel_stops_a_drawing_and_leaves_no_rubber_band(tmp_path):
     assert len(iface.mapCanvas().scene().items()) == n0
 
 
+def test_the_open_page_stays_while_the_panel_is_toggled_off(tmp_path):
+    """spec §9: toggling the plugin's own panel off (`plugin.action`, not `MainDock.closeEvent` —
+    `_toggle` calls `stop_tools()` directly, never `close_page()`) stops tools, as it already did,
+    but must not close whatever page is open — it is there again for when the panel returns."""
+    iface = fake_iface()
+    plugin = classFactory(iface)
+    plugin.initGui()
+    plugin.action.setChecked(True)
+    plugin.dock.dem_combo.setLayer(dem_layer(tmp_path))
+    plugin.dock.start_button.click()
+    dike = plugin.controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    plugin.dock.feature_view.rowOpened.emit(dike.id)
+    assert plugin.dock.stack.currentPanel() is plugin.dock.properties_page
+    plugin.action.setChecked(False)
+    assert plugin.dock.stack.currentPanel() is plugin.dock.properties_page
+
+
 def test_plugin_adds_and_removes_its_button_menu_and_panel(tmp_path):
     flat = QgsFlatTerrainProvider()
     flat.setOffset(5.0)
@@ -129,6 +148,9 @@ def _session_dock(tmp_path):
 
 
 def test_the_brush_extends_the_selected_area_feature(tmp_path):
+    """Drives the gallery directly, with a feature selected: the panel itself cannot reach an
+    extending brush, because New feature clears the selection before its page opens. The code is
+    kept as the hook for a future "paint more" action."""
     _iface, controller, dock = _session_dock(tmp_path)
     pond = controller.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
     dock.feature_view.select_id(pond.id)
@@ -185,19 +207,19 @@ def test_deleting_the_shown_feature_leaves_the_properties_page(tmp_path):
     _iface, controller, dock = _session_dock(tmp_path)
     dike = controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     controller.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
-    dock.feature_view.select_id(dike.id)
-    assert dock.pages.currentIndex() == PAGE_PROPERTIES
+    dock.feature_view.rowOpened.emit(dike.id)
+    assert dock.stack.currentPanel() is dock.properties_page
 
     dock.delete_button.click()
 
-    if dock.pages.currentIndex() == PAGE_PROPERTIES:
+    if dock.stack.currentPanel() is dock.properties_page:
         fid = dock.feature_view.selected_id()
         assert fid is not None and fid in {f.id for f in controller.features}
         cut, fill = controller.totals()
         assert dock.properties.totals_value.text() == SCENARIO_TOTALS.format(fill=cubic_metres(fill),
                                                                               cut=cubic_metres(cut))
     else:
-        assert dock.pages.currentIndex() != PAGE_PROPERTIES
+        assert dock.stack.currentPanel() is not dock.properties_page
 
 
 def test_deleting_the_brushed_feature_mid_stroke_does_not_take_qgis_down(tmp_path):
@@ -230,15 +252,28 @@ def test_the_brush_hint_names_the_feature_it_extends(tmp_path):
     assert dock._brush_fid is None and pond.name not in dock.hint.text()
 
 
-def test_selecting_a_row_leaves_the_drawing_hint_up(tmp_path):
+def test_opening_a_row_takes_the_new_feature_page_and_its_hint_off_screen(tmp_path):
+    """`isHidden()` is False for a widget that was never put on screen at all, so the original form
+    of this test (no `dock.show()`, no `dock.new_button.click()`) could not tell a visible hint from
+    one that was never shown in the first place — it passed regardless of what really happened on
+    screen. With the page genuinely opened and the dock genuinely shown: opening a row (not
+    reachable through the real UI while the New feature page covers the feature list — this fires
+    `rowOpened` directly, as the original test drove the selection model directly) opens that row's
+    properties page in the New feature page's place (`open_page` never drills more than one level
+    deep — see its docstring), which — since the page the drawing's hint was on is now gone — stops
+    the drawing too (`_stop_drawing_on_gallery_close`), the same as pressing Back or Escape would."""
     _iface, controller, dock = _session_dock(tmp_path)
+    dock.show()
     dike = controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.new_button.click()
     dock.gallery.select_tool(Tool.RAISE_PATH)
     dock.gallery.select_mode(Mode.PATH)
     dock.gallery.method_buttons[Method.FREEHAND].click()
-    assert not dock.hint.isHidden()
-    dock.feature_view.select_id(dike.id)  # the user checks a row while the trace is still running
-    assert dock.draw_tool is not None and not dock.hint.isHidden()
+    assert dock.hint.isVisible()
+    dock.feature_view.rowOpened.emit(dike.id)
+    assert dock.draw_tool is None          # the page it was drawing on is gone, so the drawing stopped
+    assert not dock.hint.isVisible()       # … and so did its hint
+    assert dock.stack.currentPanel() is dock.properties_page
 
 
 def test_closing_the_panel_stops_the_edit_tool_too(tmp_path):
@@ -395,34 +430,31 @@ def test_a_panel_without_a_profiles_panel_has_no_profiles_button():
     assert not dock.profiles_action.isVisible()
 
 
-def test_the_feature_buttons_sit_above_the_feature_list(tmp_path):
+def test_the_new_feature_button_sits_above_the_feature_list(tmp_path):
+    """The primary action lives in the toolbar, above the list, in the session view now (spec §5).
+    `delete_button` and `edit_button` are the feature page's own buttons (spec §12) and are laid
+    out there, not in the toolbar, so their position is not asserted here."""
     dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
+    dock.dem_combo.setLayer(dem_layer(tmp_path))
+    dock.start_button.click()
     dock.resize(360, 700)
     dock.show()
     QApplication.processEvents()
     list_top = dock.feature_view.mapTo(dock, dock.feature_view.rect().topLeft()).y()
-    for button in (dock.new_button, dock.delete_button, dock.edit_button):
-        assert button.mapTo(dock, button.rect().bottomLeft()).y() < list_top, button.text()
+    assert dock.new_button.mapTo(dock, dock.new_button.rect().bottomLeft()).y() < list_top
 
 
-def test_the_feature_list_is_resized_in_height_and_keeps_its_height(tmp_path):
+def test_the_feature_list_fills_the_session_view_without_a_splitter(tmp_path):
+    """The list_splitter is retired along with its settings key (spec §10): there is no splitter any
+    more, and the feature list alone fills the session view's height below the toolbar."""
     from qgis.PyQt.QtWidgets import QSplitter
     dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
+    assert not hasattr(dock, "list_splitter")
+    assert dock.findChild(QSplitter, "TerrainSketchListSplitter") is None
+    dock.dem_combo.setLayer(dem_layer(tmp_path))
+    dock.start_button.click()
     dock.resize(360, 900)
     dock.show()
     QApplication.processEvents()
-    splitter = dock.list_splitter
-    assert isinstance(splitter, QSplitter) and splitter.orientation() == Qt.Orientation.Vertical
-    assert splitter.indexOf(dock.feature_view) == 0 and splitter.indexOf(dock.pages) == -1   # pages below, in 1
-    assert dock.pages.parentWidget() is splitter.widget(1)
-    width, height = dock.feature_view.width(), dock.feature_view.height()
-    top, bottom = splitter.sizes()
-    splitter.setSizes([top - 40, bottom + 40])             # the user drags the handle up
-    splitter.splitterMoved.emit(top - 40, 1)               # as a drag of the handle reports it
-    QApplication.processEvents()
-    assert abs(dock.feature_view.height() - (height - 40)) <= 2 and dock.feature_view.width() == width
-    again = MainDock(fake_iface(), SketchController(QgsProject.instance()))
-    again.resize(360, 900)
-    again.show()
-    QApplication.processEvents()
-    assert abs(again.list_splitter.sizes()[0] - (top - 40)) <= 2
+    # no lower pages sharing the session view's height any more: only the toolbar and the status line
+    assert dock.feature_view.height() > dock.views.height() - 120

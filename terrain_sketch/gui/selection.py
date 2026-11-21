@@ -45,6 +45,7 @@ BRUSH_EXTEND_HINT = ("Extending {} — paint with the left mouse button to add t
                      "[ and ] or Ctrl+wheel change the radius. Right-click or Enter finishes, Esc cancels.")
 
 EDIT_ICON = "/mActionVertexTool.svg"
+ZOOM_ICON = "/mActionZoomToLayer.svg"   # the feature page's Zoom to feature button reuses the context menu's icon
 
 EDIT_HINT = ("Drag a vertex to move it, double-click a segment to add one, press Delete to remove the vertex "
              "under the cursor. Esc stops editing.")

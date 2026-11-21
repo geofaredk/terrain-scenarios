@@ -34,6 +34,20 @@ def test_the_gallery_redraws_its_illustrations_when_the_theme_changes():
     assert gallery.tool_list.item(0).icon().pixmap(60, 32).toImage() != first
 
 
+def test_a_broken_illustration_does_not_take_qgis_down_on_a_theme_change(monkeypatch):
+    """The theme changing redraws every tile's illustration from inside a Qt virtual override
+    (`changeEvent`); an SVG that cannot be read there must not abort QGIS, the same guarantee
+    `PropertiesPage` already gives its own pictures."""
+    from terrain_sketch.gui import illustrations
+    gallery = ToolGallery()
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("an SVG that cannot be read")
+
+    monkeypatch.setattr(illustrations, "pixmap", broken)
+    gallery.changeEvent(QEvent(QEvent.Type.PaletteChange))   # must not raise
+
+
 def test_the_properties_page_explains_the_selected_tool(tmp_path):
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)

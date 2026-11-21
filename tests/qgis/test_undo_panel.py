@@ -11,7 +11,7 @@ from qgis_helpers import UTM, dem_layer, fake_iface, line_through, spin_event_lo
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.controller import SketchController
 from terrain_sketch.gui.help_texts import UNDO_ADD
-from terrain_sketch.gui.main_dock import PAGE_PROPERTIES, MainDock
+from terrain_sketch.gui.main_dock import MainDock
 from terrain_sketch.gui.profile_dock import ProfileDock
 from terrain_sketch.gui.selection import Method
 
@@ -154,8 +154,8 @@ def test_undo_that_removes_the_feature_a_brush_extends_stops_the_brush(tmp_path)
 def test_undo_reloads_the_properties_page(tmp_path):
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
-    assert dock.pages.currentIndex() == PAGE_PROPERTIES
+    dock.feature_view.rowOpened.emit(dike.id)
+    assert dock.stack.currentPanel() is dock.properties_page
     dock.properties.amount.setValue(2.5)                   # through the page, as a user would
     assert c.find(dike.id).amount == 2.5
     dock.undo_button.click()
@@ -165,10 +165,12 @@ def test_undo_reloads_the_properties_page(tmp_path):
 
 def test_the_panel_header_does_not_make_the_panel_wider(tmp_path):
     """Seven buttons in a row forced a right-hand panel past 400 px; in a toolbar the ones that do
-    not fit go behind », so the header is no longer what sets the panel's minimum width."""
+    not fit go behind », so the header is no longer what sets the panel's minimum width. New feature
+    and Scenario ▾ now carry their own text (spec §5.1), so the floor is one such button wide rather
+    than icon-only — still nowhere near 400 px."""
     _iface, _c, dock = panel(tmp_path)
     dock.show()
-    assert dock.toolbar.minimumSizeHint().width() < 100
+    assert dock.toolbar.minimumSizeHint().width() < 200
     assert dock.widget().minimumSizeHint().width() < 360
 
 
@@ -179,8 +181,8 @@ def test_ctrl_z_in_a_text_field_of_the_panel_is_left_to_that_field(tmp_path):
     iface, c, dock = panel(tmp_path)
     _window, qgis_undo = in_a_window(iface, dock)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
-    assert dock.pages.currentIndex() == PAGE_PROPERTIES
+    dock.feature_view.rowOpened.emit(dike.id)
+    assert dock.stack.currentPanel() is dock.properties_page
     spin = dock.properties.amount
     spin.setFocus()
     spin_event_loop(10)
@@ -194,11 +196,13 @@ def test_ctrl_z_in_a_text_field_of_the_panel_is_left_to_that_field(tmp_path):
 
 def test_ctrl_z_after_stepping_a_setting_undoes_the_change(tmp_path):
     """The arrows commit each step, so the field has no text of its own to undo: Ctrl+Z there
-    undoes the whole adjustment, as one step, like it does anywhere else in the panel."""
+    undoes the whole adjustment, as one step, like it does anywhere else in the panel. The page
+    must actually be open: a real window is active here (`in_a_window`), and a widget outside it
+    cannot genuinely take Qt's application focus, which these key events rely on."""
     iface, c, dock = panel(tmp_path)
     _window, qgis_undo = in_a_window(iface, dock)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     spin = dock.properties.amount
     spin.setFocus()
     spin_event_loop(10)
@@ -214,11 +218,12 @@ def test_ctrl_z_after_stepping_a_setting_undoes_the_change(tmp_path):
 
 def test_ctrl_z_after_a_field_undid_its_own_text_undoes_the_last_change(tmp_path):
     """Once the typed text is undone the field has only a redo left, so the next Ctrl+Z goes on to
-    the feature change instead of doing nothing."""
+    the feature change instead of doing nothing. The page must be open for the same reason as
+    above: a widget outside the active window cannot take real application focus."""
     iface, c, dock = panel(tmp_path)
     _window, qgis_undo = in_a_window(iface, dock)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     spin = dock.properties.amount
     spin.setFocus()
     spin_event_loop(10)
@@ -234,11 +239,12 @@ def test_ctrl_z_after_a_field_undid_its_own_text_undoes_the_last_change(tmp_path
 
 def test_the_undo_button_leaves_a_value_the_user_is_still_typing(tmp_path):
     """The button takes no focus, so the field keeps it and its typed text. Undo changes the feature;
-    the typed value is still there to confirm with Enter, not silently thrown away."""
+    the typed value is still there to confirm with Enter, not silently thrown away. The page must be
+    open for the typed text to reach a genuinely focused field (see the two tests above)."""
     iface, c, dock = panel(tmp_path)
     _window, _qgis_undo = in_a_window(iface, dock)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.feature_view.select_id(dike.id)
+    dock.feature_view.rowOpened.emit(dike.id)
     c.update_feature(dike.id, width=dike.width + 1.0)
     spin = dock.properties.amount
     spin.setFocus()
@@ -251,3 +257,54 @@ def test_the_undo_button_leaves_a_value_the_user_is_still_typing(tmp_path):
     assert spin.lineEdit().text() == "2 m"
     QTest.keyClick(spin, Qt.Key.Key_Return)
     assert c.find(dike.id).amount == 2.0
+
+
+def test_ctrl_z_in_the_header_name_field_is_left_to_that_field_while_it_has_typed_text(tmp_path):
+    """The header's `name_edit` gets the same `UndoKeys` filter as the spins (`spin_undo_keys`):
+    while it has typed text of its own to undo, Ctrl+Z there is its own, not a rename commit of
+    whatever the field held before — and, critically, not the app's undo stack either, or a stale
+    Ctrl+Z here would silently undo the *previous* feature change instead of the field's own text.
+
+    A plain `QLineEdit` already undoes its own typed text on Ctrl+Z with no filter installed at
+    all, so the behavioural assertions below hold either way and cannot alone prove the filter is
+    doing anything — `name_keys.applies(False)` is checked directly: that boolean is the one thing
+    genuinely only the filter's own `_has_text_history` check decides (`spin_undo_keys[-1]` is
+    `name_edit`'s, installed last, right after the four spins, in `MainDock.__init__`)."""
+    iface, c, dock = panel(tmp_path)
+    _window, qgis_undo = in_a_window(iface, dock)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    name = dock.properties.name_edit
+    name_keys = dock.spin_undo_keys[-1]
+    name.setFocus()
+    spin_event_loop(10)
+    name.selectAll()
+    QTest.keyClicks(name, "Typed but not committed")
+    assert name.text() == "Typed but not committed"
+    assert name_keys.applies(False) is False    # the filter itself declines: not its shortcut to take
+    steps = c.undo_stack.count()
+    press(name, QKeySequence.StandardKey.Undo)
+    assert name.text() == dike.name                       # the field undid its own text
+    assert c.undo_stack.count() == steps and qgis_undo == []   # neither the app's undo stack …
+    assert c.find(dike.id).name == dike.name                   # … nor a rename ever happened
+    assert name_keys.applies(False) is True     # nothing left to undo natively: now it is the filter's
+
+
+def test_ctrl_z_in_the_header_name_field_reaches_the_app_once_committed(tmp_path):
+    """Once a rename is committed the field has no text of its own left to undo, so Ctrl+Z there
+    goes on to undo the rename itself, through the app's own undo stack — exactly the spins'
+    "after stepping a setting" behaviour, now also true for the name field."""
+    iface, c, dock = panel(tmp_path)
+    _window, qgis_undo = in_a_window(iface, dock)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    name = dock.properties.name_edit
+    name.setFocus()
+    spin_event_loop(10)
+    name.selectAll()
+    QTest.keyClicks(name, "Renamed")
+    QTest.keyClick(name, Qt.Key.Key_Return)
+    spin_event_loop(10)
+    assert c.find(dike.id).name == "Renamed" and not name.isModified()
+    press(name, QKeySequence.StandardKey.Undo)
+    assert c.find(dike.id).name == dike.name and qgis_undo == []

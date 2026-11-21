@@ -231,6 +231,11 @@ These apply to the polygon, or to the corridor polygon for paths. Side slopes ar
 
 ### 7.2 Right dock "Terrain Sketch"
 
+> **Superseded 2026-09-15** by `2026-09-15-terrain-sketch-panel-redesign.md`: the panel was
+> restructured into drill-in pages (welcome view, feature list, New feature page, feature page).
+> The rules below still describe what the panel contains; that document describes how it is laid
+> out and navigated.
+
 1. **Header row:**
    - The DEM picker (`QgsMapLayerComboBox`, raster only).
    - Scenario actions (icon buttons with tooltips): New, Open…, Save, Save as…, Export DEM…, 3D view.

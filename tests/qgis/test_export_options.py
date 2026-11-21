@@ -134,6 +134,6 @@ def test_an_unexpected_failure_adding_the_export_points_to_the_log(tmp_path):
 def test_export_is_an_icon_button_like_the_other_file_actions(tmp_path):
     from qgis.PyQt.QtCore import Qt
     _iface, _c, dock = panel(tmp_path)
-    assert dock.export_button.toolButtonStyle() == dock.save_scenario_button.toolButtonStyle() \
+    assert dock.export_button.toolButtonStyle() == dock.view_3d_button.toolButtonStyle() \
         == Qt.ToolButtonStyle.ToolButtonIconOnly
     assert dock.export_button.toolTip().startswith("Export DEM…\n")

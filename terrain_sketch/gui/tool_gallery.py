@@ -1,39 +1,106 @@
-"""'What do you want to build?' — the tool list, the Line/Area toggle and the 'Where?' methods."""
+"""The 'New feature' page: the drawing hint while one is running, a tile grid of tools, a segmented
+Line/Area pair and the four ways to draw."""
 from __future__ import annotations
 
-from qgis.core import Qgis, QgsApplication, QgsUnitTypes
-from qgis.gui import QgsDoubleSpinBox
+import traceback
+
+from qgis.core import Qgis, QgsApplication, QgsMessageLog, QgsUnitTypes
+from qgis.gui import QgsDoubleSpinBox, QgsPanelWidget
 from qgis.PyQt.QtCore import QEvent, QSize, Qt, pyqtSignal
-from qgis.PyQt.QtWidgets import (QButtonGroup, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QRadioButton,
-                                 QToolButton, QVBoxLayout, QWidget)
+from qgis.PyQt.QtWidgets import (QButtonGroup, QGridLayout, QHBoxLayout, QLabel, QListView, QListWidget,
+                                 QListWidgetItem, QSizePolicy, QToolButton, QVBoxLayout)
 
 from ..core.tools import TOOL_INFO, Mode, Tool
 from . import illustrations
+from .controller import LOG_TAG
 from .help_texts import TOOL_LABELS, TOOL_SUMMARIES, tool_tooltip
 from .layer_source import LayerSource
+from .page_layout import apply_page_margins
 from .selection import METHOD_ICONS, METHOD_LABELS, METHOD_TIPS, Method
 
 DEFAULT_BRUSH_RADIUS = 5.0
-ICON_WIDTH, ICON_HEIGHT = 60, 32
+TILE_ICON_SIZE = QSize(96, 48)
+TILE_GRID_SIZE = QSize(116, 92)
+METHOD_GRID_POSITIONS = {Method.CLICK: (0, 0), Method.FREEHAND: (0, 1), Method.BRUSH: (1, 0), Method.LAYER: (1, 1)}
 
 
-class ToolGallery(QWidget):
+class _ToolTileList(QListWidget):
+    """The tile grid, sized to fit exactly the rows its current width needs — not stretched to
+    fill whatever space `QVBoxLayout` leaves it (`QAbstractScrollArea`'s default vertical size
+    policy is `Expanding`), which would crowd the summary, Shape and Where controls into
+    whatever was left at the bottom of the New feature page. `IconMode` with
+    `ResizeMode.Adjust` already reflows the tiles into more or fewer columns as the width changes;
+    `heightForWidth` is what lets `QVBoxLayout` ask this widget how tall it needs to be for THAT
+    width, rather than the other way around — the standard Qt mechanism for a flow layout whose
+    height depends on the width it is given (used the same way a word-wrapped `QLabel` reports its
+    own height), so the grid keeps reflowing and staying sized-to-content on every resize."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        policy = self.sizePolicy()
+        policy.setVerticalPolicy(QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 — Qt override
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 — Qt override
+        """Columns must be counted the way the view itself will actually lay them out: from the
+        VIEWPORT width (`width` minus the frame on both sides) — the wrapped
+        icon grid lives inside the viewport, not the outer widget — and a column only really fits
+        if the viewport is wider than an exact multiple of the grid width, not merely as wide
+        (`(viewport_width - 1) // grid_width`, not `viewport_width // grid_width`): at an exact
+        multiple the view still only fits one column fewer (verified by probe, sweeping every
+        width from 240 to 520 against the view's own `visualRect` for the last tile). Counting
+        columns from the outer width, or accepting an exact multiple as enough, both under-count
+        the rows needed at some widths (348-350 and 464-466 px reproduce it for this tile count and
+        grid size) — this widget then gets too little height from the layout, the last tile falls
+        below the viewport, and `ScrollBarAlwaysOff` leaves it unreachable."""
+        grid = self.gridSize()
+        viewport_width = width - 2 * self.frameWidth()
+        columns = max(1, (viewport_width - 1) // max(grid.width(), 1))
+        rows = -(-self.count() // columns)   # ceil division: enough rows for every tile
+        return rows * grid.height() + 2 * self.frameWidth()
+
+    def sizeHint(self):  # noqa: N802 — Qt override
+        width = self.viewport().width() or TILE_GRID_SIZE.width()
+        return QSize(width, self.heightForWidth(width))
+
+
+class ToolGallery(QgsPanelWidget):
     drawRequested = pyqtSignal(object, object, object)  # Tool, Mode, Method
     layerRequested = pyqtSignal(object, object, object, bool)  # Tool, Mode, QgsVectorLayer, selected_only
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setDockMode(True)   # mandatory before openPanel, or it opens a modal dialog (hangs offscreen tests)
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        apply_page_margins(layout, self)   # a normal gap from the panel edge, as QGIS's own panels have
+
+        # At the top, above the tiles: the page is taller than a typical dock, and what to do next
+        # on the map must be readable without scrolling, as on the feature page.
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.hint.hide()
+        layout.addWidget(self.hint)
+
         layout.addWidget(QLabel(self.tr("What do you want to build?")))
-        self.tool_list = QListWidget()
-        self.tool_list.setIconSize(QSize(ICON_WIDTH, ICON_HEIGHT))
+        self.tool_list = _ToolTileList()
+        self.tool_list.setViewMode(QListView.ViewMode.IconMode)
+        self.tool_list.setUniformItemSizes(True)
+        self.tool_list.setResizeMode(QListView.ResizeMode.Adjust)
+        self.tool_list.setMovement(QListView.Movement.Static)
+        self.tool_list.setWordWrap(True)
+        self.tool_list.setIconSize(TILE_ICON_SIZE)
+        self.tool_list.setGridSize(TILE_GRID_SIZE)
         for tool in Tool:
             item = QListWidgetItem(TOOL_LABELS[tool])
             item.setData(Qt.ItemDataRole.UserRole, tool.value)
             item.setToolTip(tool_tooltip(tool))
-            item.setIcon(illustrations.icon(f"tool_{tool.value}", QSize(ICON_WIDTH, ICON_HEIGHT),
-                                            self.palette()))
+            item.setIcon(illustrations.icon(f"tool_{tool.value}", TILE_ICON_SIZE, self.palette()))
             self.tool_list.addItem(item)
         layout.addWidget(self.tool_list)
         self.summary = QLabel()
@@ -42,8 +109,8 @@ class ToolGallery(QWidget):
 
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel(self.tr("Shape")))
-        self.line_mode = QRadioButton(self.tr("Line"))
-        self.area_mode = QRadioButton(self.tr("Area"))
+        self.line_mode = self._shape_button(self.tr("Line"))
+        self.area_mode = self._shape_button(self.tr("Area"))
         self.mode_group = QButtonGroup(self)
         self.mode_group.addButton(self.line_mode)
         self.mode_group.addButton(self.area_mode)
@@ -53,12 +120,11 @@ class ToolGallery(QWidget):
         layout.addLayout(mode_row)
 
         layout.addWidget(QLabel(self.tr("Where?")))
-        method_row = QHBoxLayout()
+        method_grid = QGridLayout()
         self.method_buttons = {method: self._method_button(method) for method in Method}
-        for button in self.method_buttons.values():
-            method_row.addWidget(button)
-        method_row.addStretch(1)
-        layout.addLayout(method_row)
+        for method, button in self.method_buttons.items():
+            method_grid.addWidget(button, *METHOD_GRID_POSITIONS[method])
+        layout.addLayout(method_grid)
 
         brush_row = QHBoxLayout()
         self.brush_label = QLabel(self.tr("Brush radius"))
@@ -76,6 +142,10 @@ class ToolGallery(QWidget):
         self.layer_source.hide()
         layout.addWidget(self.layer_source)
 
+        # The stretch sits below every control, not on the tile grid itself, so leftover space in a
+        # tall dock collects here instead of the grid being stretched to fill it.
+        layout.addStretch(1)
+
         self.tool_list.currentItemChanged.connect(self._tool_changed)
         self.line_mode.toggled.connect(self._mode_changed)
         self.area_mode.toggled.connect(self._mode_changed)
@@ -87,17 +157,23 @@ class ToolGallery(QWidget):
         return Tool(item.data(Qt.ItemDataRole.UserRole)) if item is not None else None
 
     def changeEvent(self, event):  # noqa: N802 — Qt override
-        """Redraw the illustrations when QGIS switches between its light and dark themes."""
+        """Redraw the illustrations when QGIS switches between its light and dark themes.
+
+        Guarded: this runs from a Qt virtual override, and `refresh_icons` reads SVG sources from
+        disk through `illustrations.icon` — any exception escaping it here would abort QGIS rather
+        than merely leave the tiles stale."""
         if event.type() == QEvent.Type.PaletteChange:
-            self.refresh_icons()
+            try:
+                self.refresh_icons()
+            except Exception:  # noqa: BLE001 — this runs from a Qt virtual override
+                QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
         super().changeEvent(event)
 
     def refresh_icons(self) -> None:
         for row in range(self.tool_list.count()):
             item = self.tool_list.item(row)
             tool = Tool(item.data(Qt.ItemDataRole.UserRole))
-            item.setIcon(illustrations.icon(f"tool_{tool.value}", QSize(ICON_WIDTH, ICON_HEIGHT),
-                                            self.palette()))
+            item.setIcon(illustrations.icon(f"tool_{tool.value}", TILE_ICON_SIZE, self.palette()))
 
     def selected_mode(self) -> Mode | None:
         if self.area_mode.isChecked():
@@ -122,12 +198,26 @@ class ToolGallery(QWidget):
         """Name the units the brush radius is really in — the canvas's map units, never converted."""
         self.brush_spin.setSuffix(f" {self._unit_label(units)}")
 
+    def clear_hint(self) -> None:
+        self.hint.hide()
+
     def _unit_label(self, units) -> str:
         if units == Qgis.DistanceUnit.Meters:
             return self.tr("m")
         if units == Qgis.DistanceUnit.Degrees:
             return self.tr("degrees")
         return QgsUnitTypes.toAbbreviatedString(units) or self.tr("map units")
+
+    def _shape_button(self, text: str) -> QToolButton:
+        """`autoRaise` off, on both Line and Area, so each looks like a button in either state —
+        checked or not — instead of the unchecked one reading as plain text next to the checked
+        one's flat highlight."""
+        button = QToolButton()
+        button.setText(text)
+        button.setCheckable(True)
+        button.setAutoRaise(False)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        return button
 
     def _method_button(self, method: Method) -> QToolButton:
         button = QToolButton()
@@ -160,6 +250,8 @@ class ToolGallery(QWidget):
         brush_usable = self.method_buttons[Method.BRUSH].isEnabled()
         self.brush_label.setEnabled(brush_usable)
         self.brush_spin.setEnabled(brush_usable)
+        self.brush_label.setVisible(brush_usable)
+        self.brush_spin.setVisible(brush_usable)
         if mode is not None:
             self.layer_source.set_mode(mode)
         else:

@@ -67,6 +67,14 @@ FLAG_TEXTS = {
 
 NO_SESSION = "Pick a DEM and press Start first."
 
+START_HEADING = "Sketch changes on your terrain"
+START_INTRO = "Terrain Sketch works on a copy; your DEM is never changed."
+SKETCHING_ON = "Sketching on: {}"
+CHANGE_DEM_LINK = ' <a href="change">Change…</a>'
+KEEP_SKETCHING = "Keep sketching"
+KEEP_SKETCHING_TIP = "Go back to the session that is still running, without starting a new one."
+SCENARIO_MENU_TIP = "Start, open or save a scenario file."
+
 EXPORT_OVER_SOURCE = "Choose a new file name: Terrain Sketch never overwrites your DEM or its own working files."
 
 SESSION_ENDED_DEM_REMOVED = "The Terrain Sketch session ended because its DEM was removed from the project."
@@ -253,6 +261,8 @@ def cubic_metres(value: float | None) -> str:
 
 UNSAVED_CHANGES = ("This scenario has changes that are not saved. Save them before continuing?")
 SCENARIO_SAVED = "Scenario saved to {}"
+SCENARIO_MAY_NOT_BE_SAVED = ("The scenario may not have been saved completely ({error}); see the 'Terrain Sketch' "
+                             "log tab for details.")
 SCENARIO_REPLACE = "{} already exists. Replace it?"
 SCENARIO_OPENED = "Scenario opened from {}"
 SCENARIO_DEM_DIFFERS = ("This scenario was made on a DEM with a different {}.\n\n"
@@ -281,3 +291,5 @@ SCENARIO_NOT_APPLIED_ON_ITS_DEM = ("The scenario could not be applied to its DEM
                                    "Terrain Sketch has started on that DEM without any features.")
 UNSAVED_BEFORE_CLOSING = ("Terrain Sketch is closing this scenario, and it has changes that are not "
                           "saved. Save them now?")
+SAVE_FAILED_BEFORE_CLOSING = ("{reason}\n\nTerrain Sketch is still closing this scenario, and it has "
+                              "changes that are not saved. Save them now?")

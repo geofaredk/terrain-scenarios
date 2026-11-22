@@ -218,6 +218,34 @@ def test_styles_come_back_after_save_and_open(tmp_path):
     assert [cat.value() for cat in cats] == [reopened.id] and to_xml(cats[0].symbol()) == RED
 
 
+def test_open_puts_the_feature_styles_back_in_charge(tmp_path):
+    c = start_session(tmp_path)
+    dike = _dike(c)
+    c.set_style(dike.id, RED)
+    path = str(tmp_path / "work.gpkg")
+    c.save_scenario(path)
+    c.layers.outlines.setRenderer(QgsSingleSymbolRenderer(QgsFillSymbol.createSimple({"color": "0,255,0,255"})))
+    _settle()
+    assert not c.uses_feature_styles()
+    seen = _record_styles_changed(c)
+    c.open_scenario(path)
+    reopened = c.features[0]
+    assert c.uses_feature_styles() and _symbols(c) == [RED] and seen
+    assert [cat.value() for cat in c.layers.outlines.renderer().categories()] == [reopened.id]
+
+
+def test_new_scenario_puts_the_feature_styles_back_in_charge(tmp_path):
+    c = start_session(tmp_path)
+    _dike(c)
+    c.layers.outlines.setRenderer(QgsSingleSymbolRenderer(QgsFillSymbol.createSimple({"color": "0,255,0,255"})))
+    _settle()
+    seen = _record_styles_changed(c)
+    c.new_scenario()
+    assert c.features == () and c.uses_feature_styles() and _symbols(c) == [] and seen
+    levee = _dike(c)
+    assert [cat.value() for cat in c.layers.outlines.renderer().categories()] == [levee.id]
+
+
 def test_classify_takes_the_new_colours_and_keeps_the_names(tmp_path):
     c = start_session(tmp_path)
     dike = _dike(c)

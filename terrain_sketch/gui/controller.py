@@ -293,6 +293,15 @@ class SketchController(QObject):
                 self.layers.use_feature_styles(self._style_entries())
         self.stylesChanged.emit()
 
+    def _feature_styles_in_charge(self) -> None:
+        """After New or Open: the per-feature renderer back on the outline layer if the user had put their own
+        there. A layer failure is a log entry, never an exception: the features are already replaced."""
+        try:
+            if not self.uses_feature_styles():
+                self.use_feature_styles()
+        except Exception:  # noqa: BLE001 — never let a layer error take QGIS down
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
     def display_symbol(self, fid: str) -> QgsSymbol | None:
         """The symbol the feature is shown with: what the user's own renderer draws for it while that is in
         charge and the feature is on the map, otherwise its stored style. None for no style of its own (the
@@ -476,6 +485,7 @@ class SketchController(QObject):
             return
         if self._set([]):
             self._forget_scenario()
+            self._feature_styles_in_charge()   # a fresh start, as on Start
             self.sessionChanged.emit()
 
     def save_scenario(self, path: str) -> None:
@@ -524,6 +534,7 @@ class SketchController(QObject):
         if not self._set(features):
             raise ScenarioError(SCENARIO_NOT_APPLIED)
         self.undo_stack.clear()   # the history belonged to the features that were just replaced
+        self._feature_styles_in_charge()   # the user's own renderer is not part of the scenario
         self._mark_scenario(path, meta.created)
         if meta.dem_source and _same_file(meta.dem_source, self.info.path) \
                 and not scenario.dem_meta(self.info, self.stack.original).differences(meta):

@@ -73,7 +73,7 @@ Why: not stated beyond the request. The working assumption is telling features a
 - Once the user switches to anything else — Single symbol, Rule-based, Graduated, Categorized on another field, Paste Style, a loaded .qml — the plugin **keeps their renderer and stops managing it**: it no longer adds, removes or rewrites categories, and writes nothing back. Features keep their stored styles untouched.
 - While their renderer is in charge, each row shows the symbol the layer actually draws for that feature (asked from the renderer per feature), so the list still matches the map. A turned-off feature, not on the map, shows its stored style or the tool diagram.
 - A **"Use feature styles again"** action puts the per-feature Categorized renderer back from the stored styles. It sits in the outline layer's context menu in the Layers panel and in the feature list's menu, and is an ordinary QGIS-styled action.
-- The user's own renderer is not saved in the scenario. After Save and Open, or on Start, the per-feature styles are back in charge.
+- The user's own renderer is not saved in the scenario. After Save and Open, on New, or on Start, the per-feature styles are back in charge: Open and New put the per-feature renderer back on the outline layer (a fresh start), and Start builds a new layer with it.
 
 ### The feature list
 
@@ -85,7 +85,7 @@ Why: not stated beyond the request. The working assumption is telling features a
 - Duplicate copies `style` (it is just another field on the copy).
 - Undo/redo restore `style` with everything else; the renderer follows.
 - **Save** writes a new `style` text column on the features table (empty = no style). Older files without the column open with every feature unstyled. Files saved with styles open in older plugin versions without error (the extra column is ignored).
-- **Open** reads it back; the renderer is rebuilt from the loaded features.
+- **Open** reads it back; the renderer is rebuilt from the loaded features, and replaces the user's own renderer if one was in charge.
 - **Start** begins a session with an empty feature list (as today), and its new outline layer starts with the per-feature renderer. *(Corrected while planning: Start does not carry features over, so there are no styles to carry.)*
 
 ## Left to the builder / calls made by Claude (to check)

@@ -123,6 +123,20 @@ def test_apply_styles_drops_features_no_longer_listed_but_keeps_an_all_other_val
     assert [c.value() for c in layers.outlines.renderer().categories()] == ["a", ""]
 
 
+def test_apply_styles_with_nothing_to_change_repaints_nothing(tmp_path):
+    """Every terrain update applies the styles; only a real change rebuilds the legend and repaints."""
+    _, _, layers = _layers(tmp_path)
+    entries = [("a", "North dike", _red()), ("b", "Pond", None)]
+    layers.apply_styles(entries)
+    seen = []
+    layers.outlines.styleChanged.connect(lambda: seen.append("styleChanged"))
+    layers.outlines.repaintRequested.connect(lambda *_args: seen.append("repaint"))
+    layers.apply_styles(entries)
+    assert seen == []
+    layers.apply_styles([("a", "North dike", _blue()), ("b", "Pond", None)])
+    assert "styleChanged" in seen and "repaint" in seen
+
+
 def test_read_styles_reports_labels_and_styles(tmp_path):
     _, _, layers = _layers(tmp_path)
     red = _red()
@@ -144,10 +158,11 @@ def test_a_merged_category_is_no_ones_style_and_gives_way_to_one_category_per_fe
 
 def test_a_replaced_renderer_is_left_alone(tmp_path):
     _, _, layers = _layers(tmp_path)
-    layers.outlines.setRenderer(QgsSingleSymbolRenderer(default_symbol()))
+    layers.outlines.setRenderer(QgsSingleSymbolRenderer(QgsFillSymbol.createSimple({"color": "0,255,0,255"})))
+    green = to_xml(layers.outlines.renderer().symbol())
     assert not layers.is_managed()
-    layers.apply_styles([("a", "A", None)])
-    assert isinstance(layers.outlines.renderer(), QgsSingleSymbolRenderer) and layers.read_styles() == {}
+    layers.apply_styles([("a", "A", _red())])
+    assert to_xml(layers.outlines.renderer().symbol()) == green and layers.read_styles() == {}
     layers.use_feature_styles([("a", "A", _red())])
     assert layers.is_managed()
     assert layers.read_styles() == {"a": ("A", _red())}

@@ -66,7 +66,7 @@ class PropertiesPage(QgsPanelWidget):
     editShapeToggled = pyqtSignal(bool)
     titleChanged = pyqtSignal(str)   # panelTitle() just changed (spec §7: the title bar follows a rename)
 
-    def __init__(self, controller, parent=None):
+    def __init__(self, controller, parent=None, canvas=None):
         super().__init__(parent)
         self.setDockMode(True)   # mandatory before openPanel, or it opens a modal dialog (hangs offscreen tests)
         self.controller = controller
@@ -144,6 +144,8 @@ class PropertiesPage(QgsPanelWidget):
         self.style_button.setSymbolType(Qgis.SymbolType.Fill)
         self.style_button.setShowNull(True)
         self.style_button.changed.connect(self._style_edited)
+        # the canvas and the outline layer give data-defined symbol settings their expression context
+        self.style_button.setMapCanvas(canvas)
         self.form.addRow(self.tr("Style"), self.style_button)
         # The editing session a style change belongs to, for undo: one opening of the symbol selector
         # (the only panel opened from this page) is one session, and so is each change made from the
@@ -246,6 +248,8 @@ class PropertiesPage(QgsPanelWidget):
         controller.featuresChanged.connect(self._refresh_volumes)
         controller.featuresChanged.connect(self._refresh_style)   # an undo or redo of a style change
         controller.stylesChanged.connect(self._refresh_style)     # an edit in QGIS's symbology, or a renderer swap
+        controller.sessionChanged.connect(self._refresh_style_layer)
+        self._refresh_style_layer()
 
     def eventFilter(self, watched, event):  # noqa: N802 — Qt override
         """Highlight the part of the diagram that belongs to whichever field has focus. Also: Escape
@@ -444,6 +448,16 @@ class PropertiesPage(QgsPanelWidget):
             feature = self.controller.find(self._fid) if self._fid is not None else None
             if feature is not None:
                 self._load_style(feature)
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _refresh_style_layer(self) -> None:
+        """The Style button's layer: this session's outline layer, None with no session or once it is gone.
+        Runs in a slot."""
+        try:
+            layers = self.controller.layers
+            layer = self.controller.project.mapLayer(layers.outlines_id) if layers is not None else None
+            self.style_button.setLayer(layer)
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 

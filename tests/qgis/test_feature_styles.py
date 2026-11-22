@@ -517,3 +517,54 @@ def test_selecting_another_feature_closes_the_selector_first(tmp_path, monkeypat
     assert dock.stack.currentPanel() is dock.properties_page and dock.properties.fid == levee.id
     assert c.find(dike.id).style is None and c.find(levee.id).style is None
     assert logged == []
+
+
+def test_style_button_knows_the_canvas_and_the_outline_layer(tmp_path):
+    iface, c, dock, _dike_feature = _feature_page(tmp_path)
+    button = dock.properties.style_button   # for the expression context of data-defined symbol settings
+    assert button.mapCanvas() is iface.mapCanvas() and button.layer().id() == c.layers.outlines_id
+    c.close()
+    assert button.layer() is None
+    dock.start_button.click()               # a new session: a new outline layer
+    assert button.layer().id() == c.layers.outlines_id
+
+
+def test_undo_with_the_selector_open_closes_it(tmp_path, monkeypatch):
+    logged = _record_criticals(monkeypatch)
+    _iface, c, dock, dike = _feature_page(tmp_path)
+    selector = _open_selector(dock)
+    _live_edit(selector, (255, 0, 0))
+    c.undo_stack.undo()   # the selector's own copy of the red must not come back with the next tweak
+    _settle()
+    assert dock.stack.currentPanel() is dock.properties_page
+    assert c.find(dike.id).style is None and c.undo_stack.canRedo()
+    assert logged == []
+
+
+def test_switching_to_a_layer_style_with_the_selector_open_closes_it(tmp_path, monkeypatch):
+    logged = _record_criticals(monkeypatch)
+    _iface, c, dock, dike = _feature_page(tmp_path)
+    selector = _open_selector(dock)
+    _live_edit(selector, (255, 0, 0))
+    style = c.find(dike.id).style
+    c.layers.outlines.setRenderer(QgsSingleSymbolRenderer(QgsFillSymbol.createSimple({"color": "0,255,0,255"})))
+    _settle()
+    assert not c.uses_feature_styles() and dock.stack.currentPanel() is dock.properties_page
+    assert c.find(dike.id).style == style
+    assert logged == []
+
+
+def test_a_layer_write_after_a_nested_one_is_still_the_controllers_own(tmp_path):
+    c = start_session(tmp_path)
+    dike = _dike(c)
+    count = c.undo_stack.count()
+    with c._outline_writes():
+        with c._outline_writes():
+            pass
+        cats = c.layers.outlines.renderer().categories()  # kept alive while its symbols are used
+        c.layers.outlines.renderer().updateCategorySymbol(0, from_xml(RED))
+        c.layers.outlines.triggerRepaint()
+        del cats
+    _settle()
+    assert c.find(dike.id).style is None and c.undo_stack.count() == count
+

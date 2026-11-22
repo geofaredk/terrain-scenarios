@@ -88,33 +88,41 @@ class SketchLayers:
         """Bring the per-feature renderer in line with `entries`: (feature id, name, style) for the enabled
         features, in list order. The renderer is edited in place, touching only categories that differ, so
         renderer settings and each category's checkbox last. A category for empty or no value (the user's
-        "all other values") is kept. Does nothing unless the layer is managed."""
+        "all other values") is kept. Does nothing unless the layer is managed, and repaints nothing when
+        every category already matches — it runs on every terrain update."""
         if not self.is_managed():
             return
         layer = self.project.mapLayer(self.outlines_id)
         renderer = layer.renderer()
         fids = [fid for fid, _name, _style in entries]
+        changed = False
         cats = renderer.categories()  # kept alive while its symbols are used
         for index in reversed(range(len(cats))):
             value = cats[index].value()
             if value not in fids and value not in ("", None):
                 renderer.deleteCategory(index)
+                changed = True
         for position, (fid, name, style) in enumerate(entries):
             symbol = from_xml(style) or default_symbol()
             index = renderer.categoryIndexForValue(fid)
             if index < 0:
                 renderer.addCategory(QgsRendererCategory(fid, symbol, name))
                 index = len(renderer.categories()) - 1
+                changed = True
             else:
                 cats = renderer.categories()
                 if cats[index].label() != name:
                     renderer.updateCategoryLabel(index, name)
+                    changed = True
                 if to_xml(cats[index].symbol()) != to_xml(symbol):
                     renderer.updateCategorySymbol(index, symbol)
+                    changed = True
             if index != position:
                 renderer.moveCategory(index, position)
-        layer.triggerRepaint()
-        layer.emitStyleChanged()  # the in-place edits above tell the legend nothing on their own
+                changed = True
+        if changed:
+            layer.triggerRepaint()
+            layer.emitStyleChanged()  # the in-place edits above tell the legend nothing on their own
 
     def read_styles(self) -> dict:
         """{feature id: (category label, style)} for every category of one non-empty value; {} unless managed."""

@@ -389,7 +389,7 @@ class MainDock(QgsDockWidget):
         # `close_page` is what makes Escape inside the tiles close the real page (verified by probe:
         # without this, Escape inside the gallery is silently swallowed).
         self.gallery.panelAccepted.connect(self.close_page)
-        self.properties = PropertiesPage(controller, self._released_pages)
+        self.properties = PropertiesPage(controller, self._released_pages, canvas=iface.mapCanvas())
         # `PropertiesPage` is a `QgsPanelWidget` too (dockMode True), with exactly the same Escape
         # hazard as `gallery` above — its own keyPressEvent answers Escape by calling its own
         # `acceptPanel()`, emitting `properties.panelAccepted` rather than the `_PagePanel` wrapper's,
@@ -476,6 +476,8 @@ class MainDock(QgsDockWidget):
         iface.addCustomActionForLayerType(self.use_styles_action, "", Qgis.LayerType.Vector, False)
         self._styles_action_layer_id = None
         controller.stylesChanged.connect(self._refresh_styles_action)
+        # a symbol selector open over the feature page edits a style the map no longer draws
+        controller.stylesChanged.connect(self._close_selector_under_layer_style)
         self._session_changed()
 
     @staticmethod
@@ -605,6 +607,15 @@ class MainDock(QgsDockWidget):
         """Guarded: reached from `stylesChanged`, a Qt signal, and from `_session_changed`."""
         try:
             self.use_styles_action.setEnabled(not self.controller.uses_feature_styles())
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _close_selector_under_layer_style(self) -> None:
+        """The user's own renderer took over the outline layer: a symbol selector still open on the feature
+        page would go on storing styles that do not show, so it closes. Guarded: reached from `stylesChanged`."""
+        try:
+            if not self.controller.uses_feature_styles():
+                self._close_sub_panels()
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
@@ -1245,8 +1256,12 @@ class MainDock(QgsDockWidget):
         `_brush_extends`, not `_brush_fid`: an undo that removes the feature itself has already cleared
         the id (featuresChanged comes first), and the brush would then add the old outline as a new feature.
 
+        A symbol selector open over the feature page closes too: it holds its own copy of the style the undo
+        just replaced, and its next tweak would put that back.
+
         Guarded: reached from `controller.featuresRestored`, a Qt signal."""
         try:
+            self._close_sub_panels()
             self.stop_editing()
             if self._brush_extends:
                 self.end_drawing()

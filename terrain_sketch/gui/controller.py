@@ -752,12 +752,13 @@ class SketchController(QObject):
     def _outline_writes(self):
         """Around every write the controller makes to the outline layer: each one repaints the layer or
         emits styleChanged at once, and `_on_outline_style` must not take that for the user's edit — inside
-        an undo it would read the old symbols back and commit them again."""
-        self._writing_outlines = True
+        an undo it would read the old symbols back and commit them again. Nestable: an inner one leaves the
+        outer one's writes guarded."""
+        previous, self._writing_outlines = self._writing_outlines, True
         try:
             yield
         finally:
-            self._writing_outlines = False
+            self._writing_outlines = previous
 
     def _on_outline_style(self, *_args) -> None:
         """The outline layer was restyled or repainted: an edit made in QGIS's own symbology — the Layers

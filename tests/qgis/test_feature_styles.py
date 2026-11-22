@@ -303,7 +303,7 @@ def test_style_button_shows_and_sets_the_feature_style(tmp_path):
     assert c.find(dike.id).style is None
     # shows the default look again after reload, not an empty button
     assert page.style_button.symbol() is not None and style_of(page.style_button.symbol()) is None
-    c.undo_stack.clear()   # the edits above merged into one step with the BLUE before them
+    c.undo_stack.clear()   # the edits above: two steps on top of the BLUE
     page.style_button.setSymbol(QgsFillSymbol.createSimple({"color": "255,0,0,255"}))
     c.undo_stack.undo()   # an undo moves the button back too
     assert c.find(dike.id).style is None and style_of(page.style_button.symbol()) is None
@@ -323,7 +323,7 @@ def test_opening_the_page_records_nothing(tmp_path):
     count, before = c.undo_stack.count(), c.features
     calls = []
     set_style = c.set_style
-    c.set_style = lambda *args: (calls.append(args), set_style(*args))
+    c.set_style = lambda *args, **kwargs: (calls.append(args), set_style(*args, **kwargs))
     dock.feature_view.rowOpened.emit(dike.id)
     dock.close_page()
     dock.feature_view.rowOpened.emit(levee.id)   # a different style, and the default look
@@ -430,6 +430,44 @@ def test_style_button_opens_the_symbol_selector_on_the_panel(tmp_path, monkeypat
     assert c.find(dike.id).style == style and c.undo_stack.count() == count + 1
     assert dock.stack.findChild(QLabel, "mTitleText").text().strip() == dike.name
     assert logged == []
+
+
+def test_separate_selector_sessions_are_separate_undo_steps(tmp_path, monkeypatch):
+    logged = _record_criticals(monkeypatch)
+    _iface, c, dock, dike = _feature_page(tmp_path)
+    count = c.undo_stack.count()
+    selector = _open_selector(dock)
+    _live_edit(selector, (255, 0, 0))
+    _live_edit(selector, (0, 255, 0))
+    selector.acceptPanel()
+    _settle()
+    green = c.find(dike.id).style
+    assert from_xml(green).color() == QColor(0, 255, 0) and c.undo_stack.count() == count + 1
+    selector = _open_selector(dock)     # a later edit of the same feature: a step of its own
+    _live_edit(selector, (0, 0, 255))
+    selector.acceptPanel()
+    _settle()
+    assert from_xml(c.find(dike.id).style).color() == QColor(0, 0, 255) and c.undo_stack.count() == count + 2
+    c.undo_stack.undo()                 # back to the green, not straight past it
+    assert c.find(dike.id).style == green
+    c.undo_stack.undo()
+    assert c.find(dike.id).style is None
+    assert logged == []
+
+
+def test_each_style_menu_action_is_its_own_undo_step(tmp_path):
+    _iface, c, dock, dike = _feature_page(tmp_path)
+    button = dock.properties.style_button
+    count = c.undo_stack.count()
+    button.setColor(QColor(255, 0, 0))   # a colour picked from the button's menu
+    button.setColor(QColor(0, 0, 255))   # … and another one later
+    assert c.undo_stack.count() == count + 2
+    c.undo_stack.undo()
+    assert from_xml(c.find(dike.id).style).color() == QColor(255, 0, 0)
+    button.setToNull()                   # the menu's reset, after a step of its own
+    assert c.find(dike.id).style is None and c.undo_stack.count() == count + 2
+    c.undo_stack.undo()
+    assert from_xml(c.find(dike.id).style).color() == QColor(255, 0, 0)
 
 
 def test_closing_the_page_with_the_selector_open_returns_to_the_list(tmp_path, monkeypatch):

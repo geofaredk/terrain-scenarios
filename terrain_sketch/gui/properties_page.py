@@ -7,6 +7,7 @@ import traceback
 
 from qgis.core import Qgis, QgsApplication, QgsMessageLog
 from qgis.gui import QgsCollapsibleGroupBox, QgsDoubleSpinBox, QgsPanelWidget, QgsScrollArea, QgsSymbolButton
+from qgis.PyQt import sip
 from qgis.PyQt.QtCore import QEvent, QSize, Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import (QComboBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QToolButton,
                                  QVBoxLayout, QWidget)
@@ -144,6 +145,12 @@ class PropertiesPage(QgsPanelWidget):
         self.style_button.setShowNull(True)
         self.style_button.changed.connect(self._style_edited)
         self.form.addRow(self.tr("Style"), self.style_button)
+        # The editing session a style change belongs to, for undo: one opening of the symbol selector
+        # (the only panel opened from this page) is one session, and so is each change made from the
+        # button's menu while no selector is open. The steps of one session merge into one undo step.
+        self._style_session = 0
+        self._selector = None   # the symbol selector opened from the Style button, while it is open
+        self.showPanel.connect(self._selector_opened)
 
         self.advanced = QgsCollapsibleGroupBox(self.tr("Advanced"))
         self.advanced.setObjectName("TerrainSketchAdvanced")
@@ -442,12 +449,32 @@ class PropertiesPage(QgsPanelWidget):
 
     def _style_edited(self) -> None:
         """The Style button's symbol was changed by the user: stored as the feature's style (None — the
-        default look — after a reset). Runs in a slot."""
+        default look — after a reset). A change with no selector open — a paste, a reset, a colour from
+        the menu — is a session of its own. Runs in a slot."""
         try:
             if self._fid is None or self._loading or self.controller.find(self._fid) is None:
                 return
-            self.controller.set_style(self._fid, style_of(self.style_button.symbol()))
+            if self._selector is None or sip.isdeleted(self._selector):
+                self._style_session += 1
+            self.controller.set_style(self._fid, style_of(self.style_button.symbol()), session=self._style_session)
         except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _selector_opened(self, panel) -> None:
+        """The Style button opened the symbol selector: a new editing session, lasting until it closes.
+        Guarded: reached from `showPanel`, a Qt signal."""
+        try:
+            self._style_session += 1
+            self._selector = sip.cast(panel, QgsPanelWidget)   # handed over typed as a plain QWidget
+            self._selector.panelAccepted.connect(self._selector_closed)
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _selector_closed(self, _panel=None) -> None:
+        """Guarded: reached from the selector's `panelAccepted`, a Qt signal."""
+        try:
+            self._selector = None
+        except Exception:  # noqa: BLE001 — this runs off a Qt signal
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _changed(self, field: str, value) -> None:

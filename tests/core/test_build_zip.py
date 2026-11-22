@@ -24,23 +24,23 @@ def built(tmp_path_factory):
 def test_the_zip_is_named_for_the_version_in_metadata(built):
     path, _names = built
     parser = configparser.ConfigParser()
-    parser.read(ROOT / "terrain_sketch" / "metadata.txt")
-    assert path.name == f"terrain_sketch-{parser.get('general', 'version')}.zip"
+    parser.read(ROOT / "terrain_scenarios" / "metadata.txt")
+    assert path.name == f"terrain_scenarios-{parser.get('general', 'version')}.zip"
 
 
 def test_everything_sits_under_one_folder_qgis_can_install(built):
     _path, names = built
     assert names, "the archive is empty"
-    assert all(name.startswith("terrain_sketch/") for name in names), \
-        [n for n in names if not n.startswith("terrain_sketch/")]
-    assert "terrain_sketch/metadata.txt" in names
-    assert "terrain_sketch/__init__.py" in names
+    assert all(name.startswith("terrain_scenarios/") for name in names), \
+        [n for n in names if not n.startswith("terrain_scenarios/")]
+    assert "terrain_scenarios/metadata.txt" in names
+    assert "terrain_scenarios/__init__.py" in names
 
 
 def test_the_plugin_ships_what_it_needs_at_runtime(built):
     _path, names = built
-    for needed in ("terrain_sketch/plugin.py", "terrain_sketch/gui/main_dock.py",
-                   "terrain_sketch/core/engine.py", "terrain_sketch/qgis_io/scenario.py"):
+    for needed in ("terrain_scenarios/plugin.py", "terrain_scenarios/gui/main_dock.py",
+                   "terrain_scenarios/core/engine.py", "terrain_scenarios/qgis_io/scenario.py"):
         assert needed in names, needed
     assert any(name.endswith(".svg") for name in names), "the illustrations were left out"
 
@@ -56,15 +56,15 @@ def test_the_user_does_not_receive_our_tests_or_caches(built):
 def fake_repo(tmp_path, metadata="[general]\nversion=1.0\n", init=True):
     """A minimal repo the script can be pointed at, so its refusals can be exercised."""
     fake = tmp_path / "repo"
-    (fake / "terrain_sketch").mkdir(parents=True)
+    (fake / "terrain_scenarios").mkdir(parents=True)
     (fake / "scripts").mkdir()
     script = fake / "scripts" / "build_zip.sh"
     script.write_bytes(SCRIPT.read_bytes())
     script.chmod(0o755)
     if metadata is not None:
-        (fake / "terrain_sketch" / "metadata.txt").write_text(metadata)
+        (fake / "terrain_scenarios" / "metadata.txt").write_text(metadata)
     if init:
-        (fake / "terrain_sketch" / "__init__.py").write_text("")
+        (fake / "terrain_scenarios" / "__init__.py").write_text("")
     return script
 
 
@@ -86,8 +86,8 @@ def test_a_plugin_without_an_init_file_is_refused(tmp_path):
 
 def test_a_metadata_file_without_a_version_is_refused(tmp_path):
     """The version drives the file name, so building without one must stop, not ship
-    `terrain_sketch-.zip` that every later build silently overwrites."""
-    script = fake_repo(tmp_path, metadata="[general]\nname=Terrain Sketch\n")
+    `terrain_scenarios-.zip` that every later build silently overwrites."""
+    script = fake_repo(tmp_path, metadata="[general]\nname=Terrain Scenarios\n")
     result = subprocess.run([str(script), str(tmp_path)], capture_output=True, text=True)
     assert result.returncode != 0
     assert "no version=" in result.stderr
@@ -115,7 +115,7 @@ def test_a_missing_output_directory_is_refused_before_anything_is_built(tmp_path
 
 def test_an_editor_swap_file_does_not_ship(tmp_path):
     script = fake_repo(tmp_path)
-    (script.parents[1] / "terrain_sketch" / ".plugin.py.swp").write_text("swap")
+    (script.parents[1] / "terrain_scenarios" / ".plugin.py.swp").write_text("swap")
     out = tmp_path / "out"
     out.mkdir()
     result = subprocess.run([str(script), str(out)], capture_output=True, text=True)

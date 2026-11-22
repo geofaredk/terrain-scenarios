@@ -1,0 +1,224 @@
+"""Bottom dock: the cross profile and the long profile of the selected feature, side by side."""
+from __future__ import annotations
+
+from qgis.gui import QgsDockWidget
+from qgis.PyQt.QtCore import Qt, pyqtSignal
+from qgis.PyQt.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPushButton, QSplitter, QVBoxLayout,
+                                 QWidget)
+
+from ..core.sections import (cross_section, set_cross_section, set_whole_cross_section, supports_long_profile,
+                             whole_cross_section)
+from ..core.tools import TOOL_INFO, Mode
+from .help_texts import (AREA_SECTION_EMPTY_HINT, AREA_SECTION_NOTE, CROSS_SIDES_TIP, CUSTOM_PROFILE_NOTE,
+                         DRAW_SECTION_TIP, MULTIPART_LONG_SECTION_NOTE, RESET_SECTION_TIP, SYMMETRIC_TIP)
+from . import settings
+from .profile_widget import Kind, ProfileWidget
+
+
+class ProfileDock(QgsDockWidget):
+    """Shows the selected feature's shape and writes every edit back through the controller."""
+
+    drawSectionRequested = pyqtSignal(str)   # feature id: draw the section line of this area on the map
+
+    def __init__(self, controller, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(self.tr("Terrain Scenarios — Profiles"))
+        self.setObjectName("TerrainScenariosProfileDock")
+        self.controller = controller
+        self._fid = None
+        self._loading = False
+
+        self.cross = ProfileWidget(Kind.CROSS)
+        self.long = ProfileWidget(Kind.LONG)
+        self.symmetric = QCheckBox(self.tr("Symmetric"))
+        self.symmetric.setChecked(True)
+        self.symmetric.setToolTip(SYMMETRIC_TIP)
+        self.cross.symmetric = True
+        self.symmetric.toggled.connect(self._symmetric_toggled)
+        self.reset_cross = QPushButton(self.tr("Reset shape"))
+        self.reset_long = QPushButton(self.tr("Reset to rule"))
+        self.draw_section = QPushButton(self.tr("Draw section line"))
+        self.draw_section.setToolTip(DRAW_SECTION_TIP)
+        self.reset_section = QPushButton(self.tr("Reset line"))
+        self.reset_section.setToolTip(RESET_SECTION_TIP)
+        self.note = QLabel()
+        self.note.setWordWrap(True)
+
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        for title, widget, controls in (
+                (self.tr("Cross profile"), self.cross, (self.symmetric, self.reset_cross)),
+                (self.tr("Long profile"), self.long, (self.draw_section, self.reset_section, self.reset_long))):
+            panel = QWidget()
+            column = QVBoxLayout(panel)
+            column.setContentsMargins(0, 0, 0, 0)
+            header = QHBoxLayout()
+            header.addWidget(QLabel(title))
+            header.addStretch(1)
+            for control in controls:
+                header.addWidget(control)
+            column.addLayout(header)
+            column.addWidget(widget, 1)
+            splitter.addWidget(panel)
+        self.splitter = splitter
+        splitter.setObjectName("TerrainScenariosProfileSplitter")
+        settings.restore_state("profile_splitter", splitter)
+        splitter.splitterMoved.connect(
+            lambda *_args: settings.save_state("profile_splitter", splitter))
+        layout.addWidget(splitter, 1)
+        layout.addWidget(self.note)
+        self.setWidget(body)
+
+        self.cross.profileChanged.connect(lambda points: self._cross_edited(points, False))
+        self.cross.profileCommitted.connect(lambda points: self._cross_edited(points, True))
+        self.long.profileChanged.connect(lambda points: self._long_edited(points, False))
+        self.long.profileCommitted.connect(lambda points: self._long_edited(points, True))
+        self.reset_cross.clicked.connect(self._reset_cross)
+        self.reset_long.clicked.connect(self._reset_long)
+        self.draw_section.clicked.connect(self._draw_section)
+        self.reset_section.clicked.connect(self._reset_section)
+        controller.featuresChanged.connect(self._refresh)
+        controller.sessionChanged.connect(self._session_changed)
+        self.show_feature(None)
+
+    def show_feature(self, fid) -> None:
+        """Load a feature's profiles, or clear both panels when there is no selection.
+
+        Selecting a path ticks Symmetric when its two sides have the same break points, and unticks it
+        when they differ: ticked, the next break-point edit would copy one side over the other. Only on
+        selection — a reload after an edit keeps whatever the user chose."""
+        if fid != self._fid:
+            self.cross.selected = self.long.selected = -1   # a handle of another feature is not this one's
+        self._fid = fid
+        if fid is None or not self.controller.has_dem:
+            self.cross.setToolTip("")
+            self.cross.clear()
+            self.long.clear()
+            self.note.clear()
+            self._set_enabled(False)
+            self._show_section_buttons(False)
+            return
+        feature = self.controller.find(fid)
+        if feature is not None and feature.mode is Mode.PATH:
+            self.symmetric.setChecked(feature.cross_left == feature.cross_right)
+        self._refresh()
+
+    def _refresh(self) -> None:
+        if self._fid is None:
+            return
+        feature = self.controller.find(self._fid)
+        if feature is None:
+            self.show_feature(None)
+            return
+        self._loading = True
+        try:
+            info = TOOL_INFO[feature.tool]
+            is_path = feature.mode is Mode.PATH
+            self.cross.setToolTip(CROSS_SIDES_TIP if is_path and info.has_slopes else "")   # it is about sides
+            # A path shows both sides around its centre line; an area shows its one edge slope, and
+            # takes no break points: the engine discards an area's (spec 5.4).
+            if is_path:
+                self.cross.set_profile(whole_cross_section(feature), editable=info.has_slopes, mirrored=True)
+            else:
+                self.cross.set_profile(cross_section(feature, side=1), editable=info.has_slopes,
+                                       allow_breaks=False)
+            self.symmetric.setEnabled(info.has_slopes and is_path)
+            self.reset_cross.setEnabled(info.has_slopes)
+            if feature.mode is Mode.AREA:
+                self._show_area_section()
+            else:
+                self._show_long_section(feature)
+        finally:
+            self._loading = False
+
+    def _show_area_section(self) -> None:
+        """An area has no long profile; the right-hand panel shows a read-only section through it
+        instead, the ground before and after the feature (spec §5.4)."""
+        area = self.controller.area_section(self._fid)
+        self.long.set_profile(tuple(zip(area["stations"], area["after"])),
+                              terrain=tuple(zip(area["stations"], area["before"])), editable=False,
+                              hint=AREA_SECTION_EMPTY_HINT)
+        self.note.setText(AREA_SECTION_NOTE)
+        self._show_section_buttons(True)
+        self.draw_section.setEnabled(True)
+        self.reset_section.setEnabled(self.controller.find(self._fid).section_line is not None)
+
+    def _show_long_section(self, feature) -> None:
+        self._show_section_buttons(False)
+        section = self.controller.long_section(self._fid)
+        if not supports_long_profile(feature):
+            # A multi-part path: the engine follows the tool rule whatever is stored here.
+            self.long.set_profile(section["design"], terrain=self._pairs(section),
+                                  editable=False)
+            self.note.setText(MULTIPART_LONG_SECTION_NOTE)
+        else:
+            self.long.set_profile(section["design"], terrain=self._pairs(section))
+            self.note.setText(CUSTOM_PROFILE_NOTE if section["custom"] else "")
+        self.reset_long.setEnabled(bool(section["custom"]))
+
+    @staticmethod
+    def _pairs(section) -> tuple:
+        return tuple(zip(section["stations"], section["terrain"]))
+
+    def _cross_edited(self, points, commit: bool) -> None:
+        if self._loading or self._fid is None:
+            return
+        feature = self.controller.find(self._fid)
+        if feature is None:
+            return
+        try:
+            if feature.mode is Mode.PATH:
+                changes = set_whole_cross_section(feature, points, symmetric=self.symmetric.isChecked())
+            else:
+                changes = set_cross_section(feature, 1, points)
+        except ValueError:
+            return            # a side without its crest edge; the plot never sends one, and this is a slot
+        self._apply(changes, commit)
+
+    def _long_edited(self, points, commit: bool) -> None:
+        if self._loading or self._fid is None:
+            return
+        self._apply({"long_profile": tuple((float(s), float(z)) for s, z in points)}, commit)
+
+    def _apply(self, changes: dict, commit: bool) -> None:
+        if commit:
+            self.controller.update_profile(self._fid, **changes)
+        else:
+            self.controller.preview(self._fid, **changes)
+
+    def _reset_cross(self) -> None:
+        if self._fid is not None:
+            self.controller.update_profile(self._fid, cross_left=(), cross_right=())
+
+    def _reset_long(self) -> None:
+        if self._fid is not None:
+            self.controller.update_profile(self._fid, long_profile=None)
+
+    def _show_section_buttons(self, area: bool) -> None:
+        """An area's panel has a section line to draw or reset; a path's has a long profile to reset."""
+        self.draw_section.setVisible(area)
+        self.reset_section.setVisible(area)
+        self.reset_long.setVisible(not area)
+
+    def _draw_section(self) -> None:
+        if self._fid is not None:
+            self.drawSectionRequested.emit(self._fid)
+
+    def _reset_section(self) -> None:
+        if self._fid is not None:
+            self.controller.set_section_line(self._fid, None)
+
+    def _symmetric_toggled(self, checked: bool) -> None:
+        self.cross.symmetric = checked
+
+    def _session_changed(self) -> None:
+        if not self.controller.has_dem:
+            self.show_feature(None)
+
+    def _set_enabled(self, enabled: bool) -> None:
+        for widget in (self.symmetric, self.reset_cross, self.reset_long, self.draw_section, self.reset_section):
+            widget.setEnabled(enabled)
+
+    def shutdown(self) -> None:
+        self.controller.cancel_preview()

@@ -5,11 +5,11 @@ from qgis.core import (Qgis, QgsCategorizedSymbolRenderer, QgsFillSymbol, QgsLay
                        QgsRendererCategory, QgsSingleSymbolRenderer, QgsSymbolLegendNode)
 from qgis.PyQt.QtCore import Qt
 
-import terrain_sketch.gui.controller as controller_module
+import terrain_scenarios.gui.controller as controller_module
 from qgis_helpers import UTM, dem_layer, line_through, panel, spin_event_loop, start_session
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.help_texts import USE_FEATURE_STYLES
-from terrain_sketch.qgis_io.symbols import from_xml, style_of, to_xml
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.help_texts import USE_FEATURE_STYLES
+from terrain_scenarios.qgis_io.symbols import from_xml, style_of, to_xml
 
 RED = to_xml(QgsFillSymbol.createSimple({"color": "255,0,0,255"}))
 BLUE = to_xml(QgsFillSymbol.createSimple({"color": "0,0,255,255"}))

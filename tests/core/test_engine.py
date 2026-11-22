@@ -4,13 +4,13 @@ import numpy as np
 import pytest
 
 from helpers import feature, flat, make_grid, tilted
-import terrain_sketch.core.engine as engine_module
-from terrain_sketch.core.engine import FeatureStack
-from terrain_sketch.core.geometry import line_wkb, polygon_wkb
-from terrain_sketch.core.grid import DemGrid
-from terrain_sketch.core.operations import FLAG_OUTSIDE, apply_feature
-from terrain_sketch.core.tools import TOOL_INFO, Mode, PixelMode, Tool
-from terrain_sketch.core.volumes import total_cut_fill
+import terrain_scenarios.core.engine as engine_module
+from terrain_scenarios.core.engine import FeatureStack
+from terrain_scenarios.core.geometry import line_wkb, polygon_wkb
+from terrain_scenarios.core.grid import DemGrid
+from terrain_scenarios.core.operations import FLAG_OUTSIDE, apply_feature
+from terrain_scenarios.core.tools import TOOL_INFO, Mode, PixelMode, Tool
+from terrain_scenarios.core.volumes import total_cut_fill
 
 
 def square(x0, y0, x1, y1):

@@ -2,7 +2,7 @@
 from qgis.core import QgsFillSymbol, QgsLineSymbol
 from qgis.PyQt.QtCore import QSize
 
-from terrain_sketch.qgis_io.symbols import default_symbol, from_xml, preview_pixmap, style_of, to_xml
+from terrain_scenarios.qgis_io.symbols import default_symbol, from_xml, preview_pixmap, style_of, to_xml
 
 
 def _red():

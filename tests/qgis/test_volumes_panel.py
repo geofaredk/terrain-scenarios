@@ -3,10 +3,10 @@ import pytest
 from qgis.PyQt.QtWidgets import QWidget
 
 from qgis_helpers import UTM, line_through, square, start_session
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.feature_list import feature_subtitle
-from terrain_sketch.gui.help_texts import FLAG_TEXTS, NO_VOLUME_YET, cubic_metres
-from terrain_sketch.gui.properties_page import PropertiesPage
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.feature_list import feature_subtitle
+from terrain_scenarios.gui.help_texts import FLAG_TEXTS, NO_VOLUME_YET, cubic_metres
+from terrain_scenarios.gui.properties_page import PropertiesPage
 
 
 def test_selecting_another_feature_shows_its_own_problems(tmp_path):
@@ -35,7 +35,7 @@ def test_the_page_has_no_volumes_or_about_group(tmp_path):
     titles = {box.title() for box in page.findChildren(QgsCollapsibleGroupBox)}
     assert "Volumes" not in titles and "About this tool" not in titles
     assert not hasattr(page, "volumes") and not hasattr(page, "about")
-    assert page.findChild(QWidget, "TerrainSketchVolumes") is None
+    assert page.findChild(QWidget, "TerrainScenariosVolumes") is None
 
 
 def test_the_header_summary_follows_an_edit(tmp_path):
@@ -56,7 +56,7 @@ def test_a_refresh_summary_failure_is_logged_not_raised(tmp_path, monkeypatch):
     """`_refresh_summary` runs from `featuresChanged`, a Qt signal — an exception escaping it
     takes QGIS down, the same rule the engine and the file/layer writes in `_set` already
     follow."""
-    import terrain_sketch.gui.properties_page as properties_page_module
+    import terrain_scenarios.gui.properties_page as properties_page_module
 
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)

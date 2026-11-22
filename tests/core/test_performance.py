@@ -2,9 +2,9 @@ import time
 from dataclasses import replace
 
 from helpers import feature, make_grid
-from terrain_sketch.core.engine import FeatureStack
-from terrain_sketch.core.geometry import line_wkb
-from terrain_sketch.core.tools import Mode, Tool
+from terrain_scenarios.core.engine import FeatureStack
+from terrain_scenarios.core.geometry import line_wkb
+from terrain_scenarios.core.tools import Mode, Tool
 
 
 def test_recompute_of_a_500_by_500_window_is_fast():

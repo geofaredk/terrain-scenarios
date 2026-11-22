@@ -5,10 +5,10 @@ import numpy as np
 from qgis.core import QgsProject
 
 from qgis_helpers import UTM, line_through, read_tif, sample, square, start_session
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.controller import scenario_files_folder
-from terrain_sketch.gui.help_texts import FILES_NOT_MOVED, FILES_NOT_RELEASED
-from terrain_sketch.qgis_io.raster_io import WorkingFiles
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.controller import scenario_files_folder
+from terrain_scenarios.gui.help_texts import FILES_NOT_MOVED, FILES_NOT_RELEASED
+from terrain_scenarios.qgis_io.raster_io import WorkingFiles
 
 
 def layer_sources(c):
@@ -155,7 +155,7 @@ def test_a_scenario_folder_that_cannot_be_written_falls_back_to_a_temp_folder(tm
 
 def test_new_and_open_change_nothing_when_the_rasters_cannot_leave_the_scenarios_folder(tmp_path, monkeypatch):
     import pytest
-    from terrain_sketch.qgis_io.scenario import ScenarioError
+    from terrain_scenarios.qgis_io.scenario import ScenarioError
     c = start_session(tmp_path)
     c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     path = str(tmp_path / "flood.gpkg")
@@ -208,7 +208,7 @@ def test_a_session_on_a_scenarios_working_dem_never_writes_over_its_own_dem(tmp_
     """A reopened QGIS project shows the Modified DEM layer, which reads `flood_files/working_dem.tif`, and
     nothing stops a user from starting on it. Save as `flood.gpkg` would then move the rasters over that DEM."""
     from qgis.core import QgsRasterLayer
-    from terrain_sketch.gui.help_texts import FILES_ARE_THE_DEM
+    from terrain_scenarios.gui.help_texts import FILES_ARE_THE_DEM
     c = start_session(tmp_path)
     c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     c.save_scenario(str(tmp_path / "flood.gpkg"))
@@ -228,7 +228,7 @@ def test_a_session_on_a_scenarios_working_dem_never_writes_over_its_own_dem(tmp_
 
 def test_when_neither_the_new_nor_a_temp_folder_can_be_written_the_message_says_where_the_rasters_are(
         tmp_path, monkeypatch):
-    from terrain_sketch.gui.help_texts import FILES_KEPT_IN_OLD_FOLDER
+    from terrain_scenarios.gui.help_texts import FILES_KEPT_IN_OLD_FOLDER
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     c.save_scenario(str(tmp_path / "first.gpkg"))
@@ -252,7 +252,7 @@ def test_a_scenario_that_does_not_name_its_dem_opens_without_taking_qgis_down(tm
     path = str(tmp_path / "flood.gpkg")
     c.save_scenario(path)
     source = ogr.Open(path, 1)
-    source.ExecuteSQL("UPDATE terrain_sketch_meta SET value = NULL WHERE key = 'dem_source'")
+    source.ExecuteSQL("UPDATE terrain_scenarios_meta SET value = NULL WHERE key = 'dem_source'")
     source.Close()
     c.new_scenario()
     c.open_scenario(path)

@@ -7,10 +7,10 @@ from qgis.core import QgsFlatTerrainProvider, QgsProject, QgsRasterDemTerrainPro
 from qgis.PyQt.QtGui import QAction
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_through, panel, start_session
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.help_texts import VIEW_3D_NO_LAYER, VIEW_3D_NOT_OPENED
-from terrain_sketch.gui.main_dock import MainDock
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.gui.help_texts import VIEW_3D_NO_LAYER, VIEW_3D_NOT_OPENED
+from terrain_scenarios.gui.main_dock import MainDock
 
 
 def terrain():

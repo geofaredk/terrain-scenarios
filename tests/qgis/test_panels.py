@@ -3,13 +3,13 @@ from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsPro
 from qgis.PyQt.QtWidgets import QListView
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_layer, line_through, panel, sample, square, start_session
-from terrain_sketch.core.tools import Mode, PixelMode, Tool
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.help_texts import UNSAVED_CHANGES
-from terrain_sketch.gui.main_dock import VIEW_SESSION, VIEW_WELCOME, MainDock
-from terrain_sketch.gui.properties_page import PropertiesPage
-from terrain_sketch.gui.selection import EDIT_HINT, EDIT_ICON, METHOD_ICONS, ZOOM_ICON, Method
-from terrain_sketch.gui.tool_gallery import ToolGallery
+from terrain_scenarios.core.tools import Mode, PixelMode, Tool
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.gui.help_texts import UNSAVED_CHANGES
+from terrain_scenarios.gui.main_dock import VIEW_SESSION, VIEW_WELCOME, MainDock
+from terrain_scenarios.gui.properties_page import PropertiesPage
+from terrain_scenarios.gui.selection import EDIT_HINT, EDIT_ICON, METHOD_ICONS, ZOOM_ICON, Method
+from terrain_scenarios.gui.tool_gallery import ToolGallery
 
 
 def test_the_panel_opens_on_a_welcome_view_and_switches_to_the_session(tmp_path):
@@ -158,8 +158,8 @@ def test_change_then_start_asks_about_unsaved_work_exactly_once(tmp_path):
 def test_a_section_line_started_behind_the_welcome_view_brings_the_session_back(tmp_path):
     """The Profiles dock stays usable while the welcome view shows (the session keeps running);
     the line being drawn, and its hint under the toolbar, must be on screen."""
-    from terrain_sketch.gui.help_texts import SECTION_LINE_HINT
-    from terrain_sketch.gui.profile_dock import ProfileDock
+    from terrain_scenarios.gui.help_texts import SECTION_LINE_HINT
+    from terrain_scenarios.gui.profile_dock import ProfileDock
 
     iface = fake_iface()
     c = SketchController(QgsProject.instance())
@@ -652,7 +652,7 @@ def test_properties_show_the_tool_fields_and_apply_changes(tmp_path):
 
 def test_every_panel_icon_exists_in_the_qgis_theme():
     """getThemeIcon returns a null icon for an unknown name, and the button then renders blank."""
-    from terrain_sketch.gui.main_dock import PROFILES_ICON
+    from terrain_scenarios.gui.main_dock import PROFILES_ICON
     for name in (*METHOD_ICONS.values(), EDIT_ICON, ZOOM_ICON, PROFILES_ICON):
         assert not QgsApplication.getThemeIcon(name).isNull(), name
 
@@ -1014,8 +1014,8 @@ def test_a_hint_with_no_page_open_shows_under_the_toolbar(tmp_path):
     """spec §6 item 6: a section line drawn from the Profiles dock after going back to
     the list has no page open to show its hint on — it shows under the toolbar in the session view
     instead."""
-    from terrain_sketch.gui.help_texts import SECTION_LINE_HINT
-    from terrain_sketch.gui.profile_dock import ProfileDock
+    from terrain_scenarios.gui.help_texts import SECTION_LINE_HINT
+    from terrain_scenarios.gui.profile_dock import ProfileDock
 
     iface = fake_iface()
     c = SketchController(QgsProject.instance())
@@ -1044,8 +1044,8 @@ def test_a_running_section_lines_hint_moves_to_the_session_view_on_back(tmp_path
     for the stack's own pop, posted with `QTimer.singleShot(0, …)`) has a chance to run."""
     from qgis.PyQt.QtWidgets import QApplication, QToolButton
     from qgis_helpers import spin_event_loop
-    from terrain_sketch.gui.help_texts import SECTION_LINE_HINT
-    from terrain_sketch.gui.profile_dock import ProfileDock
+    from terrain_scenarios.gui.help_texts import SECTION_LINE_HINT
+    from terrain_scenarios.gui.profile_dock import ProfileDock
 
     iface = fake_iface()
     c = SketchController(QgsProject.instance())
@@ -1078,8 +1078,8 @@ def test_a_running_section_lines_hint_moves_onto_its_feature_page_on_open(tmp_pa
     not stay stranded under the toolbar behind it."""
     from qgis.PyQt.QtWidgets import QApplication
     from qgis_helpers import spin_event_loop
-    from terrain_sketch.gui.help_texts import SECTION_LINE_HINT
-    from terrain_sketch.gui.profile_dock import ProfileDock
+    from terrain_scenarios.gui.help_texts import SECTION_LINE_HINT
+    from terrain_scenarios.gui.profile_dock import ProfileDock
 
     iface = fake_iface()
     c = SketchController(QgsProject.instance())
@@ -1123,7 +1123,7 @@ def test_edit_shape_stops_when_the_feature_page_closes(tmp_path):
 def test_a_section_line_keeps_running_after_the_feature_page_closes(tmp_path):
     """Unlike Edit shape, a section line started from the Profiles dock keeps running when
     the feature page closes — its own controls live on the Profiles dock, not the feature page."""
-    from terrain_sketch.gui.profile_dock import ProfileDock
+    from terrain_scenarios.gui.profile_dock import ProfileDock
 
     iface = fake_iface()
     c = SketchController(QgsProject.instance())
@@ -1150,7 +1150,7 @@ def test_a_section_line_stops_when_its_feature_disappears_with_the_page_closed(t
     `test_a_section_line_keeps_running_after_the_feature_page_closes` above — Edit shape's own
     button lives on that page, so it always stops the moment the page does, and this specific "tool
     still running with the page already closed" state can never arise for it)."""
-    from terrain_sketch.gui.profile_dock import ProfileDock
+    from terrain_scenarios.gui.profile_dock import ProfileDock
 
     iface = fake_iface()
     c = SketchController(QgsProject.instance())
@@ -1258,7 +1258,7 @@ def test_delete_selected_logs_an_exception_instead_of_raising_it(tmp_path, monke
     """An exception escaping a Qt callback aborts QGIS, so every `MainDock` slot reachable from a
     signal, event filter or timer wraps its body in try/except and logs to `QgsMessageLog`. This
     checks that pattern on one slot, `_delete_selected`, with the controller made to raise."""
-    import terrain_sketch.gui.main_dock as main_dock_module
+    import terrain_scenarios.gui.main_dock as main_dock_module
 
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)

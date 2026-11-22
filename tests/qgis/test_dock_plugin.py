@@ -11,13 +11,13 @@ from qgis.core import QgsCoordinateReferenceSystem, QgsCsException, QgsGeometry,
 from qgis.core import QgsRectangle
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_through, sample, square, world
-from terrain_sketch import classFactory
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.selection import Method
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.main_dock import VIEW_SESSION, VIEW_WELCOME, MainDock
-from terrain_sketch.gui.map_tools.draw_line import DrawLineTool
-from terrain_sketch.qgis_io.layers import GROUP_NAME
+from terrain_scenarios import classFactory
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.selection import Method
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.gui.main_dock import VIEW_SESSION, VIEW_WELCOME, MainDock
+from terrain_scenarios.gui.map_tools.draw_line import DrawLineTool
+from terrain_scenarios.qgis_io.layers import GROUP_NAME
 
 
 def test_drawing_a_dike_from_the_panel(tmp_path):
@@ -130,7 +130,7 @@ def test_plugin_adds_and_removes_its_button_menu_and_panel(tmp_path):
     assert isinstance(terrain, QgsFlatTerrainProvider) and terrain.offset() == 5.0   # the project's terrain is back
     # The canvas outlives the plugin: its Ctrl+Z filter must go at once, not whenever the dock is deleted
     canvas = iface.mapCanvas()
-    canvas.setMapTool(DrawLineTool(canvas))     # a Terrain Sketch tool, as far as that filter could tell
+    canvas.setMapTool(DrawLineTool(canvas))     # a Terrain Scenarios tool, as far as that filter could tell
     controller.undo_stack.undo = mock.Mock()
     for kind in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress):
         QApplication.sendEvent(canvas, QKeyEvent(kind, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier))
@@ -358,7 +358,7 @@ def test_without_a_session_the_overlay_has_no_transform(tmp_path):
 
 
 def test_the_panels_open_where_they_were_left_and_unloading_remembers_it(tmp_path):
-    from terrain_sketch.gui import settings
+    from terrain_scenarios.gui import settings
     iface = fake_iface()
     window = iface.mainWindow()
     iface.addDockWidget.side_effect = window.addDockWidget          # a real window, as in QGIS
@@ -410,7 +410,7 @@ def test_closing_the_profiles_panel_itself_releases_the_button():
     plugin.unload()
 
 
-def test_hiding_terrain_sketch_hides_the_profiles_and_opening_it_again_does_not_show_them():
+def test_hiding_terrain_scenarios_hides_the_profiles_and_opening_it_again_does_not_show_them():
     _iface, plugin = plugin_in_a_window()
     plugin.dock.profiles_button.click()
     plugin.action.setChecked(False)
@@ -446,7 +446,7 @@ def test_the_feature_list_fills_the_session_view_without_a_splitter(tmp_path):
     from qgis.PyQt.QtWidgets import QSplitter
     dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
     assert not hasattr(dock, "list_splitter")
-    assert dock.findChild(QSplitter, "TerrainSketchListSplitter") is None
+    assert dock.findChild(QSplitter, "TerrainScenariosListSplitter") is None
     dock.dem_combo.setLayer(dem_layer(tmp_path))
     dock.start_button.click()
     dock.resize(360, 900)

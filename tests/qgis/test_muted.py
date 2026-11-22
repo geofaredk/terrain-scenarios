@@ -2,7 +2,7 @@
 from qgis.PyQt.QtGui import QColor, QPalette
 from qgis.PyQt.QtWidgets import QWidget
 
-from terrain_sketch.gui.muted import MutedLabel, muted_colour
+from terrain_scenarios.gui.muted import MutedLabel, muted_colour
 
 
 def palette_of(text: str, window: str) -> QPalette:

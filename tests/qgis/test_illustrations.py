@@ -3,9 +3,9 @@ import re
 from qgis.PyQt.QtCore import QSize
 from qgis.PyQt.QtGui import QColor, QPalette
 
-from terrain_sketch.core.tools import PixelMode, Tool
-from terrain_sketch.gui import illustrations
-from terrain_sketch.gui.overlay import CUT, FILL
+from terrain_scenarios.core.tools import PixelMode, Tool
+from terrain_scenarios.gui import illustrations
+from terrain_scenarios.gui.overlay import CUT, FILL
 
 
 def light() -> QPalette:

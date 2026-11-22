@@ -4,11 +4,11 @@ import pytest
 from qgis.core import QgsProject
 
 from qgis_helpers import UTM, dem_layer, line_through, square, start_session
-from terrain_sketch.core.engine import FeatureStack
-from terrain_sketch.core.tools import Mode, PixelMode, Tool
-from terrain_sketch.gui.help_texts import (UNDO_ADD, UNDO_DELETE, UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER,
+from terrain_scenarios.core.engine import FeatureStack
+from terrain_scenarios.core.tools import Mode, PixelMode, Tool
+from terrain_scenarios.gui.help_texts import (UNDO_ADD, UNDO_DELETE, UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER,
                                            UNDO_SETTINGS, UNDO_SHAPE, UNDO_TURN_OFF, UNDO_TURN_ON)
-from terrain_sketch.gui.profile_dock import ProfileDock
+from terrain_scenarios.gui.profile_dock import ProfileDock
 
 
 def terrain(c):

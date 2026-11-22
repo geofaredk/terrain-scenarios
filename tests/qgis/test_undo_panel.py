@@ -8,12 +8,12 @@ from qgis.PyQt.QtTest import QTest
 from qgis.PyQt.QtWidgets import QApplication
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_through, spin_event_loop, square
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.help_texts import UNDO_ADD
-from terrain_sketch.gui.main_dock import MainDock
-from terrain_sketch.gui.profile_dock import ProfileDock
-from terrain_sketch.gui.selection import Method
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.gui.help_texts import UNDO_ADD
+from terrain_scenarios.gui.main_dock import MainDock
+from terrain_scenarios.gui.profile_dock import ProfileDock
+from terrain_scenarios.gui.selection import Method
 
 
 def panel(tmp_path):
@@ -62,7 +62,7 @@ def test_the_undo_buttons_follow_the_history_and_say_what_they_will_do(tmp_path)
     assert len(c.features) == 1
 
 
-def test_ctrl_z_in_the_panel_undoes_terrain_sketch_not_qgis(tmp_path):
+def test_ctrl_z_in_the_panel_undoes_terrain_scenarios_not_qgis(tmp_path):
     iface, c, dock = panel(tmp_path)
     _window, qgis_undo = in_a_window(iface, dock)
     c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
@@ -72,7 +72,7 @@ def test_ctrl_z_in_the_panel_undoes_terrain_sketch_not_qgis(tmp_path):
     assert len(c.features) == 1 and qgis_undo == []
 
 
-def test_ctrl_z_in_the_profiles_panel_undoes_terrain_sketch_too(tmp_path):
+def test_ctrl_z_in_the_profiles_panel_undoes_terrain_scenarios_too(tmp_path):
     iface = fake_iface()
     c = SketchController(QgsProject.instance())
     profiles = ProfileDock(c)
@@ -87,7 +87,7 @@ def test_ctrl_z_in_the_profiles_panel_undoes_terrain_sketch_too(tmp_path):
     assert c.features == () and qgis_undo == []
 
 
-def test_ctrl_z_on_the_map_undoes_terrain_sketch_while_one_of_its_tools_is_active(tmp_path):
+def test_ctrl_z_on_the_map_undoes_terrain_scenarios_while_one_of_its_tools_is_active(tmp_path):
     iface, c, dock = panel(tmp_path)
     _window, qgis_undo = in_a_window(iface, dock)
     c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
@@ -176,7 +176,7 @@ def test_the_panel_header_does_not_make_the_panel_wider(tmp_path):
 
 def test_ctrl_z_in_a_text_field_of_the_panel_is_left_to_that_field(tmp_path):
     """A spin box or line edit keeps Ctrl+Z for its own text, as everywhere in Qt: while there is
-    typed text to undo, pressing it there must neither undo a Terrain Sketch change nor reach
+    typed text to undo, pressing it there must neither undo a Terrain Scenarios change nor reach
     QGIS's own undo."""
     iface, c, dock = panel(tmp_path)
     _window, qgis_undo = in_a_window(iface, dock)

@@ -8,10 +8,10 @@ from osgeo import ogr
 from qgis.core import QgsProject
 
 from qgis_helpers import UTM, dem_layer, line_through, square, start_session
-from terrain_sketch.core.tools import Mode, PixelMode, Tool
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.qgis_io import scenario
-from terrain_sketch.qgis_io.scenario import (FEATURES_LAYER, META_TABLE, ScenarioError, ScenarioMeta,
+from terrain_scenarios.core.tools import Mode, PixelMode, Tool
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.qgis_io import scenario
+from terrain_scenarios.qgis_io.scenario import (FEATURES_LAYER, META_TABLE, ScenarioError, ScenarioMeta,
                                              dem_meta, load, load_meta, save)
 
 # A projected CRS with no EPSG code, like a local survey grid. GDAL cannot identify it.
@@ -152,9 +152,9 @@ def test_a_geopackage_without_the_features_layer_is_not_taken_for_a_scenario(tmp
     source = ogr.GetDriverByName("GPKG").CreateDataSource(path)
     source.CreateLayer("roads", None, ogr.wkbLineString)
     source.Close()
-    with pytest.raises(ScenarioError, match="not a Terrain Sketch scenario"):
+    with pytest.raises(ScenarioError, match="not a Terrain Scenarios file"):
         load(path)
-    with pytest.raises(ScenarioError, match="not a Terrain Sketch scenario"):
+    with pytest.raises(ScenarioError, match="not a Terrain Scenarios file"):
         load_meta(path)
 
 
@@ -183,7 +183,7 @@ def test_saving_over_a_geopackage_that_is_not_a_scenario_is_refused(tmp_path):
     source.Close()
     before = (tmp_path / "other.gpkg").read_bytes()
 
-    with pytest.raises(ScenarioError, match="not a Terrain Sketch scenario"):
+    with pytest.raises(ScenarioError, match="not a Terrain Scenarios file"):
         save(path, c.features, dem_meta(c.info, c.stack.original))
     assert (tmp_path / "other.gpkg").read_bytes() == before
 
@@ -194,7 +194,7 @@ def test_saving_over_a_non_geopackage_file_is_refused(tmp_path):
     path.write_text("not a geopackage")
     before = path.read_bytes()
 
-    with pytest.raises(ScenarioError, match="not a Terrain Sketch scenario"):
+    with pytest.raises(ScenarioError, match="not a Terrain Scenarios file"):
         save(str(path), c.features, dem_meta(c.info, c.stack.original))
     assert path.read_bytes() == before
 

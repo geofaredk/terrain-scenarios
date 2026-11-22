@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from helpers import make_grid
-from terrain_sketch.core.grid import DemGrid, Window
+from terrain_scenarios.core.grid import DemGrid, Window
 
 
 def test_window_for_bbox_adds_margin_and_clips():

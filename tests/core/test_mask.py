@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 
 from helpers import make_grid
-from terrain_sketch.core.geometry import polygon_wkb, split_parts
-from terrain_sketch.core.mask import polygon_mask
-from terrain_sketch.core.tools import PixelMode
+from terrain_scenarios.core.geometry import polygon_wkb, split_parts
+from terrain_scenarios.core.mask import polygon_mask
+from terrain_scenarios.core.tools import PixelMode
 
 # Square from 0.7 to 4.6 on a 1 m grid: touches cells 0..4, centres 1..4 inside, cells 1..3 fully inside.
 SQUARE = polygon_wkb([(0.7, 0.7), (4.6, 0.7), (4.6, 4.6), (0.7, 4.6)])

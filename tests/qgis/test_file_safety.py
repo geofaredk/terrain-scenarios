@@ -7,14 +7,14 @@ import pytest
 from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsCsException, QgsGeometry, QgsProject
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_through, square, start_session
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui import controller as controller_module
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.help_texts import EXPORT_REPLACE, SHAPE_NOT_TRANSFORMED
-from terrain_sketch.gui.main_dock import MainDock
-from terrain_sketch.gui.selection import Method
-from terrain_sketch.qgis_io.layers import GROUP_NAME
-from terrain_sketch.qgis_io.raster_io import DemError
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui import controller as controller_module
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.gui.help_texts import EXPORT_REPLACE, SHAPE_NOT_TRANSFORMED
+from terrain_scenarios.gui.main_dock import MainDock
+from terrain_scenarios.gui.selection import Method
+from terrain_scenarios.qgis_io.layers import GROUP_NAME
+from terrain_scenarios.qgis_io.raster_io import DemError
 
 
 def panel(tmp_path):

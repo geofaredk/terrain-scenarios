@@ -1,7 +1,7 @@
 import numpy as np
 
-from terrain_sketch.core.profiles import side_dz
-from terrain_sketch.core.stations import stations_offsets, vertex_stations
+from terrain_scenarios.core.profiles import side_dz
+from terrain_scenarios.core.stations import stations_offsets, vertex_stations
 
 
 def test_station_and_signed_offset():

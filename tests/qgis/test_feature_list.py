@@ -6,10 +6,10 @@ from qgis.PyQt.QtTest import QTest
 from qgis.PyQt.QtWidgets import QAbstractItemView, QApplication, QStyleOptionViewItem
 
 from qgis_helpers import UTM, line_through, panel, spin_event_loop, start_session
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.feature_list import (FLAGGED_ROLE, ID_ROLE, PICTURE_ROLE, PICTURE_SIZE, SUBTITLE_ROLE,
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.feature_list import (FLAGGED_ROLE, ID_ROLE, PICTURE_ROLE, PICTURE_SIZE, SUBTITLE_ROLE,
                                              SWATCH_ROLE, SYMBOL_ROLE, FeatureListModel, FeatureListView, FeatureRowDelegate)
-from terrain_sketch.qgis_io.symbols import to_xml
+from terrain_scenarios.qgis_io.symbols import to_xml
 
 RED = to_xml(QgsFillSymbol.createSimple({"color": "255,0,0,255", "outline_style": "no"}))
 
@@ -239,7 +239,7 @@ def test_a_row_index_from_before_the_list_shrank_is_ignored(tmp_path):
     assert model.data(stale) is None
     assert model.setData(stale, "Barrier", Qt.ItemDataRole.EditRole) is False
     assert c.feature(a.id).name != "Barrier"
-    assert bytes(model.mimeData([model.index(0), stale]).data("application/x-terrain-sketch-feature-ids")) \
+    assert bytes(model.mimeData([model.index(0), stale]).data("application/x-terrain-scenarios-feature-ids")) \
         == a.id.encode()
 
 

@@ -1,13 +1,13 @@
 import pytest
 from qgis.core import Qgis, QgsGeometry, QgsPointXY, QgsProject
 
-import terrain_sketch.gui.controller as controller_module
+import terrain_scenarios.gui.controller as controller_module
 from qgis_helpers import (UTM, dem_layer, line_layer, line_through, read_tif, sample, square,
                           start_session, world)
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.qgis_io.layers import GROUP_NAME
-from terrain_sketch.qgis_io.raster_io import DemError
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.qgis_io.layers import GROUP_NAME
+from terrain_scenarios.qgis_io.raster_io import DemError
 
 
 def test_drawing_a_dike_updates_the_modified_dem(tmp_path):
@@ -210,7 +210,7 @@ def test_importing_the_same_layer_twice_numbers_the_second_feature(tmp_path):
 def test_a_long_section_that_raises_is_logged_and_reported_empty(tmp_path, monkeypatch):
     """`ProfileDock._refresh` calls this from a slot, and its chain reaches `split_parts`, which
     raises for a geometry it cannot use. An exception in a Qt callback takes QGIS down."""
-    from terrain_sketch.gui.profile_dock import ProfileDock
+    from terrain_scenarios.gui.profile_dock import ProfileDock
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock = ProfileDock(c)

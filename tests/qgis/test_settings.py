@@ -1,7 +1,7 @@
 from qgis.core import QgsSettings
 from qgis.PyQt.QtWidgets import QApplication, QPushButton, QSplitter
 
-from terrain_sketch.gui import settings
+from terrain_scenarios.gui import settings
 
 
 def test_settings_round_trip_under_the_plugin_group():
@@ -24,8 +24,8 @@ def test_a_stale_list_splitter_setting_is_left_alone():
     from qgis.core import QgsProject
 
     from qgis_helpers import fake_iface
-    from terrain_sketch.gui.controller import SketchController
-    from terrain_sketch.gui.main_dock import MainDock
+    from terrain_scenarios.gui.controller import SketchController
+    from terrain_scenarios.gui.main_dock import MainDock
 
     settings.save("list_splitter/state", b"an old value from before the redesign")
     dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
@@ -85,10 +85,10 @@ def test_a_collapsed_group_is_remembered_under_the_plugin_group(tmp_path):
     """QgsCollapsibleGroupBox saves under its own key otherwise, which the plugin cannot clear and
     which leaked a collapsed group box from one test into the next."""
     from qgis_helpers import start_session
-    from terrain_sketch.gui.properties_page import PropertiesPage
+    from terrain_scenarios.gui.properties_page import PropertiesPage
     stored = QgsSettings()
     for key in stored.allKeys():
-        if key.startswith("QgsCollapsibleGroupBox/") and "TerrainSketch" in key:
+        if key.startswith("QgsCollapsibleGroupBox/") and "TerrainScenarios" in key:
             stored.remove(key)                     # left in the shared test profile by earlier versions
     c = start_session(tmp_path)
     page = PropertiesPage(c)
@@ -97,7 +97,7 @@ def test_a_collapsed_group_is_remembered_under_the_plugin_group(tmp_path):
     page.advanced.setCollapsed(False)
     assert settings.load("advanced_group/collapsed", True, bool) is False
     assert not [key for key in QgsSettings().allKeys() if key.startswith("QgsCollapsibleGroupBox/")
-                and "TerrainSketch" in key]
+                and "TerrainScenarios" in key]
     again = PropertiesPage(c)
     again.show()                                   # a box that saved its own state would load it here
     assert not again.advanced.isCollapsed()       # Advanced remembers being opened
@@ -105,7 +105,7 @@ def test_a_collapsed_group_is_remembered_under_the_plugin_group(tmp_path):
 
 def test_advanced_starts_collapsed_and_remembers_being_opened(tmp_path):
     from qgis_helpers import start_session
-    from terrain_sketch.gui.properties_page import PropertiesPage
+    from terrain_scenarios.gui.properties_page import PropertiesPage
     c = start_session(tmp_path)
     page = PropertiesPage(c)
     page.show()
@@ -130,14 +130,14 @@ def window_with(dock, area):
 def test_a_docked_panel_comes_back_in_its_area_at_its_width():
     from qgis.PyQt.QtCore import Qt
     from qgis.PyQt.QtWidgets import QDockWidget, QTextEdit
-    first = QDockWidget("Terrain Sketch")
+    first = QDockWidget("Terrain Scenarios")
     first.setWidget(QTextEdit())
     window = window_with(first, Qt.DockWidgetArea.LeftDockWidgetArea)
     window.resizeDocks([first], [340], Qt.Orientation.Horizontal)
     QApplication.processEvents()
     settings.save_dock("probe_dock", first, window)
 
-    second = QDockWidget("Terrain Sketch")
+    second = QDockWidget("Terrain Scenarios")
     second.setWidget(QTextEdit())
     area = settings.dock_area("probe_dock", Qt.DockWidgetArea.RightDockWidgetArea)
     assert area == Qt.DockWidgetArea.LeftDockWidgetArea

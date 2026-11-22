@@ -3,9 +3,9 @@ from dataclasses import replace
 
 import pytest
 
-from terrain_sketch.core.geometry import line_wkb, polygon_wkb
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.model.feature import TerrainFeature, new_feature
+from terrain_scenarios.core.geometry import line_wkb, polygon_wkb
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.model.feature import TerrainFeature, new_feature
 
 TRIANGLE = polygon_wkb([(0, 0), (1, 0), (1, 1)])
 

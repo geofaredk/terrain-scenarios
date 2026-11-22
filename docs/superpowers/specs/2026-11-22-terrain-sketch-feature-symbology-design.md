@@ -40,7 +40,7 @@ Why: not stated beyond the request. The working assumption is telling features a
 
 ## Approaches
 
-- **A. Styles live in the layer's symbology (chosen).** "Sketch outlines" gets a Categorized renderer with one category per feature. The user edits it like any QGIS layer — Layer Properties ▸ Symbology, or right-click a category in the Layers panel ▸ Edit Symbol / Change Color — plus a shortcut button on the feature page that opens QGIS's symbol editor. Chosen because it is QGIS's own symbology: map, legend, Layers panel and print layouts agree, and it is what the user asked for.
+- **A. Styles live in the layer's symbology (chosen).** "Sketch outlines" gets a Categorized renderer with one category per feature. The user edits it like any QGIS layer — Layer Properties ▸ Symbology, or right-click a category in the Layers panel ▸ Edit Symbol / Change Color. Chosen because it is QGIS's own symbology: map, legend, Layers panel and print layouts agree, and it is what the user asked for.
 - **B. The plugin keeps each feature's symbol and owns the layer style.** A QGIS symbol button on each feature page; the plugin rebuilds the renderer from its own records. Rejected: edits made in Layer Properties would be overwritten on the next rebuild, which contradicts "use QGIS's layer symbology".
 
 ## Design
@@ -55,17 +55,18 @@ Why: not stated beyond the request. The working assumption is telling features a
 - "Sketch outlines" gets a `feature_id` field next to `name` and `tool` (not `fid`: a GeoPackage export — QGIS's default for Save Features As and Make Permanent — reserves that name for its integer key). The plugin writes a `QgsCategorizedSymbolRenderer` on `feature_id` with one category per **enabled** feature, so the legend, Layers panel and print layouts list exactly what is on the map. A turned-off feature keeps its style in the model and gets its category back when turned on. The category label is the feature's name and follows renames. *(Claude's call.)*
 - The renderer is updated **in place** (categories added, removed, relabelled, re-symbolled), not replaced, so renderer- and layer-level settings the user sets — opacity, blending, symbol levels, label font — last for the session. Only the per-feature symbols are saved in the scenario; the rest goes back to defaults on Start or Open. *(Claude's call: saving the whole layer style would change the file format for settings few users touch.)*
 - Layers panel controls on a category: unticking a category's checkbox only hides it on the map for the session, like any QGIS layer — it does not turn the feature off or touch the terrain. Editing a category's label in Layer Properties renames the feature (undoable). *(Claude's calls.)*
+- An in-place edit tells the Layers panel nothing on its own (QGIS rebuilds a vector layer's legend only on `rendererChanged` or the legend's `itemsChanged`; verified by probe in 4.2.3), so after changing a category the plugin emits `layer.legend().itemsChanged`: a new, renamed, removed or restored feature shows in the Layers panel at once.
 - A feature with `style is None` gets the default symbol: today's transparent fill with a 0.5 dark-grey dashed outline.
 - Name labels stay as today.
 - The renderer is rebuilt when the feature list changes (add, delete, rename, reorder, style change) — not on every terrain update.
 
 ### Editing
 
-- **In QGIS's UI:** when the user changes the outline layer's renderer (`rendererChanged` / `styleChanged`), the plugin reads each category's symbol back, compares it with the feature's `style`, and commits the differences as one undoable change ("Change style of North dike" for one, "Change styles" for several). A symbol equal to the default symbol is stored as `None`.
-- **On the feature page:** a `QgsSymbolButton` (fill symbol type, connected to the canvas and the outline layer for the expression context) in the feature page's form, labelled "Style". Changing it commits the same change. The steps of one editing session merge into one undo step: one opening of the inline symbol selector (until it closes) is one session, and so is each action from the button's menu (a paste, the reset, a colour). Separate sessions stay separate steps, so undo never skips past an earlier style. Its built-in menu gives copy/paste of a symbol between features and a reset — "Reset" here means back to default (`None`).
+- Styles are edited only in QGIS's own UI — the Layers panel and Layer Properties ▸ Symbology. The feature page has no style control of its own. *(Decided by Niklas: a Style button on the feature page was built and then removed; the Layers panel way is enough.)*
+- When the user changes the outline layer's renderer (`rendererChanged` / `styleChanged`), the plugin reads each category's symbol back, compares it with the feature's `style`, and commits the differences as one undoable change ("Change style of North dike" for one, "Change styles" for several). A symbol equal to the default symbol is stored as `None`.
+- Each style change is an undo step of its own; style changes never merge, so undo never skips past an earlier style.
 - A style-only change does not run the terrain engine: the controller recognises a change whose only differing field is `style` the way it already recognises name-only and enabled-only changes, and only refreshes the outline layer and the list.
 - The change marks the scenario unsaved, like any other edit.
-- While the user's own renderer is in charge (see below), the Style button is disabled, with a tooltip pointing to "Use feature styles again": an edit there would not show on the map. *(Claude's call, made while planning.)*
 
 ### When the user replaces the layer's style (decided by Niklas)
 
@@ -91,5 +92,4 @@ Why: not stated beyond the request. The working assumption is telling features a
 ## Left to the builder / calls made by Claude (to check)
 
 - Storing the symbol as QGIS XML (`QgsSymbolLayerUtils.symbolProperties`/`QgsSymbolLayerUtils.saveSymbol` round-trip) — the builder picks the exact serialisation that round-trips a fill symbol losslessly in QGIS 4.2.
-- Exact placement of the Style button on the feature page, following the existing form layout.
 - Tests through `scripts/test.sh` (note: its default `QGIS_APP` still names 4.2.2; the installed app is 4.2.3).

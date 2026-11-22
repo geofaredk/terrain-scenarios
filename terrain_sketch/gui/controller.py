@@ -274,14 +274,10 @@ class SketchController(QObject):
     def set_enabled(self, fid: str, enabled: bool) -> None:
         self.update_feature(fid, enabled=bool(enabled))
 
-    def set_style(self, fid: str, style: str | None, session=None) -> None:
+    def set_style(self, fid: str, style: str | None) -> None:
         """Give the feature its own symbol (symbol XML), or with None the default look. The terrain does
-        not change; the steps of one editing session (`session`, any token the caller picks — one opening
-        of the symbol selector, say) merge into one undo step, while separate sessions stay separate steps."""
-        def describe(feature, changes):
-            text, key = _describe(feature, changes)
-            return text, key + (session,)
-        self._update(fid, {"style": style}, describe)
+        not change; each call is an undo step of its own."""
+        self.update_feature(fid, style=style)
 
     def uses_feature_styles(self) -> bool:
         """Whether the map draws each feature with its own stored style: False once the user put another
@@ -897,13 +893,12 @@ PROFILE_FIELDS = frozenset({"cross_left", "cross_right", "long_profile"})
 
 
 def _describe(feature, changes) -> tuple[str, object]:
-    """The undo text for `changes` to `feature`, and the merge key — set only for settings and the
-    style, so the steps of one spin box or one symbol editor become one undo step while a rename, a
-    toggle, a reshaped outline or a dragged profile each stay their own. `set_style` adds its editing
-    session to the style's key, so a later edit of the same feature is a step of its own."""
+    """The undo text for `changes` to `feature`, and the merge key — set only for settings, so the steps
+    of one spin box become one undo step while a style change, a rename, a toggle, a reshaped outline or a
+    dragged profile each stay their own."""
     fields = frozenset(changes)
     if fields == {"style"}:
-        return UNDO_STYLE.format(feature.name), (feature.id, fields)
+        return UNDO_STYLE.format(feature.name), None
     if fields == {"name"}:
         return UNDO_RENAME.format(feature.name), None
     if fields == {"enabled"}:

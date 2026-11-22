@@ -389,7 +389,7 @@ class MainDock(QgsDockWidget):
         # `close_page` is what makes Escape inside the tiles close the real page (verified by probe:
         # without this, Escape inside the gallery is silently swallowed).
         self.gallery.panelAccepted.connect(self.close_page)
-        self.properties = PropertiesPage(controller, self._released_pages, canvas=iface.mapCanvas())
+        self.properties = PropertiesPage(controller, self._released_pages)
         # `PropertiesPage` is a `QgsPanelWidget` too (dockMode True), with exactly the same Escape
         # hazard as `gallery` above — its own keyPressEvent answers Escape by calling its own
         # `acceptPanel()`, emitting `properties.panelAccepted` rather than the `_PagePanel` wrapper's,
@@ -403,14 +403,6 @@ class MainDock(QgsDockWidget):
         self.edit_button = self.properties.edit_button
         self.gallery_page = None
         self.properties_page = None
-        self._open_wrapper = None   # the page on the stack: on top, or under a panel it opened (below)
-        # A widget on a page that opens a panel of its own — the feature page's Style button opens
-        # QGIS's symbol selector — finds the nearest QgsPanelWidget, the page itself, and calls its
-        # openPanel, which only emits showPanel. The page is never on the stack (its `_PagePanel`
-        # wrapper is), so nothing would answer: the click would do nothing. Forwarded onto the stack,
-        # the panel opens as one more drill-in level on top of the page, as in QGIS's Layer Styling dock.
-        self.properties.showPanel.connect(self._open_sub_panel)
-        self.gallery.showPanel.connect(self._open_sub_panel)
 
         self.start_button.clicked.connect(self._start)
         self.export_button.clicked.connect(self._export)
@@ -476,8 +468,6 @@ class MainDock(QgsDockWidget):
         iface.addCustomActionForLayerType(self.use_styles_action, "", Qgis.LayerType.Vector, False)
         self._styles_action_layer_id = None
         controller.stylesChanged.connect(self._refresh_styles_action)
-        # a symbol selector open over the feature page edits a style the map no longer draws
-        controller.stylesChanged.connect(self._close_selector_under_layer_style)
         self._session_changed()
 
     @staticmethod
@@ -610,15 +600,6 @@ class MainDock(QgsDockWidget):
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
-    def _close_selector_under_layer_style(self) -> None:
-        """The user's own renderer took over the outline layer: a symbol selector still open on the feature
-        page would go on storing styles that do not show, so it closes. Guarded: reached from `stylesChanged`."""
-        try:
-            if not self.controller.uses_feature_styles():
-                self._close_sub_panels()
-        except Exception:  # noqa: BLE001 — this runs in a slot
-            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-
     def _use_feature_styles(self) -> None:
         """Guarded: reached from `use_styles_action.triggered`, a Qt signal."""
         try:
@@ -631,54 +612,7 @@ class MainDock(QgsDockWidget):
         drills more than one level deep from the main list."""
         page.setDockMode(True)   # mandatory before openPanel — see the note on `main_panel` above
         self.close_page()
-        self._open_wrapper = page
-        page.panelAccepted.connect(self._wrapper_closed)
         self.main_panel.openPanel(page)
-
-    def _wrapper_closed(self, panel=None) -> None:
-        """Guarded: reached from a `_PagePanel`'s `panelAccepted`, a Qt signal."""
-        try:
-            if panel is self._open_wrapper:
-                self._open_wrapper = None
-        except Exception:  # noqa: BLE001 — this runs off a Qt signal
-            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-
-    def _open_sub_panel(self, panel) -> None:
-        """A panel opened from inside the open page (see `__init__`), pushed on top of it. When it
-        closes, the stack shows the page's title as it was when the page opened, so the title is
-        brought up to date again (a rename may have come in from the Layers panel meanwhile).
-        Guarded: reached from a page's `showPanel`, a Qt signal."""
-        try:
-            if self._open_wrapper is None:
-                return
-            panel = sip.cast(panel, QgsPanelWidget)   # the signal hands it over typed as a plain QWidget
-            panel.setDockMode(True)   # anything it opens in turn must drill in too, never a modal dialog
-            panel.panelAccepted.connect(self._schedule_title_sync)
-            self.stack.showPanel(panel)
-        except Exception:  # noqa: BLE001 — this runs off a Qt signal
-            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-
-    def _schedule_title_sync(self, _panel=None) -> None:
-        """Run once the stack has popped the closed panel, as `_schedule_reroute_hint` does."""
-        try:
-            QTimer.singleShot(0, self._sync_title_after_sub_panel)
-        except Exception:  # noqa: BLE001 — this runs off a Qt signal
-            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-
-    def _sync_title_after_sub_panel(self) -> None:
-        """Guarded: a QTimer callback."""
-        try:
-            self._sync_feature_page_title(self.properties.panelTitle())
-        except Exception:  # noqa: BLE001 — this runs from a QTimer callback
-            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-
-    def _close_sub_panels(self) -> None:
-        """Accept every panel opened on top of the open page, back to the page itself."""
-        for _ in range(32):   # the stack pops each accepted panel at once; the bound only stops a stuck loop
-            current = self.stack.currentPanel()
-            if current is None or current is self.main_panel or current is self._open_wrapper:
-                return
-            current.acceptPanel()
 
     def close_page(self) -> None:
         """Accept the open page, if there is one, returning the stack to the main list. `_PagePanel`
@@ -689,11 +623,8 @@ class MainDock(QgsDockWidget):
         Qt signals, as well as called directly from plain code — it never returns a value, so a
         caller loses nothing when the guard below swallows an exception instead of raising it."""
         try:
-            # Top first: a panel opened from the page (the symbol selector), then the page itself.
-            for _ in range(32):   # the stack pops each accepted panel at once; the bound only stops a stuck loop
-                current = self.stack.currentPanel()
-                if current is None or current is self.main_panel:
-                    break
+            current = self.stack.currentPanel()
+            if current is not None and current is not self.main_panel:
                 current.acceptPanel()
         except Exception:  # noqa: BLE001 — this runs off a Qt signal
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
@@ -768,10 +699,10 @@ class MainDock(QgsDockWidget):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _hint_target(self) -> QLabel:
-        """The open page's hint, also while a panel opened from it covers it: it shows again with the page."""
-        if self._open_wrapper is not None and self._open_wrapper is self.properties_page:
+        current = self.stack.currentPanel()
+        if current is self.properties_page:
             return self.properties.hint
-        if self._open_wrapper is not None and self._open_wrapper is self.gallery_page:
+        if current is self.gallery_page:
             return self.gallery.hint
         return self.session_hint
 
@@ -952,9 +883,6 @@ class MainDock(QgsDockWidget):
         `QListView`'s own click handling), but reopening an already-selected row (spec §9's back-then-
         reclick case) produces no `selectionChanged` at all, and this must still work."""
         try:
-            # First, so a symbol selector still open from the page is closed while it still belongs
-            # to the feature it was opened for.
-            self.close_page()
             self.feature_view.select_id(fid)
             self.properties.show_feature(fid)
             self.properties_page = _PagePanel(self.properties.panelTitle(), self.properties, self._released_pages)
@@ -989,11 +917,9 @@ class MainDock(QgsDockWidget):
         `mBackButton`. Guarded: reached from `properties.titleChanged`, a Qt signal — a
         differently-styled QGIS build without that label must change nothing and never raise."""
         try:
-            if self.properties_page is None or self._open_wrapper is not self.properties_page:
+            if self.properties_page is None or self.stack.currentPanel() is not self.properties_page:
                 return
             self.properties_page.setPanelTitle(name)
-            if self.stack.currentPanel() is not self.properties_page:
-                return   # a panel opened from the page holds the title bar; synced again when it closes
             label = self.stack.findChild(QLabel, "mTitleText")
             if label is not None:
                 label.setText(f" {name} ")   # the exact padding QgsPanelWidgetStack itself uses (verified by probe)
@@ -1048,10 +974,8 @@ class MainDock(QgsDockWidget):
                 self.profiles.show_feature(fid)
             self.edit_button.setEnabled(fid is not None)
             self._update_highlight(fid)
-            if self._open_wrapper is not None and self._open_wrapper is self.properties_page:
+            if self.stack.currentPanel() is self.properties_page:
                 if fid is not None:
-                    if fid != self.properties.fid:
-                        self._close_sub_panels()   # a symbol selector edits the feature it was opened for
                     self.properties.show_feature(fid)
                 elif self.controller.has_dem:
                     self.close_page()
@@ -1237,7 +1161,7 @@ class MainDock(QgsDockWidget):
                 self.stop_editing()
             if self._section_fid is not None and self._section_fid not in ids:
                 self.end_drawing()
-            if self._open_wrapper is None or self._open_wrapper is not self.properties_page:
+            if self.stack.currentPanel() is not self.properties_page:
                 return
             fid = self.feature_view.selected_id()
             if fid is None or fid not in {f.id for f in self.controller.features}:
@@ -1256,12 +1180,8 @@ class MainDock(QgsDockWidget):
         `_brush_extends`, not `_brush_fid`: an undo that removes the feature itself has already cleared
         the id (featuresChanged comes first), and the brush would then add the old outline as a new feature.
 
-        A symbol selector open over the feature page closes too: it holds its own copy of the style the undo
-        just replaced, and its next tweak would put that back.
-
         Guarded: reached from `controller.featuresRestored`, a Qt signal."""
         try:
-            self._close_sub_panels()
             self.stop_editing()
             if self._brush_extends:
                 self.end_drawing()

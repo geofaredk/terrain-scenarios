@@ -22,6 +22,9 @@ ogr.UseExceptions()   # also relied on by sibling modules; set here so this modu
 
 FEATURES_LAYER = "features"
 META_TABLE = "terrain_scenarios_meta"
+# The plugin was called Terrain Sketch when it wrote its first scenarios; their metadata table
+# still has that name. Reading and the Save-over check accept it; saving always writes META_TABLE.
+LEGACY_META_TABLE = "terrain_sketch_meta"
 PARAM_FIELDS = ("amount", "width", "slope_n", "reach", "slopes_inside")
 FIELDS = (("order", ogr.OFTInteger), ("name", ogr.OFTString), ("tool", ogr.OFTString),
           ("mode", ogr.OFTString), ("enabled", ogr.OFTInteger), ("pixel_mode", ogr.OFTString),
@@ -135,7 +138,7 @@ def _check_replaceable(path: str) -> None:
 def _is_scenario_file(path: str) -> bool:
     """Whether `path` already holds a Terrain Scenarios file. Checked on the GeoPackage's own
     SQLite catalogue rather than through `_open`/`FEATURES_LAYER`: an empty scenario (no features
-    yet) still has `META_TABLE`, and that table was written with a plain `CREATE TABLE`, not
+    yet) still has `META_TABLE` (or `LEGACY_META_TABLE`), and that table was written with a plain `CREATE TABLE`, not
     through OGR's own layer-creation API, so it never appears via `GetLayerByName` either way."""
     try:
         source = ogr.Open(path)
@@ -144,15 +147,26 @@ def _is_scenario_file(path: str) -> bool:
     if source is None:
         return False
     try:
-        result = source.ExecuteSQL(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{META_TABLE}'")
-        if result is None:
-            return False
-        try:
-            return result.GetFeatureCount() > 0
-        finally:
-            source.ReleaseResultSet(result)
+        return _meta_table(source) is not None
     finally:
         source.Close()
+
+
+def _meta_table(source) -> str | None:
+    """The name of the metadata table in an open scenario: `META_TABLE`, or `LEGACY_META_TABLE` in a
+    file saved before the rename; None when there is neither."""
+    result = source.ExecuteSQL(f"SELECT name FROM sqlite_master WHERE type='table' "
+                               f"AND name IN ('{META_TABLE}', '{LEGACY_META_TABLE}')")
+    if result is None:
+        return None
+    try:
+        names = {row.GetField("name") for row in result}
+    finally:
+        source.ReleaseResultSet(result)
+    for name in (META_TABLE, LEGACY_META_TABLE):
+        if name in names:
+            return name
+    return None
 
 
 def _discard_partial(source, partial: str) -> None:
@@ -291,7 +305,8 @@ def _write_meta(source, meta: ScenarioMeta) -> ScenarioMeta:
 
 
 def _read_meta(source) -> ScenarioMeta:
-    result = source.ExecuteSQL(f'SELECT key, value FROM "{META_TABLE}"')
+    table = _meta_table(source) or META_TABLE    # neither: the query fails as it always has
+    result = source.ExecuteSQL(f'SELECT key, value FROM "{table}"')
     if result is None:
         return ScenarioMeta()
     try:

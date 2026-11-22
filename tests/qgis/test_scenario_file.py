@@ -1,5 +1,6 @@
 """The scenario GeoPackage on its own: what goes into the file and what comes back out."""
 import os
+from dataclasses import replace
 from unittest import mock
 
 import pytest
@@ -52,6 +53,27 @@ def test_a_scenario_round_trips_every_field(tmp_path):
     assert loaded[1].section_line is not None and loaded[0].section_line is None
 
 
+def test_style_survives_save_and_load(tmp_path):
+    c = start_session(tmp_path)
+    styled = [replace(f, style="<symbol a='1'/>") if i == 0 else f for i, f in enumerate(two_features(c))]
+    path = str(tmp_path / "styled.gpkg")
+    save(path, styled, dem_meta(c.info, c.stack.original))
+    loaded, _ = load(path)
+    assert [f.style for f in loaded] == ["<symbol a='1'/>", None]
+
+
+def test_a_scenario_without_a_style_column_opens_unstyled(tmp_path):
+    c = start_session(tmp_path)
+    path = str(tmp_path / "old.gpkg")
+    save(path, two_features(c), dem_meta(c.info, c.stack.original))
+    source = ogr.Open(path, 1)
+    layer = source.GetLayerByName(FEATURES_LAYER)
+    layer.DeleteField(layer.GetLayerDefn().GetFieldIndex("style"))
+    source.Close()
+    loaded = load(path)[0]
+    assert len(loaded) == 2 and all(f.style is None for f in loaded)
+
+
 def test_the_saved_order_is_the_order_that_comes_back(tmp_path):
     c = start_session(tmp_path)
     saved = two_features(c)
@@ -70,7 +92,7 @@ def test_the_file_is_a_readable_geopackage_with_the_documented_layer(tmp_path):
     names = {layer.GetLayerDefn().GetFieldDefn(i).GetName()
              for i in range(layer.GetLayerDefn().GetFieldCount())}
     assert {"order", "name", "tool", "mode", "enabled", "pixel_mode", "params",
-            "cross_profile", "long_profile", "section_line"} <= names
+            "cross_profile", "long_profile", "section_line", "style"} <= names
     assert layer.GetFeatureCount() == 2
     assert layer.GetNextFeature().GetGeometryRef() is not None    # real geometry, not a blob
     rows = source.ExecuteSQL(f'SELECT key, value FROM "{META_TABLE}"')

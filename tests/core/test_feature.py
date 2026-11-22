@@ -45,3 +45,14 @@ def test_list_fields_are_normalised_to_hashable_tuples():
     g = replace(f, cross_left=[[2, -0.5]], long_profile=[[0, 10], [1, 11]])
     assert g.cross_left == ((2.0, -0.5),) and g.long_profile == ((0.0, 10.0), (1.0, 11.0))
     assert isinstance(hash(g), int)
+
+
+def test_style_round_trips_through_the_dict():
+    f = replace(new_feature(Tool.RAISE_PATH, Mode.PATH, line_wkb([(0, 0), (5, 0)]), 1.0), style="<symbol/>")
+    assert TerrainFeature.from_dict(json.loads(json.dumps(f.to_dict()))).style == "<symbol/>"
+
+
+def test_a_dict_without_style_is_unstyled():
+    d = new_feature(Tool.RAISE_PATH, Mode.PATH, line_wkb([(0, 0), (5, 0)]), 1.0).to_dict()
+    del d["style"]
+    assert TerrainFeature.from_dict(d).style is None

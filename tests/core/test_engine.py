@@ -43,6 +43,13 @@ def test_unchanged_list_needs_no_recompute():
     assert stack.update([f]) is None
 
 
+def test_a_style_only_change_recomputes_nothing():
+    stack = FeatureStack(make_grid(flat(10)))
+    f = feature(Tool.ADD, Mode.AREA, square(10.3, 10.3, 15.3, 15.3))
+    stack.update([f])
+    assert stack.update([replace(f, style="<symbol/>")]) is None
+
+
 def test_toggle_and_delete_restore_the_original():
     stack = FeatureStack(make_grid(tilted))
     f = feature(Tool.RAISE_FLAT, Mode.AREA, square(10.3, 10.3, 20.3, 20.3))

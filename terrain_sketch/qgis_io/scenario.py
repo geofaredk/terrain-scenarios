@@ -26,7 +26,8 @@ PARAM_FIELDS = ("amount", "width", "slope_n", "reach", "slopes_inside")
 FIELDS = (("order", ogr.OFTInteger), ("name", ogr.OFTString), ("tool", ogr.OFTString),
           ("mode", ogr.OFTString), ("enabled", ogr.OFTInteger), ("pixel_mode", ogr.OFTString),
           ("params", ogr.OFTString), ("cross_profile", ogr.OFTString),
-          ("long_profile", ogr.OFTString), ("section_line", ogr.OFTString))
+          ("long_profile", ogr.OFTString), ("section_line", ogr.OFTString),
+          ("style", ogr.OFTString))
 
 # qgis_io/scenario.py cannot import gui/help_texts.py (Global Constraints: "qgis_io/scenario.py
 # uses ogr/osr only"), so these messages live beside the rest of this module's own ScenarioError
@@ -233,6 +234,8 @@ def _to_ogr(layer, order: int, feature: TerrainFeature):
         out.SetField("long_profile", json.dumps([list(p) for p in feature.long_profile]))
     if feature.section_line is not None:
         out.SetField("section_line", ogr.CreateGeometryFromWkb(feature.section_line).ExportToWkt())
+    if feature.style is not None:
+        out.SetField("style", feature.style)
     return out
 
 
@@ -244,6 +247,7 @@ def _from_ogr(row) -> tuple[int, TerrainFeature]:
     cross = json.loads(row.GetField("cross_profile") or "{}")
     long_profile = row.GetField("long_profile")
     section_line = _section_line(row.GetField("section_line"))
+    style = row.GetField("style") if row.GetFieldIndex("style") >= 0 else None   # older files have no column
     feature = TerrainFeature(
         # A fresh id, never one derived from the row: two files both have a row 1, and a panel
         # still showing feature 1 of the old scenario must not silently retarget the new one.
@@ -258,6 +262,7 @@ def _from_ogr(row) -> tuple[int, TerrainFeature]:
         cross_right=tuple(tuple(p) for p in cross.get("right", ())),
         long_profile=None if not long_profile else tuple(tuple(p) for p in json.loads(long_profile)),
         section_line=section_line,
+        style=style or None,
         **{k: params[k] for k in PARAM_FIELDS if k in params},
     )
     return int(row.GetField("order") or 0), feature

@@ -678,7 +678,7 @@ class SketchController(QObject):
             if f.mode is Mode.PATH:
                 width = max(f.width, self.stack.original.cell_size)
                 geometry = geometry.buffer(width / 2.0, 8, Qgis.EndCapStyle.Flat, Qgis.JoinStyle.Miter, 2.0)
-            items.append((f.name, TOOL_LABELS[f.tool], geometry))
+            items.append((f.id, f.name, TOOL_LABELS[f.tool], geometry))
         return items
 
     def _unique_name(self, tool: Tool) -> str:

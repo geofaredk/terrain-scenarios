@@ -1,13 +1,17 @@
 """The "Terrain Sketch" layer group: modified DEM, change and sketch outlines."""
 from __future__ import annotations
 
-from qgis.core import (Qgis, QgsColorRampShader, QgsDataProvider, QgsFeature, QgsFillSymbol, QgsPalLayerSettings,
-                       QgsRasterLayer, QgsRasterShader, QgsSingleBandPseudoColorRenderer, QgsVectorLayer,
+from qgis.core import (Qgis, QgsCategorizedSymbolRenderer, QgsColorRampShader, QgsDataProvider, QgsExpression,
+                       QgsFeature, QgsFeatureRequest, QgsPalLayerSettings, QgsRasterLayer, QgsRasterShader,
+                       QgsRenderContext, QgsRendererCategory, QgsSingleBandPseudoColorRenderer, QgsVectorLayer,
                        QgsVectorLayerSimpleLabeling)
 from qgis.PyQt import sip
 from qgis.PyQt.QtGui import QColor
 
+from .symbols import default_symbol, from_xml, style_of, to_xml
+
 GROUP_NAME = "Terrain Sketch"
+FID_FIELD = "fid"
 CHANGE_LIMIT = 2.0  # metres of cut or fill shown at full colour
 
 
@@ -16,12 +20,14 @@ class SketchLayers:
 
     def __init__(self, project, dem_layer, working_path: str, change_path: str):
         self.project = project
-        self.outlines = QgsVectorLayer("Polygon?field=name:string&field=tool:string", "Sketch outlines", "memory")
+        self.outlines = QgsVectorLayer(f"Polygon?field={FID_FIELD}:string&field=name:string&field=tool:string",
+                                       "Sketch outlines", "memory")
         self.outlines.setCrs(dem_layer.crs())
         self.change = QgsRasterLayer(change_path, "Change (new − original)")
         self.working = QgsRasterLayer(working_path, "Modified DEM")
         self.working.setRenderer(dem_layer.renderer().clone())
         self.change.setRenderer(_change_renderer(self.change))
+        self.outlines.setRenderer(_feature_renderer([]))
         _style_outlines(self.outlines)
         self.layer_ids = [layer.id() for layer in (self.outlines, self.change, self.working)]
         self.group = project.layerTreeRoot().insertGroup(0, GROUP_NAME)
@@ -52,7 +58,7 @@ class SketchLayers:
                 layer.setDataSource(path, layer.name(), "gdal", options)
 
     def set_outlines(self, items) -> None:
-        """Replace the outlines with `items`: (name, tool label, QgsGeometry in the DEM CRS).
+        """Replace the outlines with `items`: (feature id, name, tool label, QgsGeometry in the DEM CRS).
         Does nothing once the user removed the outline layer."""
         layer = self.project.mapLayer(self.outlines_id)
         if layer is None:
@@ -60,14 +66,90 @@ class SketchLayers:
         provider = layer.dataProvider()
         provider.truncate()
         features = []
-        for name, tool, geometry in items:
+        for fid, name, tool, geometry in items:
             feature = QgsFeature(layer.fields())
-            feature.setAttributes([name, tool])
+            feature.setAttributes([fid, name, tool])
             feature.setGeometry(geometry)
             features.append(feature)
         provider.addFeatures(features)
         layer.updateExtents()
         layer.triggerRepaint()
+
+    def is_managed(self) -> bool:
+        """Whether the outline layer still draws with the plugin's per-feature renderer. Once the user picks
+        another renderer, the plugin leaves it alone."""
+        layer = self.project.mapLayer(self.outlines_id)
+        if layer is None:
+            return False
+        renderer = layer.renderer()
+        return isinstance(renderer, QgsCategorizedSymbolRenderer) and renderer.classAttribute() == FID_FIELD
+
+    def apply_styles(self, entries) -> None:
+        """Bring the per-feature renderer in line with `entries`: (feature id, name, style) for the enabled
+        features, in list order. The renderer is edited in place, touching only categories that differ, so
+        renderer settings and each category's checkbox last. A category for empty or no value (the user's
+        "all other values") is kept. Does nothing unless the layer is managed."""
+        if not self.is_managed():
+            return
+        layer = self.project.mapLayer(self.outlines_id)
+        renderer = layer.renderer()
+        fids = [fid for fid, _name, _style in entries]
+        cats = renderer.categories()  # kept alive while its symbols are used
+        for index in reversed(range(len(cats))):
+            value = cats[index].value()
+            if value not in fids and value not in ("", None):
+                renderer.deleteCategory(index)
+        for position, (fid, name, style) in enumerate(entries):
+            symbol = from_xml(style) or default_symbol()
+            index = renderer.categoryIndexForValue(fid)
+            if index < 0:
+                renderer.addCategory(QgsRendererCategory(fid, symbol, name))
+                index = len(renderer.categories()) - 1
+            else:
+                cats = renderer.categories()
+                if cats[index].label() != name:
+                    renderer.updateCategoryLabel(index, name)
+                if to_xml(cats[index].symbol()) != to_xml(symbol):
+                    renderer.updateCategorySymbol(index, symbol)
+            if index != position:
+                renderer.moveCategory(index, position)
+        layer.triggerRepaint()
+        layer.emitStyleChanged()  # the in-place edits above tell the legend nothing on their own
+
+    def read_styles(self) -> dict:
+        """{feature id: (category label, style)} for every category with a value; {} unless managed."""
+        if not self.is_managed():
+            return {}
+        cats = self.project.mapLayer(self.outlines_id).renderer().categories()
+        return {c.value(): (c.label(), style_of(c.symbol())) for c in cats if c.value() not in ("", None)}
+
+    def use_feature_styles(self, entries) -> None:
+        """Put a new per-feature renderer on the outline layer, built from `entries` as in `apply_styles`."""
+        layer = self.project.mapLayer(self.outlines_id)
+        if layer is None:
+            return
+        layer.setRenderer(_feature_renderer(entries))
+        layer.triggerRepaint()
+
+    def drawn_symbol(self, fid: str):
+        """The symbol the outline layer's current renderer draws for feature `fid`, whatever the renderer;
+        None when the layer is gone, the feature is not on it, or nothing is drawn for it."""
+        layer = self.project.mapLayer(self.outlines_id)
+        if layer is None:
+            return None
+        request = QgsFeatureRequest().setFilterExpression(
+            f"{QgsExpression.quotedColumnRef(FID_FIELD)} = {QgsExpression.quotedValue(fid)}")
+        feature = next(layer.getFeatures(request), None)
+        if feature is None:
+            return None
+        renderer = layer.renderer().clone()  # started on its own: the layer's renderer may be drawing
+        context = QgsRenderContext()
+        renderer.startRender(context, layer.fields())  # originalSymbolForFeature crashes on an unstarted one
+        try:
+            symbol = renderer.originalSymbolForFeature(feature, context)
+            return symbol.clone() if symbol is not None else None
+        finally:
+            renderer.stopRender(context)
 
     def remove(self) -> None:
         """Remove the group and whatever of its layers is still in the project."""
@@ -91,9 +173,15 @@ def _change_renderer(layer: QgsRasterLayer) -> QgsSingleBandPseudoColorRenderer:
     return QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
 
 
+def _feature_renderer(entries) -> QgsCategorizedSymbolRenderer:
+    """A Categorized renderer on the feature id with one category per (feature id, name, style)."""
+    renderer = QgsCategorizedSymbolRenderer(FID_FIELD, [
+        QgsRendererCategory(fid, from_xml(style) or default_symbol(), name) for fid, name, style in entries])
+    renderer.setSourceSymbol(default_symbol())
+    return renderer
+
+
 def _style_outlines(layer: QgsVectorLayer) -> None:
-    layer.renderer().setSymbol(QgsFillSymbol.createSimple(
-        {"color": "0,0,0,0", "outline_color": "35,35,35,255", "outline_width": "0.5", "outline_style": "dash"}))
     labels = QgsPalLayerSettings()
     labels.fieldName = "name"
     layer.setLabeling(QgsVectorLayerSimpleLabeling(labels))

@@ -545,6 +545,13 @@ class SketchController(QObject):
         """The features now belong to the scenario file at `path`, first saved at `created`."""
         self._scenario_path = path
         self._created = created
+        self._name_group()
+
+    def _name_group(self) -> None:
+        """The layer group carries the scenario's file name, or "Scenario" while the features belong to no file."""
+        if self.layers is not None:
+            self.layers.name_group(os.path.splitext(os.path.basename(self._scenario_path))[0]
+                                   if self._scenario_path else None)
 
     def _place_files(self) -> None:
         """Keep the working rasters beside the scenario just saved or opened (spec §8.2 step 3), in
@@ -623,6 +630,7 @@ class SketchController(QObject):
         self._scenario_path = None
         self._created = ""
         self.undo_stack.clear()
+        self._name_group()
 
     def show_in_3d(self) -> bool:
         """Make the modified DEM the project's terrain, at true vertical scale, so a 3D view shows

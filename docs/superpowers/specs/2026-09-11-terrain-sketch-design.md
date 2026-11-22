@@ -262,6 +262,7 @@ These apply to the polygon, or to the corridor polygon for paths. Side slopes ar
        - Brush radius (brush only).
      - *Pixels to change*: a combobox with an illustrated icon per mode, plus a tooltip containing the three-panel picture.
      - *Volumes*: a collapsible group, collapsed until opened, with fill, cut and (when applicable) storage for this feature, plus the scenario totals.
+     - *Note (2026-11-22): the *About this tool* and *Volumes* groups were removed from the page at the user's request.*
 4. Every parameter has a tooltip with its meaning and an example, and the field labels use plain language. All texts live in `help_texts.py`.
 
 ### 7.3 Bottom dock "Terrain Sketch — Profiles"

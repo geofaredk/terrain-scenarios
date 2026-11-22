@@ -236,13 +236,7 @@ REPROJECT_UNAVAILABLE = ("Processing is not available, so Terrain Sketch cannot 
                          "Raster ▸ Projections ▸ Warp.")
 
 
-VOLUME_FILL_TIP = "Material added: the volume between the original ground and the new surface."
-VOLUME_CUT_TIP = "Material removed: the volume between the new surface and the original ground."
-VOLUME_STORAGE_TIP = ("Roughly how much water this hollow holds before it spills at its lowest "
-                      "rim point. Static: it ignores inflow, outflow and any pipe.")
-VOLUME_STORAGE_NOTE = "below the lowest rim point (static, no inflow routing)"
 NO_VOLUME_YET = "—"
-SCENARIO_TOTALS = "{fill} fill · {cut} cut"
 
 
 def cubic_metres(value: float | None) -> str:

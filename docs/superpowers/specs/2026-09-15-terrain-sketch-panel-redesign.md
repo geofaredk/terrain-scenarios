@@ -164,6 +164,9 @@ Title = the feature's name; it follows a rename.
 7. **About this tool** (`QgsCollapsibleGroupBox`, collapsed by default now that the summary is in the
    header, remembered): picture, description and example, unchanged.
 
+   *Note (2026-11-22): items 6 and 7 were removed at the user's request; the feature page no longer has
+   a Volumes or an About this tool section. The header summary still shows the tool, fill and cut.*
+
 The page scrolls (`QgsScrollArea`) so a narrow, short dock never clips the fields.
 
 ## 8. Muted text

@@ -733,7 +733,6 @@ def test_pixels_to_change_sits_under_advanced_and_starts_collapsed(tmp_path):
     dock.feature_view.rowOpened.emit(dike.id)
     page = dock.properties
     assert page.advanced.isCollapsed() and page.pixel_mode.parent() is page.advanced
-    assert page.volumes.isCollapsed() and page.about.isCollapsed()
 
 
 def test_undo_that_restores_a_deleted_feature_does_not_open_a_page(tmp_path):
@@ -985,8 +984,8 @@ def test_the_title_bar_follows_a_rename(tmp_path):
 
 def test_the_hint_sits_under_the_action_row_within_the_viewport(tmp_path):
     """spec §6 item 6: the hint must sit directly under the action row so it is never
-    scrolled out of sight — checked on a small dock with Volumes and About both expanded, which
-    push the page's total content height well past what a 320×420 dock can show at once."""
+    scrolled out of sight — checked on a small dock with Advanced expanded, which
+    pushes the page's total content height past what a 320×420 dock can show at once."""
     from qgis.PyQt.QtWidgets import QApplication
 
     _iface, c, dock = panel(tmp_path)
@@ -995,8 +994,7 @@ def test_the_hint_sits_under_the_action_row_within_the_viewport(tmp_path):
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.feature_view.rowOpened.emit(dike.id)
     page = dock.properties
-    page.volumes.setCollapsed(False)
-    page.about.setCollapsed(False)
+    page.advanced.setCollapsed(False)
     dock.edit_button.setChecked(True)
     QApplication.processEvents()
     # Expanding a group can itself scroll the area to keep the newly-revealed content in view; a

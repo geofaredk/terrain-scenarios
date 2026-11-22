@@ -15,7 +15,6 @@ from terrain_sketch import classFactory
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.selection import Method
 from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.help_texts import SCENARIO_TOTALS, cubic_metres
 from terrain_sketch.gui.main_dock import VIEW_SESSION, VIEW_WELCOME, MainDock
 from terrain_sketch.gui.map_tools.draw_line import DrawLineTool
 from terrain_sketch.qgis_io.layers import GROUP_NAME
@@ -215,9 +214,6 @@ def test_deleting_the_shown_feature_leaves_the_properties_page(tmp_path):
     if dock.stack.currentPanel() is dock.properties_page:
         fid = dock.feature_view.selected_id()
         assert fid is not None and fid in {f.id for f in controller.features}
-        cut, fill = controller.totals()
-        assert dock.properties.totals_value.text() == SCENARIO_TOTALS.format(fill=cubic_metres(fill),
-                                                                              cut=cubic_metres(cut))
     else:
         assert dock.stack.currentPanel() is not dock.properties_page
 

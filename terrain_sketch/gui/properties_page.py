@@ -1,5 +1,5 @@
 """The feature page: header (illustration, name, tool + volume), actions, problems, the fields and
-the grouped Advanced/Volumes/About sections. Every change is applied to the terrain immediately."""
+the Advanced section. Every change is applied to the terrain immediately."""
 from __future__ import annotations
 
 import html
@@ -12,19 +12,17 @@ from qgis.PyQt.QtWidgets import (QComboBox, QFormLayout, QFrame, QHBoxLayout, QL
                                  QVBoxLayout, QWidget)
 
 from ..core.sections import supports_long_profile
-from ..core.tools import TOOL_INFO, Mode, PixelMode, reports_storage
+from ..core.tools import TOOL_INFO, Mode, PixelMode
 from . import illustrations, settings
 from .controller import LOG_TAG
 from .feature_list import feature_subtitle
-from .help_texts import (AMOUNT_IS_CUSTOM, FIELD_TIPS, FLAG_TEXTS, NO_VOLUME_YET, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS,
-                         SCENARIO_TOTALS, TOOL_DESCRIPTIONS, TOOL_EXAMPLES, VOLUME_CUT_TIP, VOLUME_FILL_TIP,
-                         VOLUME_STORAGE_NOTE, VOLUME_STORAGE_TIP, amount_label, cubic_metres)
+from .help_texts import (AMOUNT_IS_CUSTOM, FIELD_TIPS, FLAG_TEXTS, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS,
+                         amount_label)
 from .muted import MutedLabel
 from .page_layout import apply_page_margins
 from .selection import EDIT_ICON, ZOOM_ICON
 
 DIAGRAM = QSize(200, 96)
-TOOL_PICTURE = QSize(120, 64)
 HEADER_PICTURE = QSize(72, 36)
 PIXEL_ICON = QSize(32, 32)
 PIXEL_PICTURE = 72   # each of the three pictures in the Pixels to change tooltip
@@ -143,42 +141,10 @@ class PropertiesPage(QgsPanelWidget):
         advanced_form = QFormLayout(self.advanced)
         advanced_form.addRow(self.tr("Pixels to change"), self.pixel_mode)
 
-        self.about = QgsCollapsibleGroupBox(self.tr("About this tool"))
-        self.about.setObjectName("TerrainSketchAboutTool")
-        settings.remember_collapsed("about_group", self.about, collapsed=True)   # the summary is in the header now
-        self.about_text = QLabel()
-        self.about_text.setWordWrap(True)
-        self.about_picture = QLabel()
-        self.about_picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        about_layout = QVBoxLayout(self.about)
-        about_layout.addWidget(self.about_picture)
-        about_layout.addWidget(self.about_text)
-
         self.diagram = QLabel()
         self.diagram.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.diagram.setToolTip(self.tr("The part the field you are editing controls is "
                                         "highlighted."))
-
-        self.volumes = QgsCollapsibleGroupBox(self.tr("Volumes"))
-        self.volumes.setObjectName("TerrainSketchVolumes")
-        settings.remember_collapsed("volumes_group", self.volumes, collapsed=True)   # open on request
-        self.fill_value = QLabel()
-        self.fill_value.setWordWrap(True)
-        self.fill_value.setToolTip(VOLUME_FILL_TIP)
-        self.cut_value = QLabel()
-        self.cut_value.setWordWrap(True)
-        self.cut_value.setToolTip(VOLUME_CUT_TIP)
-        self.storage_value = QLabel()
-        self.storage_value.setWordWrap(True)
-        self.storage_value.setToolTip(VOLUME_STORAGE_TIP)
-        self.totals_value = QLabel()
-        self.totals_value.setWordWrap(True)
-        volume_form = QFormLayout(self.volumes)
-        volume_form.addRow(self.tr("Fill"), self.fill_value)
-        volume_form.addRow(self.tr("Cut"), self.cut_value)
-        volume_form.addRow(self.tr("Storage"), self.storage_value)
-        volume_form.addRow(self.tr("Whole scenario"), self.totals_value)
-        self.volume_form = volume_form
 
         self.problems = QLabel()
         self.problems.setWordWrap(True)
@@ -191,14 +157,12 @@ class PropertiesPage(QgsPanelWidget):
         content_layout.addLayout(action_row)
         # Directly under the action row (spec §6 item 6): a hint for work started from
         # this page — Edit shape, or Draw section line from the Profiles dock — must never scroll
-        # out of sight below Advanced/Volumes/About, which can each expand to any length.
+        # out of sight below Advanced, which can expand to any length.
         content_layout.addWidget(self.hint)
         content_layout.addWidget(self.problems)
         content_layout.addWidget(self.diagram)
         content_layout.addLayout(self.form)
         content_layout.addWidget(self.advanced)
-        content_layout.addWidget(self.volumes)
-        content_layout.addWidget(self.about)
         content_layout.addStretch(1)
 
         # The page scrolls (spec §7) so a narrow, short dock never clips the fields.
@@ -228,7 +192,7 @@ class PropertiesPage(QgsPanelWidget):
                                self.reach: "reach"}
         controller.featuresChanged.connect(self._refresh_problems)
         controller.featuresChanged.connect(self._refresh_values)
-        controller.featuresChanged.connect(self._refresh_volumes)
+        controller.featuresChanged.connect(self._refresh_summary)
 
     def eventFilter(self, watched, event):  # noqa: N802 — Qt override
         """Highlight the part of the diagram that belongs to whichever field has focus. Also: Escape
@@ -295,8 +259,6 @@ class PropertiesPage(QgsPanelWidget):
             return
         self.header_picture.setPixmap(illustrations.pixmap(f"tool_{feature.tool.value}",
                                                             HEADER_PICTURE, self.palette()))
-        self.about_picture.setPixmap(illustrations.pixmap(f"tool_{feature.tool.value}",
-                                                          TOOL_PICTURE, self.palette()))
         self._draw_diagram(None)
         for index in range(self.pixel_mode.count()):
             mode = PixelMode(self.pixel_mode.itemData(index))
@@ -336,14 +298,12 @@ class PropertiesPage(QgsPanelWidget):
             self.form.setRowVisible(self.slope, info.has_slopes)
             self.form.setRowVisible(self.reach, info.has_slopes)
             self.form.setRowVisible(self.slope_position, info.has_slopes and feature.mode is Mode.AREA)
-            self.about_text.setText(f"{TOOL_DESCRIPTIONS[feature.tool]}\n\n"
-                                    f"{TOOL_EXAMPLES[feature.tool]}")
             self._draw_pictures()
             self.diagram.setVisible(feature.mode is Mode.PATH and info.has_slopes)
         finally:
             self._loading = False
         self._refresh_problems()
-        self._refresh_volumes()
+        self._refresh_summary()
 
     def _load_values(self, feature) -> None:
         """Show the feature's values in the fields — except in a field the user is still typing in:
@@ -375,28 +335,14 @@ class PropertiesPage(QgsPanelWidget):
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
-    def _refresh_volumes(self) -> None:
-        """Per-feature cut, fill and (for the tools that hold water) storage, plus the scenario
-        totals. Storage is hidden rather than shown as zero for a tool that cannot hold water.
+    def _refresh_summary(self) -> None:
+        """Keep the header's muted summary (tool, fill, cut) in step with the engine.
 
         Runs from `featuresChanged`, a Qt signal — an exception escaping it aborts QGIS, so any
         failure here is logged instead of raised, the same rule the controller itself follows."""
         try:
-            feature = self.controller.find(self._fid) if self._fid is not None else None
-            if feature is None:
-                return
-            stats = self.controller.stats(self._fid)
-            self.fill_value.setText(cubic_metres(stats.fill))
-            self.cut_value.setText(cubic_metres(stats.cut))
-            shows_storage = reports_storage(feature.tool, feature.mode)
-            self.volume_form.setRowVisible(self.storage_value, shows_storage)
-            if shows_storage:
-                self.storage_value.setText(
-                    f"≈ {cubic_metres(stats.storage)} {VOLUME_STORAGE_NOTE}"
-                    if stats.storage is not None else NO_VOLUME_YET)
-            cut, fill = self.controller.totals()
-            self.totals_value.setText(SCENARIO_TOTALS.format(fill=cubic_metres(fill), cut=cubic_metres(cut)))
-            self.header_summary.setText(feature_subtitle(self.controller, self._fid))
+            if self._fid is not None and self.controller.find(self._fid) is not None:
+                self.header_summary.setText(feature_subtitle(self.controller, self._fid))
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 

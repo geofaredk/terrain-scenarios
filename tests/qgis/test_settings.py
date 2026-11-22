@@ -83,7 +83,7 @@ def test_a_corrupt_stored_value_does_not_raise():
 
 def test_a_collapsed_group_is_remembered_under_the_plugin_group(tmp_path):
     """QgsCollapsibleGroupBox saves under its own key otherwise, which the plugin cannot clear and
-    which leaked a collapsed About box from one test into the next."""
+    which leaked a collapsed group box from one test into the next."""
     from qgis_helpers import start_session
     from terrain_sketch.gui.properties_page import PropertiesPage
     stored = QgsSettings()
@@ -93,27 +93,14 @@ def test_a_collapsed_group_is_remembered_under_the_plugin_group(tmp_path):
     c = start_session(tmp_path)
     page = PropertiesPage(c)
     page.show()                                    # a box that is not shown does not report a collapse
-    assert page.about.isCollapsed()                # collapsed by default now (the summary is in the header)
-    page.about.setCollapsed(False)
-    assert settings.load("about_group/collapsed", True, bool) is False
+    assert page.advanced.isCollapsed()             # collapsed by default
+    page.advanced.setCollapsed(False)
+    assert settings.load("advanced_group/collapsed", True, bool) is False
     assert not [key for key in QgsSettings().allKeys() if key.startswith("QgsCollapsibleGroupBox/")
                 and "TerrainSketch" in key]
     again = PropertiesPage(c)
     again.show()                                   # a box that saved its own state would load it here
-    assert not again.about.isCollapsed() and again.volumes.isCollapsed()    # About remembers being opened
-
-
-def test_volumes_start_collapsed_and_an_opened_group_stays_open(tmp_path):
-    from qgis_helpers import start_session
-    from terrain_sketch.gui.properties_page import PropertiesPage
-    c = start_session(tmp_path)
-    page = PropertiesPage(c)
-    page.show()
-    assert page.volumes.isCollapsed() and page.about.isCollapsed()   # both start collapsed (spec §7 items 5-7)
-    page.volumes.setCollapsed(False)
-    again = PropertiesPage(c)
-    again.show()
-    assert not again.volumes.isCollapsed()
+    assert not again.advanced.isCollapsed()       # Advanced remembers being opened
 
 
 def test_advanced_starts_collapsed_and_remembers_being_opened(tmp_path):

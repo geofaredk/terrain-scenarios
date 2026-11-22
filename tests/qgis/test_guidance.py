@@ -48,16 +48,6 @@ def test_a_broken_illustration_does_not_take_qgis_down_on_a_theme_change(monkeyp
     gallery.changeEvent(QEvent(QEvent.Type.PaletteChange))   # must not raise
 
 
-def test_the_properties_page_explains_the_selected_tool(tmp_path):
-    c = start_session(tmp_path)
-    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    page = PropertiesPage(c)
-    page.show_feature(dike.id)
-    assert TOOL_DESCRIPTIONS[Tool.RAISE_PATH] in page.about_text.text()
-    assert TOOL_EXAMPLES[Tool.RAISE_PATH] in page.about_text.text()
-    assert page.about_picture.pixmap() is not None and not page.about_picture.pixmap().isNull()
-
-
 def test_every_pixel_mode_entry_gets_its_own_picture(tmp_path):
     c = start_session(tmp_path)
     pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
@@ -115,14 +105,6 @@ def test_the_choice_fields_name_a_real_case_for_each_option(tmp_path):
     assert "pond" in slopes and "pad" in slopes
     pixels = page.pixel_mode.toolTip()
     assert len(pixels) > 40 and "All touched" in pixels
-
-
-def test_the_about_group_can_be_collapsed_and_remembers_its_name(tmp_path):
-    c = start_session(tmp_path)
-    page = PropertiesPage(c)
-    assert page.about.objectName() == "TerrainSketchAboutTool"
-    page.about.setCollapsed(True)
-    assert page.about.isCollapsed()
 
 
 def test_the_amount_label_says_what_the_height_or_depth_is_measured_from():

@@ -10,6 +10,7 @@ from qgis.PyQt.QtGui import QMouseEvent, QPalette
 from qgis.PyQt.QtWidgets import (QAbstractItemView, QApplication, QListView, QStyle, QStyleOptionButton,
                                  QStyleOptionViewItem, QStyledItemDelegate)
 
+from ..qgis_io.symbols import preview_pixmap
 from . import illustrations
 from .help_texts import FLAG_TEXTS, TOOL_LABELS, cubic_metres
 from .muted import muted_between
@@ -20,6 +21,7 @@ ID_ROLE = Qt.ItemDataRole.UserRole
 SUBTITLE_ROLE = Qt.ItemDataRole.UserRole + 1
 PICTURE_ROLE = Qt.ItemDataRole.UserRole + 2
 FLAGGED_ROLE = Qt.ItemDataRole.UserRole + 3
+SYMBOL_ROLE = Qt.ItemDataRole.UserRole + 4
 MIME_TYPE = "application/x-terrain-sketch-feature-ids"
 
 
@@ -46,6 +48,7 @@ class FeatureListModel(QAbstractListModel):
         self.controller = controller
         self._ids: list[str] = []
         controller.featuresChanged.connect(self._sync)
+        controller.stylesChanged.connect(self._sync)      # an edit made in QGIS's Layers panel
         self._sync()
 
     def _sync(self) -> None:
@@ -86,6 +89,8 @@ class FeatureListModel(QAbstractListModel):
             return feature_subtitle(self.controller, feature.id)
         if role == PICTURE_ROLE:
             return f"tool_{feature.tool.value}"
+        if role == SYMBOL_ROLE:
+            return self.controller.display_symbol(feature.id)
         flags = self.controller.stats(feature.id).flags
         if role == FLAGGED_ROLE:
             return bool(flags)
@@ -230,8 +235,11 @@ class FeatureRowDelegate(QStyledItemDelegate):
             picture_rect = QRect(checkbox_rect.right() + SPACING,
                                  option.rect.top() + (option.rect.height() - PICTURE_SIZE.height()) // 2,
                                  PICTURE_SIZE.width(), PICTURE_SIZE.height())
+            symbol = index.data(SYMBOL_ROLE)
             picture_name = index.data(PICTURE_ROLE)
-            if picture_name:
+            if symbol is not None:
+                painter.drawPixmap(picture_rect, preview_pixmap(symbol, PICTURE_SIZE))
+            elif picture_name:
                 picture_palette = self.picture_palette(option, text_colour, muted)
                 painter.drawPixmap(picture_rect, illustrations.pixmap(picture_name, PICTURE_SIZE, picture_palette))
 

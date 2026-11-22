@@ -114,6 +114,17 @@ def test_read_styles_reports_labels_and_styles(tmp_path):
     assert layers.read_styles() == {"a": ("North dike", red), "b": ("Pond", None)}
 
 
+def test_a_merged_category_is_no_ones_style_and_gives_way_to_one_category_per_feature(tmp_path):
+    _, _, layers = _layers(tmp_path)
+    layers.apply_styles([("c", "C", None)])
+    layers.outlines.renderer().addCategory(QgsRendererCategory(["a", "b"], default_symbol(), "a, b"))  # Merge
+    assert layers.read_styles() == {"c": ("C", None)}
+    layers.apply_styles([("a", "A", _red()), ("b", "B", None), ("c", "C", None)])
+    cats = layers.outlines.renderer().categories()
+    assert [c.value() for c in cats] == ["a", "b", "c"]
+    assert layers.read_styles() == {"a": ("A", _red()), "b": ("B", None), "c": ("C", None)}
+
+
 def test_a_replaced_renderer_is_left_alone(tmp_path):
     _, _, layers = _layers(tmp_path)
     layers.outlines.setRenderer(QgsSingleSymbolRenderer(default_symbol()))

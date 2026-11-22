@@ -117,11 +117,13 @@ class SketchLayers:
         layer.emitStyleChanged()  # the in-place edits above tell the legend nothing on their own
 
     def read_styles(self) -> dict:
-        """{feature id: (category label, style)} for every category with a value; {} unless managed."""
+        """{feature id: (category label, style)} for every category of one non-empty value; {} unless managed."""
         if not self.is_managed():
             return {}
         cats = self.project.mapLayer(self.outlines_id).renderer().categories()
-        return {c.value(): (c.label(), style_of(c.symbol())) for c in cats if c.value() not in ("", None)}
+        # a merged category's value is a list of values: it is no one feature's style
+        return {c.value(): (c.label(), style_of(c.symbol()))
+                for c in cats if isinstance(c.value(), str) and c.value()}
 
     def use_feature_styles(self, entries) -> None:
         """Put a new per-feature renderer on the outline layer, built from `entries` as in `apply_styles`."""

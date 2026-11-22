@@ -106,6 +106,13 @@ class SketchController(QObject):
         self._throttle = QTimer(self)
         self._throttle.setInterval(PREVIEW_INTERVAL)
         self._throttle.timeout.connect(self._throttle_elapsed)
+        # An edit in the Layers panel is read back once control is back in the event loop: committing it
+        # inside the legend node's own method would make the layer tree rebuild, and delete, that node
+        # while its method still runs. Restarted on each signal, so a burst of them is read back once.
+        self._style_read = QTimer(self)
+        self._style_read.setSingleShot(True)
+        self._style_read.setInterval(0)
+        self._style_read.timeout.connect(self._read_outline_styles)
         project.layersRemoved.connect(self._on_layers_removed)
         project.cleared.connect(self._drop_session)
         project.aboutToBeCleared.connect(self._drop_session)
@@ -739,28 +746,39 @@ class SketchController(QObject):
 
     def _on_outline_style(self, *_args) -> None:
         """The outline layer was restyled or repainted: an edit made in QGIS's own symbology — the Layers
-        panel, Layer Properties — comes back to the features as one undo step. Reached from layer signals,
-        so it never raises."""
+        panel, Layer Properties — is read back from the event loop (see `_style_read`). Reached from layer
+        signals, so it never raises."""
         if self._writing_outlines or self.stack is None or self.layers is None:
             return
         try:
-            if self.layers.is_managed():
+            self._style_read.start()
+        except Exception:  # noqa: BLE001 — a layer signal must never take QGIS down
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _read_outline_styles(self) -> None:
+        """The edit `_on_outline_style` saw comes back to the features as one undo step. The session or the
+        outline layer may have gone since; a timer slot, so it never raises."""
+        if self.stack is None or self.layers is None:
+            return
+        try:
+            if self.layers.is_managed():   # False once the outline layer is gone
                 self._take_outline_styles()
             self.stylesChanged.emit()
-        except Exception:  # noqa: BLE001 — a layer signal must never take QGIS down
+        except Exception:  # noqa: BLE001 — a timer slot must never take QGIS down
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _take_outline_styles(self) -> None:
         """Commit, as one change, each category's symbol and label that differ from its feature's style and
-        name. Categories of no enabled feature and blank labels are ignored; a feature with no category
-        keeps its style, and gets its category back on the next update."""
+        name. Categories of no enabled feature are ignored, and so are blank labels and a label that is just
+        the feature id — what Classify labels each category with, not a name the user typed. A feature with
+        no category keeps its style, and gets its category back on the next update."""
         styles = self.layers.read_styles()
         features, changed = [], []
         for feature in self._features:
             if feature.enabled and feature.id in styles:
                 label, style = styles[feature.id]
                 changes = {}
-                if label.strip() and label.strip() != feature.name:
+                if label.strip() not in ("", feature.id, feature.name):
                     changes["name"] = label.strip()
                 if style != style_of(from_xml(feature.style)):  # compared as the layer would save it
                     changes["style"] = style
@@ -799,6 +817,7 @@ class SketchController(QObject):
     def _drop_session(self) -> None:
         self._offer_save_before_discard()
         self.cancel_preview()  # a queued frame must not fire against a session that is gone
+        self._style_read.stop()  # nor a read-back of the outline layer
         had_session = self.stack is not None
         if had_session and self._files_owner is not None and self._files_edited:
             self._restore_saved_rasters(self._files_owner, self.files.folder)   # the edits were not saved

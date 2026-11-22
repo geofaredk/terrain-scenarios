@@ -1,11 +1,12 @@
 """The controller keeps each feature's style and the outline layer's per-feature renderer in step,
 both ways: a style set through the controller reaches the map, and an edit made in QGIS's own
 symbology (the Layers panel, Layer Properties) comes back to the feature as one undo step."""
-from qgis.core import (QgsFillSymbol, QgsLayerTreeModel, QgsProject, QgsRendererCategory, QgsSingleSymbolRenderer,
-                       QgsSymbolLegendNode)
+from qgis.core import (Qgis, QgsCategorizedSymbolRenderer, QgsFillSymbol, QgsLayerTreeModel, QgsProject,
+                       QgsRendererCategory, QgsSingleSymbolRenderer, QgsSymbolLegendNode)
 from qgis.PyQt.QtCore import Qt
 
-from qgis_helpers import UTM, line_through, start_session
+import terrain_sketch.gui.controller as controller_module
+from qgis_helpers import UTM, line_through, spin_event_loop, start_session
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.qgis_io.symbols import style_of, to_xml
 
@@ -31,6 +32,11 @@ def _legend_nodes(c):
     return model, [n for n in nodes if isinstance(n, QgsSymbolLegendNode)]
 
 
+def _settle() -> None:
+    """Let the controller read back an edit made in QGIS: it does so from the event loop."""
+    spin_event_loop(10)
+
+
 def _record_styles_changed(c) -> list:
     seen = []
     c.stylesChanged.connect(lambda: seen.append(True))
@@ -47,6 +53,7 @@ def test_set_style_is_one_undoable_step_and_marks_unsaved(tmp_path):
     assert c.find(dike.id).style == BLUE and c.undo_stack.count() == count + 1 and c.is_dirty
     assert c.undo_stack.undoText() == "Change the style of " + dike.name
     c.undo_stack.undo()
+    _settle()
     # the undo's own layer writes must not be read back as a new edit of the old symbol
     assert c.find(dike.id).style is None and _symbols(c) == [None]
     assert c.undo_stack.count() == count + 1 and c.undo_stack.canRedo() and not c.is_dirty
@@ -78,9 +85,12 @@ def test_layers_panel_symbol_edit_is_one_undo_step(tmp_path):
     count = c.undo_stack.count()
     _model, nodes = _legend_nodes(c)
     nodes[0].setSymbol(QgsFillSymbol.createSimple({"color": "255,0,0,255"}))  # takes ownership: a fresh one
+    assert c.find(dike.id).style is None   # read back from the event loop, not inside the legend node
+    _settle()
     assert c.find(dike.id).style == RED and c.undo_stack.count() == count + 1
     assert c.undo_stack.undoText() == "Change the style of " + dike.name and seen
     c.undo_stack.undo()
+    _settle()
     assert c.find(dike.id).style is None and _symbols(c) == [None] and c.undo_stack.count() == count + 1
 
 
@@ -90,9 +100,11 @@ def test_layers_panel_label_edit_renames_the_feature(tmp_path):
     count = c.undo_stack.count()
     _model, nodes = _legend_nodes(c)
     nodes[0].setData("North dike", Qt.ItemDataRole.EditRole)
+    _settle()
     assert c.find(dike.id).name == "North dike" and c.undo_stack.undoText() == "Rename " + dike.name
     assert c.undo_stack.count() == count + 1 and c.find(dike.id).style is None
     c.undo_stack.undo()
+    _settle()
     cats = c.layers.outlines.renderer().categories()
     assert c.find(dike.id).name == dike.name and cats[0].label() == dike.name
 
@@ -104,6 +116,7 @@ def test_unticking_a_category_changes_no_feature(tmp_path):
     count, before = c.undo_stack.count(), c.features
     _model, nodes = _legend_nodes(c)
     nodes[0].setData(Qt.CheckState.Unchecked, Qt.ItemDataRole.CheckStateRole)
+    _settle()
     assert c.find(dike.id).enabled and c.features == before and c.undo_stack.count() == count and seen
     assert [cat.renderState() for cat in c.layers.outlines.renderer().categories()] == [False]
 
@@ -118,6 +131,7 @@ def test_categories_that_are_not_features_are_ignored(tmp_path):
     renderer.addCategory(QgsRendererCategory("deadbeef", QgsFillSymbol.createSimple({"color": "0,0,255,255"}),
                                              "Ghost"))
     c.layers.outlines.emitStyleChanged()
+    _settle()
     assert c.features == before and c.undo_stack.count() == count and seen
 
 
@@ -149,6 +163,7 @@ def test_a_replaced_renderer_is_kept_and_shown(tmp_path):
     green = QgsFillSymbol.createSimple({"color": "0,255,0,255"})
     count = c.undo_stack.count()
     c.layers.outlines.setRenderer(QgsSingleSymbolRenderer(green.clone()))
+    _settle()
     assert c.undo_stack.count() == count and seen
     c.set_style(dike.id, RED)                     # stored, not drawn
     assert c.find(dike.id).style == RED
@@ -156,6 +171,7 @@ def test_a_replaced_renderer_is_kept_and_shown(tmp_path):
     assert not c.uses_feature_styles() and to_xml(c.display_symbol(dike.id)) == to_xml(green)
     seen.clear()
     c.use_feature_styles()
+    _settle()
     assert c.uses_feature_styles() and to_xml(c.display_symbol(dike.id)) == RED and seen
     assert _symbols(c) == [RED] and c.find(dike.id).style == RED
 
@@ -184,3 +200,34 @@ def test_styles_come_back_after_save_and_open(tmp_path):
     assert reopened.style == RED and to_xml(c.display_symbol(reopened.id)) == RED
     cats = c.layers.outlines.renderer().categories()
     assert [cat.value() for cat in cats] == [reopened.id] and to_xml(cats[0].symbol()) == RED
+
+
+def test_classify_takes_the_new_colours_and_keeps_the_names(tmp_path):
+    c = start_session(tmp_path)
+    dike = _dike(c)
+    levee = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 30, 34, 30), UTM)
+    count = c.undo_stack.count()
+    # Layer Properties > Symbology > Classify labels each category with its value: here the feature id
+    c.layers.outlines.setRenderer(QgsCategorizedSymbolRenderer("fid", [
+        QgsRendererCategory(dike.id, QgsFillSymbol.createSimple({"color": "255,0,0,255"}), dike.id),
+        QgsRendererCategory(levee.id, QgsFillSymbol.createSimple({"color": "0,0,255,255"}), levee.id)]))
+    _settle()
+    assert [f.name for f in c.features] == [dike.name, levee.name]
+    assert [f.style for f in c.features] == [RED, BLUE]
+    assert c.undo_stack.count() == count + 1 and c.undo_stack.undoText() == "Change feature styles"
+
+
+def test_ending_the_session_before_the_read_back_commits_nothing(tmp_path, monkeypatch):
+    c = start_session(tmp_path)
+    _dike(c)
+    logged = []
+    monkeypatch.setattr(controller_module.QgsMessageLog, "logMessage",
+                        lambda text, tag="", level=None, *a: logged.append((text, level)))
+    seen = _record_styles_changed(c)
+    model, nodes = _legend_nodes(c)
+    nodes[0].setSymbol(QgsFillSymbol.createSimple({"color": "255,0,0,255"}))
+    del model, nodes   # the legend goes with the layers below
+    c.close()
+    _settle()
+    assert c.features == () and c.undo_stack.count() == 0 and not seen
+    assert [text for text, level in logged if level == Qgis.MessageLevel.Critical] == []

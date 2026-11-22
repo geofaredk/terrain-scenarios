@@ -1,4 +1,5 @@
-"""The session's layer group — named after the scenario, "Scenario" before it has a file: modified DEM, change and sketch outlines."""
+"""The session's layer group, named after the scenario ("Scenario" before it has a file): modified
+DEM, change and sketch outlines."""
 from __future__ import annotations
 
 from qgis.core import (Qgis, QgsCategorizedSymbolRenderer, QgsColorRampShader, QgsDataProvider, QgsExpression,

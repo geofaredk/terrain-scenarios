@@ -122,7 +122,12 @@ class SketchLayers:
                 changed = True
         if changed:
             layer.triggerRepaint()
-            layer.emitStyleChanged()  # the in-place edits above tell the legend nothing on their own
+            layer.emitStyleChanged()
+            # the in-place edits above tell the Layers panel nothing on their own: its legend is rebuilt only
+            # on rendererChanged or this signal, so a new feature would not be listed there
+            legend = layer.legend()
+            if legend is not None:
+                legend.itemsChanged.emit()
 
     def read_styles(self) -> dict:
         """{feature id: (category label, style)} for every category of one non-empty value; {} unless managed."""

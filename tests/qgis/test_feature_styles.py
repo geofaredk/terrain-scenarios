@@ -37,6 +37,17 @@ def _legend_nodes(c):
     return model, [n for n in nodes if isinstance(n, QgsSymbolLegendNode)]
 
 
+def _legend_labels(model, c) -> list:
+    """The labels of the outline layer's symbol entries as an already open Layers panel (`model`) shows them
+    now — unlike `_legend_nodes`, which builds the legend afresh."""
+    nodes = model.layerLegendNodes(model.rootGroup().findLayer(c.layers.outlines.id()))
+    return [n.data(Qt.ItemDataRole.DisplayRole) for n in nodes if isinstance(n, QgsSymbolLegendNode)]
+
+
+def _open_layers_panel():
+    return QgsLayerTreeModel(QgsProject.instance().layerTreeRoot())
+
+
 def _settle() -> None:
     """Let the controller read back an edit made in QGIS: it does so from the event loop."""
     spin_event_loop(10)
@@ -46,6 +57,44 @@ def _record_styles_changed(c) -> list:
     seen = []
     c.stylesChanged.connect(lambda: seen.append(True))
     return seen
+
+
+def test_a_drawn_feature_is_in_the_open_layers_panel_at_once(tmp_path):
+    c = start_session(tmp_path)
+    dike = _dike(c)
+    model = _open_layers_panel()
+    assert _legend_labels(model, c) == [dike.name]
+    levee = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 30, 34, 30), UTM)
+    assert _legend_labels(model, c) == [dike.name, levee.name]
+
+
+def test_a_rename_shows_in_the_open_layers_panel_at_once(tmp_path):
+    c = start_session(tmp_path)
+    dike = _dike(c)
+    model = _open_layers_panel()
+    c.update_feature(dike.id, name="North dike")
+    assert _legend_labels(model, c) == ["North dike"]
+
+
+def test_a_deleted_or_turned_off_feature_leaves_the_open_layers_panel_at_once(tmp_path):
+    c = start_session(tmp_path)
+    dike = _dike(c)
+    levee = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 30, 34, 30), UTM)
+    model = _open_layers_panel()
+    c.set_enabled(levee.id, False)
+    assert _legend_labels(model, c) == [dike.name]
+    c.delete_feature(dike.id)
+    assert _legend_labels(model, c) == []
+
+
+def test_an_undo_puts_the_feature_back_in_the_open_layers_panel_at_once(tmp_path):
+    c = start_session(tmp_path)
+    dike = _dike(c)
+    c.delete_feature(dike.id)
+    model = _open_layers_panel()
+    assert _legend_labels(model, c) == []
+    c.undo_stack.undo()
+    assert _legend_labels(model, c) == [dike.name]
 
 
 def test_set_style_is_one_undoable_step_and_marks_unsaved(tmp_path):

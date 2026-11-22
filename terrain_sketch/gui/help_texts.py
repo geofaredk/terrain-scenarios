@@ -105,6 +105,8 @@ UNDO_PROFILE = "Change the profile of {}"
 UNDO_SETTINGS = "Change the settings of {}"
 UNDO_DUPLICATE = "Duplicate {}"
 UNDO_SECTION_LINE = "Move the section line of {}"
+UNDO_STYLE = "Change the style of {}"
+UNDO_STYLES = "Change feature styles"
 COPY_NAME = "{} (copy)"
 
 PROFILES_TIP = ("Show or hide the Profiles panel, where you see the selected feature's cross profile and long "

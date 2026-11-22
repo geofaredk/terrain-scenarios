@@ -6,19 +6,20 @@ import html
 import traceback
 
 from qgis.core import Qgis, QgsApplication, QgsMessageLog
-from qgis.gui import QgsCollapsibleGroupBox, QgsDoubleSpinBox, QgsPanelWidget, QgsScrollArea
+from qgis.gui import QgsCollapsibleGroupBox, QgsDoubleSpinBox, QgsPanelWidget, QgsScrollArea, QgsSymbolButton
 from qgis.PyQt.QtCore import QEvent, QSize, Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import (QComboBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QToolButton,
                                  QVBoxLayout, QWidget)
 
 from ..core.sections import supports_long_profile
 from ..core.tools import TOOL_INFO, Mode, PixelMode, reports_storage
+from ..qgis_io.symbols import default_symbol, from_xml, style_of
 from . import illustrations, settings
 from .controller import LOG_TAG
 from .feature_list import feature_subtitle
 from .help_texts import (AMOUNT_IS_CUSTOM, FIELD_TIPS, FLAG_TEXTS, NO_VOLUME_YET, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS,
-                         SCENARIO_TOTALS, TOOL_DESCRIPTIONS, TOOL_EXAMPLES, VOLUME_CUT_TIP, VOLUME_FILL_TIP,
-                         VOLUME_STORAGE_NOTE, VOLUME_STORAGE_TIP, amount_label, cubic_metres)
+                         SCENARIO_TOTALS, STYLE_LAYER_TIP, STYLE_TIP, TOOL_DESCRIPTIONS, TOOL_EXAMPLES,
+                         VOLUME_CUT_TIP, VOLUME_FILL_TIP, VOLUME_STORAGE_NOTE, VOLUME_STORAGE_TIP, amount_label, cubic_metres)
 from .muted import MutedLabel
 from .page_layout import apply_page_margins
 from .selection import EDIT_ICON, ZOOM_ICON
@@ -136,6 +137,13 @@ class PropertiesPage(QgsPanelWidget):
         self.form.addRow(self.tr("Side slope"), self.slope)
         self.form.addRow(self.tr("Max. slope reach"), self.reach)
         self.form.addRow(self.tr("Slopes"), self.slope_position)
+        # How the feature looks on the map. Its arrow menu copies, pastes and resets the symbol;
+        # with Show null, the reset is "no style of its own", the default look.
+        self.style_button = QgsSymbolButton(dialogTitle=self.tr("Feature style"))
+        self.style_button.setSymbolType(Qgis.SymbolType.Fill)
+        self.style_button.setShowNull(True)
+        self.style_button.changed.connect(self._style_edited)
+        self.form.addRow(self.tr("Style"), self.style_button)
 
         self.advanced = QgsCollapsibleGroupBox(self.tr("Advanced"))
         self.advanced.setObjectName("TerrainSketchAdvanced")
@@ -229,6 +237,8 @@ class PropertiesPage(QgsPanelWidget):
         controller.featuresChanged.connect(self._refresh_problems)
         controller.featuresChanged.connect(self._refresh_values)
         controller.featuresChanged.connect(self._refresh_volumes)
+        controller.featuresChanged.connect(self._refresh_style)   # an undo or redo of a style change
+        controller.stylesChanged.connect(self._refresh_style)     # an edit in QGIS's symbology, or a renderer swap
 
     def eventFilter(self, watched, event):  # noqa: N802 — Qt override
         """Highlight the part of the diagram that belongs to whichever field has focus. Also: Escape
@@ -340,6 +350,7 @@ class PropertiesPage(QgsPanelWidget):
                                     f"{TOOL_EXAMPLES[feature.tool]}")
             self._draw_pictures()
             self.diagram.setVisible(feature.mode is Mode.PATH and info.has_slopes)
+            self._load_style(feature)
         finally:
             self._loading = False
         self._refresh_problems()
@@ -397,6 +408,40 @@ class PropertiesPage(QgsPanelWidget):
             cut, fill = self.controller.totals()
             self.totals_value.setText(SCENARIO_TOTALS.format(fill=cubic_metres(fill), cut=cubic_metres(cut)))
             self.header_summary.setText(feature_subtitle(self.controller, self._fid))
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _load_style(self, feature) -> None:
+        """Show the feature's stored style on the Style button — its signals blocked, since setting a
+        symbol emits `changed` — and enable the button only while the map draws the stored styles.
+        Left alone when it already shows that style, so an edit in progress is not replaced."""
+        button = self.style_button
+        if button.symbol() is None or style_of(button.symbol()) != feature.style:
+            blocked = button.blockSignals(True)
+            try:
+                button.setSymbol(from_xml(feature.style) or default_symbol())
+            finally:
+                button.blockSignals(blocked)
+        own_styles = self.controller.uses_feature_styles()
+        button.setEnabled(own_styles)
+        button.setToolTip(STYLE_TIP if own_styles else STYLE_LAYER_TIP)
+
+    def _refresh_style(self) -> None:
+        """Keep the Style button in step with the feature's style and with who styles the layer. Runs in a slot."""
+        try:
+            feature = self.controller.find(self._fid) if self._fid is not None else None
+            if feature is not None:
+                self._load_style(feature)
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _style_edited(self) -> None:
+        """The Style button's symbol was changed by the user: stored as the feature's style (None — the
+        default look — after a reset). Runs in a slot."""
+        try:
+            if self._fid is None or self._loading or self.controller.find(self._fid) is None:
+                return
+            self.controller.set_style(self._fid, style_of(self.style_button.symbol()))
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 

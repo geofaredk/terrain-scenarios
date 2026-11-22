@@ -26,7 +26,7 @@ from .help_texts import (CHANGE_DEM_LINK, DEM_NOT_READABLE, EXPORT_ADD_FAILED, E
                          SCENARIO_NOT_APPLIED_ON_ITS_DEM, SCENARIO_OPENED, SCENARIO_OTHER_DEM, SCENARIO_REPLACE,
                          SCENARIO_SAVED, SECTION_LINE_HINT,
                          SHAPE_NOT_TRANSFORMED, SKETCHING_ON, START_HEADING, START_INTRO, UNSAVED_BEFORE_CLOSING,
-                         UNSAVED_CHANGES, PROFILES_TIP, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
+                         UNSAVED_CHANGES, USE_FEATURE_STYLES, PROFILES_TIP, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
 from . import illustrations
 from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
@@ -460,6 +460,14 @@ class MainDock(QgsDockWidget):
         self.canvas_undo_keys = UndoKeys(controller.undo_stack, applies=lambda _redo: self._sketch_tool_active(),
                                        parent=self)
         iface.mapCanvas().installEventFilter(self.canvas_undo_keys)
+        # "Use feature styles again": in the Layers panel's menu for the Sketch outlines layer (registered
+        # for no layer here, then for each session's outline layer in _session_changed) and in the list's
+        # menu — offered while another renderer is in charge of that layer.
+        self.use_styles_action = QAction(USE_FEATURE_STYLES, self)
+        self.use_styles_action.triggered.connect(self._use_feature_styles)
+        iface.addCustomActionForLayerType(self.use_styles_action, "", Qgis.LayerType.Vector, False)
+        self._styles_action_layer_id = None
+        controller.stylesChanged.connect(self._refresh_styles_action)
         self._session_changed()
 
     @staticmethod
@@ -513,6 +521,7 @@ class MainDock(QgsDockWidget):
         self.iface.mapCanvas().scene().removeItem(self.section_band)
         # The filters on the panels are this dock's children and go with it; the canvas outlives the plugin
         self.iface.mapCanvas().removeEventFilter(self.canvas_undo_keys)
+        self.iface.removeCustomActionForLayerType(self.use_styles_action)
 
     def _release_tool(self, tool) -> None:
         if tool is not None:
@@ -567,6 +576,34 @@ class MainDock(QgsDockWidget):
             self._session_has_dem = has_dem
             self._update_radius_units()
             self._update_overlay_transform()
+            self._register_styles_action()
+            self._refresh_styles_action()
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _register_styles_action(self) -> None:
+        """Offer "Use feature styles again" in the Layers panel for this session's outline layer — a new
+        one with every Start. sessionChanged also fires while the same session runs on; that layer is
+        registered once."""
+        layers = self.controller.layers
+        if layers is None or layers.outlines_id == self._styles_action_layer_id:
+            return
+        if self.controller.project.mapLayer(layers.outlines_id) is None:
+            return
+        self.iface.addCustomActionForLayer(self.use_styles_action, layers.outlines)
+        self._styles_action_layer_id = layers.outlines_id
+
+    def _refresh_styles_action(self) -> None:
+        """Guarded: reached from `stylesChanged`, a Qt signal, and from `_session_changed`."""
+        try:
+            self.use_styles_action.setEnabled(not self.controller.uses_feature_styles())
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _use_feature_styles(self) -> None:
+        """Guarded: reached from `use_styles_action.triggered`, a Qt signal."""
+        try:
+            self.controller.use_feature_styles()
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
@@ -1394,6 +1431,8 @@ class MainDock(QgsDockWidget):
                        lambda: self._duplicate(fid))
         menu.addAction(QgsApplication.getThemeIcon(ZOOM_ICON), self.tr("Zoom to feature"),
                        lambda: self._zoom_to(fid))
+        if not self.controller.uses_feature_styles():
+            menu.addAction(self.use_styles_action)
         menu.addSeparator()
         menu.addAction(QgsApplication.getThemeIcon("/mActionDeleteSelected.svg"), self.tr("Delete"),
                        lambda: self.controller.delete_feature(fid))

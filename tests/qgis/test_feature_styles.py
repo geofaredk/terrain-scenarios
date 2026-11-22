@@ -6,8 +6,9 @@ from qgis.core import (Qgis, QgsCategorizedSymbolRenderer, QgsFillSymbol, QgsLay
 from qgis.PyQt.QtCore import Qt
 
 import terrain_sketch.gui.controller as controller_module
-from qgis_helpers import UTM, line_through, spin_event_loop, start_session
+from qgis_helpers import UTM, dem_layer, line_through, panel, spin_event_loop, start_session
 from terrain_sketch.core.tools import Mode, Tool
+from terrain_sketch.gui.help_texts import STYLE_LAYER_TIP, STYLE_TIP, USE_FEATURE_STYLES
 from terrain_sketch.qgis_io.symbols import style_of, to_xml
 
 RED = to_xml(QgsFillSymbol.createSimple({"color": "255,0,0,255"}))
@@ -231,3 +232,115 @@ def test_ending_the_session_before_the_read_back_commits_nothing(tmp_path, monke
     _settle()
     assert c.features == () and c.undo_stack.count() == 0 and not seen
     assert [text for text, level in logged if level == Qgis.MessageLevel.Critical] == []
+
+
+def _feature_page(tmp_path, style=None):
+    """The panel with a dike drawn (given `style` first) and its feature page open."""
+    iface, c, dock = panel(tmp_path)
+    dike = _dike(c)
+    if style is not None:
+        c.set_style(dike.id, style)
+    dock.feature_view.rowOpened.emit(dike.id)
+    assert dock.stack.currentPanel() is dock.properties_page
+    return iface, c, dock, dike
+
+
+def _menu_texts(dock, fid) -> list:
+    return [a.text() for a in dock.feature_menu(dock.model.index(dock.model.row_of(fid))).actions()]
+
+
+def test_style_button_shows_and_sets_the_feature_style(tmp_path):
+    _iface, c, dock, dike = _feature_page(tmp_path, style=BLUE)
+    page = dock.properties
+    assert style_of(page.style_button.symbol()) == BLUE
+    assert page.style_button.isEnabled() and page.style_button.toolTip() == STYLE_TIP
+    page.style_button.setSymbol(QgsFillSymbol.createSimple({"color": "255,0,0,255"}))
+    assert c.find(dike.id).style == RED and _symbols(c) == [RED]
+    page.style_button.setToNull()
+    assert c.find(dike.id).style is None
+    # shows the default look again after reload, not an empty button
+    assert page.style_button.symbol() is not None and style_of(page.style_button.symbol()) is None
+    c.undo_stack.clear()   # the edits above merged into one step with the BLUE before them
+    page.style_button.setSymbol(QgsFillSymbol.createSimple({"color": "255,0,0,255"}))
+    c.undo_stack.undo()   # an undo moves the button back too
+    assert c.find(dike.id).style is None and style_of(page.style_button.symbol()) is None
+    c.undo_stack.redo()
+    assert style_of(page.style_button.symbol()) == RED
+    c.delete_feature(dike.id)                       # the button outlives the feature it showed
+    count = c.undo_stack.count()
+    page.style_button.setSymbol(QgsFillSymbol.createSimple({"color": "0,0,255,255"}))
+    assert c.features == () and c.undo_stack.count() == count
+
+
+def test_opening_the_page_records_nothing(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dike = _dike(c)
+    c.set_style(dike.id, RED)
+    levee = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 30, 34, 30), UTM)
+    count, before = c.undo_stack.count(), c.features
+    calls = []
+    set_style = c.set_style
+    c.set_style = lambda *args: (calls.append(args), set_style(*args))
+    dock.feature_view.rowOpened.emit(dike.id)
+    dock.close_page()
+    dock.feature_view.rowOpened.emit(levee.id)   # a different style, and the default look
+    c.stylesChanged.emit()                       # reloads nothing: the button shows levee's look already
+    assert c.undo_stack.count() == count and c.features == before and calls == []
+    _model, nodes = _legend_nodes(c)
+    nodes[1].setSymbol(QgsFillSymbol.createSimple({"color": "255,0,0,255"}))   # the levee, from the Layers panel
+    _settle()                                    # read back, and loaded onto the button by stylesChanged
+    assert c.find(levee.id).style == RED and style_of(dock.properties.style_button.symbol()) == RED
+    assert c.undo_stack.count() == count + 1 and calls == []   # loading the button must not commit
+
+
+def test_style_button_follows_a_layers_panel_edit(tmp_path):
+    _iface, c, dock, dike = _feature_page(tmp_path)
+    _model, nodes = _legend_nodes(c)
+    nodes[0].setSymbol(QgsFillSymbol.createSimple({"color": "255,0,0,255"}))
+    _settle()
+    assert c.find(dike.id).style == RED and style_of(dock.properties.style_button.symbol()) == RED
+
+
+def test_style_button_is_disabled_under_a_layer_style(tmp_path):
+    _iface, c, dock, _dike_feature = _feature_page(tmp_path)
+    page = dock.properties
+    c.layers.outlines.setRenderer(QgsSingleSymbolRenderer(QgsFillSymbol.createSimple({"color": "0,255,0,255"})))
+    _settle()
+    assert not page.style_button.isEnabled() and page.style_button.toolTip() == STYLE_LAYER_TIP
+    c.use_feature_styles()
+    _settle()
+    assert page.style_button.isEnabled() and page.style_button.toolTip() == STYLE_TIP
+
+
+def test_use_feature_styles_again_is_offered_only_when_needed(tmp_path):
+    iface, c, dock = panel(tmp_path)
+    dike = _dike(c)
+    c.set_style(dike.id, RED)
+    iface.addCustomActionForLayerType.assert_called_with(dock.use_styles_action, "", Qgis.LayerType.Vector, False)
+    iface.addCustomActionForLayer.assert_called_with(dock.use_styles_action, c.layers.outlines)
+    assert dock.use_styles_action.text() == USE_FEATURE_STYLES
+    assert not dock.use_styles_action.isEnabled()
+    assert USE_FEATURE_STYLES not in _menu_texts(dock, dike.id)
+    c.layers.outlines.setRenderer(QgsSingleSymbolRenderer(QgsFillSymbol.createSimple({"color": "0,255,0,255"})))
+    _settle()
+    assert dock.use_styles_action.isEnabled()
+    texts = _menu_texts(dock, dike.id)
+    assert texts.index(USE_FEATURE_STYLES) < texts.index("")   # above the separator
+    menu = dock.feature_menu(dock.model.index(dock.model.row_of(dike.id)))
+    menu_action = next(a for a in menu.actions() if a.text() == USE_FEATURE_STYLES)
+    menu_action.trigger()
+    _settle()
+    assert c.uses_feature_styles() and _symbols(c) == [RED]
+    assert not dock.use_styles_action.isEnabled()
+    first = c.layers.outlines
+    dock.dem_combo.setLayer(dem_layer(tmp_path, name="other"))   # Start on another DEM: a new outline layer
+    dock.start_button.click()
+    assert c.layers.outlines is not first
+    iface.addCustomActionForLayer.assert_called_with(dock.use_styles_action, c.layers.outlines)
+
+
+def test_shutdown_removes_the_layer_action(tmp_path):
+    iface, _c, dock = panel(tmp_path)
+    iface.removeCustomActionForLayerType.assert_not_called()
+    dock.shutdown()
+    iface.removeCustomActionForLayerType.assert_called_with(dock.use_styles_action)

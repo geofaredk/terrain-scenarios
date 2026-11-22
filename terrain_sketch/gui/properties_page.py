@@ -324,6 +324,11 @@ class PropertiesPage(QgsPanelWidget):
         names = "".join(f'<td align="center">{html.escape(PIXEL_MODE_LABELS[mode])}</td>' for mode in PixelMode)
         return f"<p>{html.escape(FIELD_TIPS['pixel_mode'])}</p><table><tr>{pictures}</tr><tr>{names}</tr></table>"
 
+    @property
+    def fid(self) -> str | None:
+        """The feature the page shows; None once it is gone."""
+        return self._fid
+
     def show_feature(self, fid: str) -> None:
         retargeting = fid == self._fid   # re-shown for the feature already on screen, not a fresh open
         self._fid = fid

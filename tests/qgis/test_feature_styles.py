@@ -3,13 +3,17 @@ both ways: a style set through the controller reaches the map, and an edit made 
 symbology (the Layers panel, Layer Properties) comes back to the feature as one undo step."""
 from qgis.core import (Qgis, QgsCategorizedSymbolRenderer, QgsFillSymbol, QgsLayerTreeModel, QgsProject,
                        QgsRendererCategory, QgsSingleSymbolRenderer, QgsSymbolLegendNode)
+from qgis.gui import QgsSymbolSelectorWidget
+from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtWidgets import QLabel
 
 import terrain_sketch.gui.controller as controller_module
 from qgis_helpers import UTM, dem_layer, line_through, panel, spin_event_loop, start_session
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.help_texts import STYLE_LAYER_TIP, STYLE_TIP, USE_FEATURE_STYLES
-from terrain_sketch.qgis_io.symbols import style_of, to_xml
+from terrain_sketch.qgis_io.symbols import from_xml, style_of, to_xml
 
 RED = to_xml(QgsFillSymbol.createSimple({"color": "255,0,0,255"}))
 BLUE = to_xml(QgsFillSymbol.createSimple({"color": "0,0,255,255"}))
@@ -344,3 +348,95 @@ def test_shutdown_removes_the_layer_action(tmp_path):
     iface.removeCustomActionForLayerType.assert_not_called()
     dock.shutdown()
     iface.removeCustomActionForLayerType.assert_called_with(dock.use_styles_action)
+
+
+def _record_criticals(monkeypatch) -> list:
+    """Every Critical log entry from here on: what a guarded slot that failed leaves behind."""
+    logged = []
+    monkeypatch.setattr(controller_module.QgsMessageLog, "logMessage",
+                        lambda text, tag="", level=None, *a: logged.append(text)
+                        if level == Qgis.MessageLevel.Critical else None)
+    return logged
+
+
+def _open_selector(dock):
+    """Click the page's Style button: QGIS's symbol selector, which must open on the panel's own stack."""
+    dock.properties.style_button.click()
+    top = dock.stack.currentPanel()
+    assert top.metaObject().className() == "QgsSymbolSelectorWidget" and top.dockMode()
+    return sip.cast(top, QgsSymbolSelectorWidget)
+
+
+def _live_edit(selector, colour) -> None:
+    """What the selector does while the user edits: change its working symbol and say so."""
+    selector.symbol().setColor(QColor(*colour))
+    selector.widgetChanged.emit()
+
+
+def test_style_button_opens_the_symbol_selector_on_the_panel(tmp_path, monkeypatch):
+    logged = _record_criticals(monkeypatch)
+    _iface, c, dock, dike = _feature_page(tmp_path)
+    c.save_scenario(str(tmp_path / "work.gpkg"))
+    count = c.undo_stack.count()
+    selector = _open_selector(dock)
+    _live_edit(selector, (255, 0, 0))
+    _live_edit(selector, (0, 0, 255))
+    style = c.find(dike.id).style
+    assert style is not None and style == style_of(dock.properties.style_button.symbol())
+    assert to_xml(from_xml(style)) == style and from_xml(style).color() == QColor(0, 0, 255)
+    assert c.undo_stack.count() == count + 1 and c.is_dirty    # one undo step, and unsaved
+    selector.acceptPanel()                                    # the stack's Back button
+    _settle()
+    assert dock.stack.currentPanel() is dock.properties_page
+    assert c.find(dike.id).style == style and c.undo_stack.count() == count + 1
+    assert dock.stack.findChild(QLabel, "mTitleText").text().strip() == dike.name
+    assert logged == []
+
+
+def test_closing_the_page_with_the_selector_open_returns_to_the_list(tmp_path, monkeypatch):
+    logged = _record_criticals(monkeypatch)
+    _iface, c, dock, dike = _feature_page(tmp_path)
+    _open_selector(dock)
+    dock.close_page()
+    _settle()
+    assert dock.stack.currentPanel() is dock.main_panel
+    dock.feature_view.rowOpened.emit(dike.id)   # the page and its selector open again on a sound stack
+    _open_selector(dock).acceptPanel()
+    _settle()
+    assert dock.stack.currentPanel() is dock.properties_page
+    assert logged == []
+
+
+def test_the_shown_feature_going_away_with_the_selector_open_returns_to_the_list(tmp_path, monkeypatch):
+    logged = _record_criticals(monkeypatch)
+    _iface, c, dock, dike = _feature_page(tmp_path)
+    selector = _open_selector(dock)
+    _live_edit(selector, (255, 0, 0))
+    c.undo_stack.undo()                         # the style edit
+    c.undo_stack.undo()                         # the drawing: the feature is gone
+    _settle()
+    assert c.features == () and dock.stack.currentPanel() is dock.main_panel
+    assert logged == []
+
+
+def test_ending_the_session_with_the_selector_open_returns_to_the_list(tmp_path, monkeypatch):
+    logged = _record_criticals(monkeypatch)
+    _iface, c, dock, _dike_feature = _feature_page(tmp_path)
+    _open_selector(dock)
+    c.close()
+    _settle()
+    assert dock.stack.currentPanel() is dock.main_panel and dock.views.currentIndex() == 0
+    assert logged == []
+
+
+def test_selecting_another_feature_closes_the_selector_first(tmp_path, monkeypatch):
+    logged = _record_criticals(monkeypatch)
+    _iface, c, dock, dike = _feature_page(tmp_path)
+    levee = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 30, 34, 30), UTM)
+    dock.feature_view.rowOpened.emit(dike.id)
+    _open_selector(dock)
+    dock.feature_view.select_id(levee.id)       # the page follows the selection
+    _settle()
+    assert dock.stack.currentPanel() is dock.properties_page and dock.properties.fid == levee.id
+    assert c.find(dike.id).style is None and c.find(levee.id).style is None
+    assert logged == []

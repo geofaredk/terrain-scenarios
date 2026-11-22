@@ -1,7 +1,6 @@
 import pytest
-from qgis.core import QgsFillSymbol, QgsGeometry, QgsPointXY
-from qgis.PyQt.QtCore import QEvent, QModelIndex, QPointF, Qt
-from qgis.PyQt.QtCore import QRect
+from qgis.core import QgsFillSymbol, QgsGeometry, QgsPointXY, QgsSingleSymbolRenderer
+from qgis.PyQt.QtCore import QEvent, QModelIndex, QPointF, QRect, Qt
 from qgis.PyQt.QtGui import QColor, QImage, QMouseEvent, QPainter
 from qgis.PyQt.QtTest import QTest
 from qgis.PyQt.QtWidgets import QAbstractItemView, QApplication, QStyleOptionViewItem
@@ -9,7 +8,7 @@ from qgis.PyQt.QtWidgets import QAbstractItemView, QApplication, QStyleOptionVie
 from qgis_helpers import UTM, line_through, panel, spin_event_loop, start_session
 from terrain_sketch.core.tools import Mode, Tool
 from terrain_sketch.gui.feature_list import (FLAGGED_ROLE, ID_ROLE, PICTURE_ROLE, PICTURE_SIZE, SUBTITLE_ROLE,
-                                             SYMBOL_ROLE, FeatureListModel, FeatureListView, FeatureRowDelegate)
+                                             SWATCH_ROLE, SYMBOL_ROLE, FeatureListModel, FeatureListView, FeatureRowDelegate)
 from terrain_sketch.qgis_io.symbols import to_xml
 
 RED = to_xml(QgsFillSymbol.createSimple({"color": "255,0,0,255", "outline_style": "no"}))
@@ -294,17 +293,36 @@ def test_styled_row_paints_the_swatch(tmp_path):
 
 
 def test_a_layers_panel_edit_repaints_the_rows(tmp_path):
-    from qgis.core import QgsLayerTreeModel, QgsProject, QgsSymbolLegendNode
+    """Swapping in the user's own renderer changes no feature, so only stylesChanged reaches the list;
+    the cached symbol and swatch must be dropped by it."""
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     c.set_style(dike.id, RED)
     model = FeatureListModel(c)
+    assert to_xml(model.index(0).data(SYMBOL_ROLE)) == RED and not model.index(0).data(SWATCH_ROLE).isNull()
+    count = c.undo_stack.count()
     changed = []
     model.dataChanged.connect(lambda *_: changed.append(True))
-    root = QgsProject.instance().layerTreeRoot()
-    legend = QgsLayerTreeModel(root)
-    nodes = [n for n in legend.layerLegendNodes(root.findLayer(c.layers.outlines.id()))
-             if isinstance(n, QgsSymbolLegendNode)]
-    nodes[0].setSymbol(QgsFillSymbol.createSimple({"color": "0,0,255,255", "outline_style": "no"}))
+    green = QgsFillSymbol.createSimple({"color": "0,255,0,255", "outline_style": "no"})
+    c.layers.outlines.setRenderer(QgsSingleSymbolRenderer(green.clone()))
     spin_event_loop(10)
-    assert changed and c.find(dike.id).style != RED
+    assert changed and c.undo_stack.count() == count
+    assert to_xml(model.index(0).data(SYMBOL_ROLE)) == to_xml(green)
+    assert model.index(0).data(SWATCH_ROLE).toImage().pixelColor(20, 10) == QColor(0, 255, 0)
+
+
+def test_a_row_asks_for_its_symbol_once_until_something_changes(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.set_style(dike.id, RED)
+    model = FeatureListModel(c)
+    asked = []
+    real = c.display_symbol
+    c.display_symbol = lambda fid: (asked.append(fid), real(fid))[1]
+    for _ in range(2):
+        _picture_centre_pixel(model)
+        model.index(0).data(SYMBOL_ROLE)
+    assert asked == [dike.id]
+    c.stylesChanged.emit()
+    model.index(0).data(SWATCH_ROLE)
+    assert asked == [dike.id, dike.id]

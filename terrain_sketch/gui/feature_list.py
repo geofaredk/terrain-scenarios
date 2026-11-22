@@ -22,6 +22,7 @@ SUBTITLE_ROLE = Qt.ItemDataRole.UserRole + 1
 PICTURE_ROLE = Qt.ItemDataRole.UserRole + 2
 FLAGGED_ROLE = Qt.ItemDataRole.UserRole + 3
 SYMBOL_ROLE = Qt.ItemDataRole.UserRole + 4
+SWATCH_ROLE = Qt.ItemDataRole.UserRole + 5
 MIME_TYPE = "application/x-terrain-sketch-feature-ids"
 
 
@@ -47,11 +48,15 @@ class FeatureListModel(QAbstractListModel):
         super().__init__(parent)
         self.controller = controller
         self._ids: list[str] = []
+        self._symbols: dict = {}      # fid -> the symbol display_symbol gave (or None), kept until the next _sync
+        self._swatches: dict = {}     # fid -> the pixmap made from it; painting must not rebuild either
         controller.featuresChanged.connect(self._sync)
         controller.stylesChanged.connect(self._sync)      # an edit made in QGIS's Layers panel
         self._sync()
 
     def _sync(self) -> None:
+        self._symbols.clear()
+        self._swatches.clear()
         ids = [f.id for f in self.controller.features]
         if ids == self._ids:
             if ids:
@@ -90,13 +95,26 @@ class FeatureListModel(QAbstractListModel):
         if role == PICTURE_ROLE:
             return f"tool_{feature.tool.value}"
         if role == SYMBOL_ROLE:
-            return self.controller.display_symbol(feature.id)
+            return self._symbol(feature.id)
+        if role == SWATCH_ROLE:
+            return self._swatch(feature.id)
         flags = self.controller.stats(feature.id).flags
         if role == FLAGGED_ROLE:
             return bool(flags)
         if role == Qt.ItemDataRole.ToolTipRole:
             return "\n".join([TOOL_LABELS[feature.tool]] + [FLAG_TEXTS[flag] for flag in flags])
         return None
+
+    def _symbol(self, fid: str):
+        if fid not in self._symbols:
+            self._symbols[fid] = self.controller.display_symbol(fid)
+        return self._symbols[fid]
+
+    def _swatch(self, fid: str):
+        if fid not in self._swatches:
+            symbol = self._symbol(fid)
+            self._swatches[fid] = None if symbol is None else preview_pixmap(symbol, PICTURE_SIZE)
+        return self._swatches[fid]
 
     def flags(self, index):
         if not index.isValid():
@@ -235,10 +253,10 @@ class FeatureRowDelegate(QStyledItemDelegate):
             picture_rect = QRect(checkbox_rect.right() + SPACING,
                                  option.rect.top() + (option.rect.height() - PICTURE_SIZE.height()) // 2,
                                  PICTURE_SIZE.width(), PICTURE_SIZE.height())
-            symbol = index.data(SYMBOL_ROLE)
+            swatch = index.data(SWATCH_ROLE)
             picture_name = index.data(PICTURE_ROLE)
-            if symbol is not None:
-                painter.drawPixmap(picture_rect, preview_pixmap(symbol, PICTURE_SIZE))
+            if swatch is not None:
+                painter.drawPixmap(picture_rect, swatch)
             elif picture_name:
                 picture_palette = self.picture_palette(option, text_colour, muted)
                 painter.drawPixmap(picture_rect, illustrations.pixmap(picture_name, PICTURE_SIZE, picture_palette))

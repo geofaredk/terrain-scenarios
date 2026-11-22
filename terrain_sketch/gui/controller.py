@@ -8,11 +8,12 @@ import shutil
 import tempfile
 import traceback
 import uuid
+from contextlib import contextmanager
 from dataclasses import replace
 from typing import NamedTuple
 
 from qgis.core import (Qgis, QgsCoordinateReferenceSystem, QgsCsException, QgsGeometry, QgsMessageLog, QgsProject,
-                       QgsRasterDemTerrainProvider)
+                       QgsRasterDemTerrainProvider, QgsSymbol)
 from qgis.PyQt.QtCore import QObject, QTimer, pyqtSignal
 from qgis.PyQt.QtGui import QUndoStack
 
@@ -26,12 +27,13 @@ from ..qgis_io.convert import from_wkb, to_dem_wkb
 from ..qgis_io.layers import SketchLayers
 from ..qgis_io.raster_io import CHANGE_NAME, WORKING_NAME, DemError, WorkingFiles, export_dem, read_dem
 from ..qgis_io.scenario import ScenarioError
+from ..qgis_io.symbols import from_xml, style_of
 from .help_texts import (COPY_NAME, DRAWING_NOT_TRANSFORMED, EXPORT_OVER_SOURCE, EMPTY_LAYER, FILES_ARE_THE_DEM,
                          FILES_KEPT_IN_OLD_FOLDER, FILES_NOT_MOVED, FILES_NOT_RELEASED, FILES_NOT_RESTORED,
                          NO_FEATURES_SELECTED, NO_SESSION, RESULT_LAYER_REMOVED, SCENARIO_NOT_APPLIED,
                          SESSION_ENDED_DEM_REMOVED, TOOL_LABELS, UNDO_ADD, UNDO_DELETE, UNDO_DUPLICATE,
                          UNDO_PROFILE, UNDO_RENAME, UNDO_REORDER, UNDO_SECTION_LINE, UNDO_SETTINGS, UNDO_SHAPE,
-                         UNDO_TURN_OFF, UNDO_TURN_ON, VIEW_3D_NO_LAYER)
+                         UNDO_STYLE, UNDO_STYLES, UNDO_TURN_OFF, UNDO_TURN_ON, VIEW_3D_NO_LAYER)
 from .undo import FeatureListChange
 
 LOG_TAG = "Terrain Sketch"
@@ -76,6 +78,7 @@ class SketchController(QObject):
     previewCleared = pyqtSignal()
     message = pyqtSignal(object, str)  # (Qgis.MessageLevel, text for the message bar)
     featuresRestored = pyqtSignal()    # undo or redo replaced the feature list
+    stylesChanged = pyqtSignal()       # a feature's displayed symbol may have changed
 
     def __init__(self, project: QgsProject, parent=None):
         super().__init__(parent)
@@ -90,6 +93,7 @@ class SketchController(QObject):
         self.dem_crs = QgsCoordinateReferenceSystem()
         self._features: list[TerrainFeature] = []
         self._closing = False
+        self._writing_outlines = False  # the controller's own outline-layer writes are not the user's edits
         self._pending = None
         self.undo_stack = QUndoStack(self)
         self._terrain_before = None   # the project's terrain before show_in_3d replaced it
@@ -102,6 +106,13 @@ class SketchController(QObject):
         self._throttle = QTimer(self)
         self._throttle.setInterval(PREVIEW_INTERVAL)
         self._throttle.timeout.connect(self._throttle_elapsed)
+        # An edit in the Layers panel is read back once control is back in the event loop: committing it
+        # inside the legend node's own method would make the layer tree rebuild, and delete, that node
+        # while its method still runs. Restarted on each signal, so a burst of them is read back once.
+        self._style_read = QTimer(self)
+        self._style_read.setSingleShot(True)
+        self._style_read.setInterval(0)
+        self._style_read.timeout.connect(self._read_outline_styles)
         project.layersRemoved.connect(self._on_layers_removed)
         project.cleared.connect(self._drop_session)
         project.aboutToBeCleared.connect(self._drop_session)
@@ -151,6 +162,11 @@ class SketchController(QObject):
             raise DemError(f"Terrain Sketch could not create its layers: {error}") from error
         self.dem_layer_id = layer.id()
         self.dem_crs = QgsCoordinateReferenceSystem(layer.crs())
+        # a Layers-panel symbol edit emits only repaintRequested; a checkbox or label edit, styleChanged;
+        # Layer Properties ▸ Apply, rendererChanged
+        outlines = self.layers.outlines
+        for signal in (outlines.repaintRequested, outlines.styleChanged, outlines.rendererChanged):
+            signal.connect(self._on_outline_style)
         for warning in info.warnings:
             self.message.emit(Qgis.MessageLevel.Warning, warning)
         self.sessionChanged.emit()
@@ -257,6 +273,49 @@ class SketchController(QObject):
 
     def set_enabled(self, fid: str, enabled: bool) -> None:
         self.update_feature(fid, enabled=bool(enabled))
+
+    def set_style(self, fid: str, style: str | None, session=None) -> None:
+        """Give the feature its own symbol (symbol XML), or with None the default look. The terrain does
+        not change; the steps of one editing session (`session`, any token the caller picks — one opening
+        of the symbol selector, say) merge into one undo step, while separate sessions stay separate steps."""
+        def describe(feature, changes):
+            text, key = _describe(feature, changes)
+            return text, key + (session,)
+        self._update(fid, {"style": style}, describe)
+
+    def uses_feature_styles(self) -> bool:
+        """Whether the map draws each feature with its own stored style: False once the user put another
+        renderer on the outline layer. True with no session or no outline layer, where nothing else draws."""
+        if self.layers is None or self.project.mapLayer(self.layers.outlines_id) is None:
+            return True
+        return self.layers.is_managed()
+
+    def use_feature_styles(self) -> None:
+        """Put the per-feature renderer back on the outline layer, built from the stored styles."""
+        if self.layers is not None:
+            with self._outline_writes():
+                self.layers.use_feature_styles(self._style_entries())
+        self.stylesChanged.emit()
+
+    def _feature_styles_in_charge(self) -> None:
+        """After New or Open: the per-feature renderer back on the outline layer if the user had put their own
+        there. A layer failure is a log entry, never an exception: the features are already replaced."""
+        try:
+            if not self.uses_feature_styles():
+                self.use_feature_styles()
+        except Exception:  # noqa: BLE001 — never let a layer error take QGIS down
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def display_symbol(self, fid: str) -> QgsSymbol | None:
+        """The symbol the feature is shown with: what the user's own renderer draws for it while that is in
+        charge and the feature is on the map, otherwise its stored style. None for no style of its own (the
+        default look), or a feature that is gone."""
+        feature = self.find(fid)
+        if feature is None:
+            return None
+        if feature.enabled and not self.uses_feature_styles():
+            return self.layers.drawn_symbol(fid)
+        return from_xml(feature.style)
 
     def delete_feature(self, fid: str) -> None:
         feature = self.find(fid)
@@ -430,6 +489,7 @@ class SketchController(QObject):
             return
         if self._set([]):
             self._forget_scenario()
+            self._feature_styles_in_charge()   # a fresh start, as on Start
             self.sessionChanged.emit()
 
     def save_scenario(self, path: str) -> None:
@@ -478,6 +538,7 @@ class SketchController(QObject):
         if not self._set(features):
             raise ScenarioError(SCENARIO_NOT_APPLIED)
         self.undo_stack.clear()   # the history belonged to the features that were just replaced
+        self._feature_styles_in_charge()   # the user's own renderer is not part of the scenario
         self._mark_scenario(path, meta.created)
         if meta.dem_source and _same_file(meta.dem_source, self.info.path) \
                 and not scenario.dem_meta(self.info, self.stack.original).differences(meta):
@@ -638,7 +699,9 @@ class SketchController(QObject):
                 self._files_edited = True
                 self.files.write(window, self.stack.working)
                 self.layers.refresh()
-            self.layers.set_outlines(self._outline_items())
+            with self._outline_writes():
+                self.layers.set_outlines(self._outline_items())
+                self.layers.apply_styles(self._style_entries())
         except Exception:  # noqa: BLE001 — never let a file/layer error take QGIS down
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
             self.message.emit(Qgis.MessageLevel.Critical, "Terrain Sketch could not update the terrain; "
@@ -678,8 +741,79 @@ class SketchController(QObject):
             if f.mode is Mode.PATH:
                 width = max(f.width, self.stack.original.cell_size)
                 geometry = geometry.buffer(width / 2.0, 8, Qgis.EndCapStyle.Flat, Qgis.JoinStyle.Miter, 2.0)
-            items.append((f.name, TOOL_LABELS[f.tool], geometry))
+            items.append((f.id, f.name, TOOL_LABELS[f.tool], geometry))
         return items
+
+    def _style_entries(self) -> list:
+        """(feature id, name, style) for each feature on the outline layer, in list order."""
+        return [(f.id, f.name, f.style) for f in self._features if f.enabled]
+
+    @contextmanager
+    def _outline_writes(self):
+        """Around every write the controller makes to the outline layer: each one repaints the layer or
+        emits styleChanged at once, and `_on_outline_style` must not take that for the user's edit — inside
+        an undo it would read the old symbols back and commit them again. Nestable: an inner one leaves the
+        outer one's writes guarded."""
+        previous, self._writing_outlines = self._writing_outlines, True
+        try:
+            yield
+        finally:
+            self._writing_outlines = previous
+
+    def _on_outline_style(self, *_args) -> None:
+        """The outline layer was restyled or repainted: an edit made in QGIS's own symbology — the Layers
+        panel, Layer Properties — is read back from the event loop (see `_style_read`). Reached from layer
+        signals, so it never raises."""
+        if self._writing_outlines or self.stack is None or self.layers is None:
+            return
+        try:
+            self._style_read.start()
+        except Exception:  # noqa: BLE001 — a layer signal must never take QGIS down
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _read_outline_styles(self) -> None:
+        """The edit `_on_outline_style` saw comes back to the features as one undo step. The session or the
+        outline layer may have gone since; a timer slot, so it never raises."""
+        if self.stack is None or self.layers is None:
+            return
+        try:
+            if self.layers.is_managed():   # False once the outline layer is gone
+                self._take_outline_styles()
+            self.stylesChanged.emit()
+        except Exception:  # noqa: BLE001 — a timer slot must never take QGIS down
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _take_outline_styles(self) -> None:
+        """Commit, as one change, each category's symbol and label that differ from its feature's style and
+        name. Categories of no enabled feature are ignored, and so are blank labels and a label that is just
+        the feature id — what Classify labels each category with, not a name the user typed. A feature with
+        no category keeps its style, and gets its category back on the next update."""
+        styles = self.layers.read_styles()
+        features, changed = [], []
+        for feature in self._features:
+            if feature.enabled and feature.id in styles:
+                label, style = styles[feature.id]
+                changes = {}
+                # stripped both sides: a name with a trailing space ("Dike " from From layer) is no rename
+                if label.strip() not in ("", feature.id, feature.name.strip()):
+                    changes["name"] = label.strip()
+                if style != style_of(from_xml(feature.style)):  # compared as the layer would save it
+                    changes["style"] = style
+                if changes:
+                    changed.append((feature, set(changes)))
+                    feature = replace(feature, **changes)
+            features.append(feature)
+        if not changed:
+            return
+        first, fields = changed[0]
+        if len(changed) == 1 and fields == {"style"}:
+            text = UNDO_STYLE.format(first.name)
+        elif len(changed) == 1 and fields == {"name"}:
+            text = UNDO_RENAME.format(first.name)
+        else:
+            text = UNDO_STYLES
+        self.cancel_preview()  # as for any committed change: the overlay must not outlive it
+        self._commit(features, text)
 
     def _unique_name(self, tool: Tool) -> str:
         names = {f.name for f in self._features}
@@ -700,6 +834,7 @@ class SketchController(QObject):
     def _drop_session(self) -> None:
         self._offer_save_before_discard()
         self.cancel_preview()  # a queued frame must not fire against a session that is gone
+        self._style_read.stop()  # nor a read-back of the outline layer
         had_session = self.stack is not None
         if had_session and self._files_owner is not None and self._files_edited:
             self._restore_saved_rasters(self._files_owner, self.files.folder)   # the edits were not saved
@@ -762,10 +897,13 @@ PROFILE_FIELDS = frozenset({"cross_left", "cross_right", "long_profile"})
 
 
 def _describe(feature, changes) -> tuple[str, object]:
-    """The undo text for `changes` to `feature`, and the merge key — set only for settings, so the
-    steps of one spin box become one undo step while a rename, a toggle, a reshaped outline or a
-    dragged profile each stay their own."""
+    """The undo text for `changes` to `feature`, and the merge key — set only for settings and the
+    style, so the steps of one spin box or one symbol editor become one undo step while a rename, a
+    toggle, a reshaped outline or a dragged profile each stay their own. `set_style` adds its editing
+    session to the style's key, so a later edit of the same feature is a step of its own."""
     fields = frozenset(changes)
+    if fields == {"style"}:
+        return UNDO_STYLE.format(feature.name), (feature.id, fields)
     if fields == {"name"}:
         return UNDO_RENAME.format(feature.name), None
     if fields == {"enabled"}:

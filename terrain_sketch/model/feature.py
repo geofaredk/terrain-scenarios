@@ -25,6 +25,7 @@ class TerrainFeature:
     cross_right: tuple = ()
     long_profile: tuple | None = None  # ((station, absolute z), ...); None = tool rule
     section_line: bytes | None = None  # areas: WKB line the section runs along; None = the default line
+    style: str | None = None         # QGIS symbol XML for the map; None = the default symbol
 
     def __post_init__(self):
         if self.mode not in TOOL_INFO[self.tool].modes:
@@ -56,6 +57,7 @@ class TerrainFeature:
             "cross_right": [list(p) for p in self.cross_right],
             "long_profile": None if self.long_profile is None else [list(p) for p in self.long_profile],
             "section_line": None if self.section_line is None else self.section_line.hex(),
+            "style": self.style,
         }
 
     @classmethod
@@ -77,6 +79,7 @@ class TerrainFeature:
             cross_right=_points(d.get("cross_right")),
             long_profile=None if d.get("long_profile") is None else _points(d["long_profile"]),
             section_line=None if d.get("section_line") is None else bytes.fromhex(d["section_line"]),
+            style=d.get("style"),
         )
 
 

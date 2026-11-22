@@ -105,6 +105,8 @@ UNDO_PROFILE = "Change the profile of {}"
 UNDO_SETTINGS = "Change the settings of {}"
 UNDO_DUPLICATE = "Duplicate {}"
 UNDO_SECTION_LINE = "Move the section line of {}"
+UNDO_STYLE = "Change the style of {}"
+UNDO_STYLES = "Change feature styles"
 COPY_NAME = "{} (copy)"
 
 PROFILES_TIP = ("Show or hide the Profiles panel, where you see the selected feature's cross profile and long "
@@ -293,3 +295,7 @@ UNSAVED_BEFORE_CLOSING = ("Terrain Sketch is closing this scenario, and it has c
                           "saved. Save them now?")
 SAVE_FAILED_BEFORE_CLOSING = ("{reason}\n\nTerrain Sketch is still closing this scenario, and it has "
                               "changes that are not saved. Save them now?")
+STYLE_TIP = "How this feature looks on the map. Copy, paste or reset it from the arrow menu."
+STYLE_LAYER_TIP = ("The Sketch outlines layer has a style of its own. Choose 'Use feature styles again' to style "
+                   "single features.")
+USE_FEATURE_STYLES = "Use feature styles again"

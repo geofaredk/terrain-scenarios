@@ -1,14 +1,17 @@
 import pytest
-from qgis.core import QgsGeometry, QgsPointXY
-from qgis.PyQt.QtCore import QEvent, QModelIndex, QPointF, Qt
-from qgis.PyQt.QtGui import QMouseEvent
+from qgis.core import QgsFillSymbol, QgsGeometry, QgsPointXY, QgsSingleSymbolRenderer
+from qgis.PyQt.QtCore import QEvent, QModelIndex, QPointF, QRect, Qt
+from qgis.PyQt.QtGui import QColor, QImage, QMouseEvent, QPainter
 from qgis.PyQt.QtTest import QTest
 from qgis.PyQt.QtWidgets import QAbstractItemView, QApplication, QStyleOptionViewItem
 
-from qgis_helpers import UTM, line_through, panel, start_session
+from qgis_helpers import UTM, line_through, panel, spin_event_loop, start_session
 from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.feature_list import (FLAGGED_ROLE, ID_ROLE, SUBTITLE_ROLE, FeatureListModel,
-                                             FeatureListView, FeatureRowDelegate)
+from terrain_sketch.gui.feature_list import (FLAGGED_ROLE, ID_ROLE, PICTURE_ROLE, PICTURE_SIZE, SUBTITLE_ROLE,
+                                             SWATCH_ROLE, SYMBOL_ROLE, FeatureListModel, FeatureListView, FeatureRowDelegate)
+from terrain_sketch.qgis_io.symbols import to_xml
+
+RED = to_xml(QgsFillSymbol.createSimple({"color": "255,0,0,255", "outline_style": "no"}))
 
 
 def test_feature_list_edits_go_through_the_controller(tmp_path):
@@ -238,3 +241,88 @@ def test_a_row_index_from_before_the_list_shrank_is_ignored(tmp_path):
     assert c.feature(a.id).name != "Barrier"
     assert bytes(model.mimeData([model.index(0), stale]).data("application/x-terrain-sketch-feature-ids")) \
         == a.id.encode()
+
+
+def test_unstyled_row_has_no_symbol_and_keeps_its_diagram(tmp_path):
+    c = start_session(tmp_path)
+    c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    model = FeatureListModel(c)
+    index = model.index(0)
+    assert model.data(index, SYMBOL_ROLE) is None and model.data(index, PICTURE_ROLE) == "tool_raise_path"
+
+
+def test_styled_row_carries_the_symbol(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    model = FeatureListModel(c)
+    c.set_style(dike.id, RED)
+    assert to_xml(model.data(model.index(0), SYMBOL_ROLE)) == RED
+
+
+def test_row_with_unreadable_style_shows_the_tool_diagram(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    model = FeatureListModel(c)
+    c.set_style(dike.id, "not xml")
+    assert model.data(model.index(0), SYMBOL_ROLE) is None
+    assert model.data(model.index(0), PICTURE_ROLE) == "tool_raise_path"
+
+
+def _picture_centre_pixel(model, row_size=(300, 40)) -> QColor:
+    """Paint row 0 through the delegate into an image; the pixel at the picture rectangle's centre."""
+    image = QImage(*row_size, QImage.Format.Format_ARGB32)
+    image.fill(QColor("white"))
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, *row_size)
+    box = FeatureRowDelegate.checkbox_rect(option.rect)
+    picture = QRect(box.right() + 8, (row_size[1] - PICTURE_SIZE.height()) // 2,
+                    PICTURE_SIZE.width(), PICTURE_SIZE.height())
+    painter = QPainter(image)
+    FeatureRowDelegate().paint(painter, option, model.index(0))
+    painter.end()
+    return image.pixelColor(picture.center())
+
+
+def test_styled_row_paints_the_swatch(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    model = FeatureListModel(c)
+    plain = _picture_centre_pixel(model)
+    c.set_style(dike.id, RED)
+    assert _picture_centre_pixel(model) == QColor(255, 0, 0) and plain != QColor(255, 0, 0)
+
+
+def test_a_layers_panel_edit_repaints_the_rows(tmp_path):
+    """Swapping in the user's own renderer changes no feature, so only stylesChanged reaches the list;
+    the cached symbol and swatch must be dropped by it."""
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.set_style(dike.id, RED)
+    model = FeatureListModel(c)
+    assert to_xml(model.index(0).data(SYMBOL_ROLE)) == RED and not model.index(0).data(SWATCH_ROLE).isNull()
+    count = c.undo_stack.count()
+    changed = []
+    model.dataChanged.connect(lambda *_: changed.append(True))
+    green = QgsFillSymbol.createSimple({"color": "0,255,0,255", "outline_style": "no"})
+    c.layers.outlines.setRenderer(QgsSingleSymbolRenderer(green.clone()))
+    spin_event_loop(10)
+    assert changed and c.undo_stack.count() == count
+    assert to_xml(model.index(0).data(SYMBOL_ROLE)) == to_xml(green)
+    assert model.index(0).data(SWATCH_ROLE).toImage().pixelColor(20, 10) == QColor(0, 255, 0)
+
+
+def test_a_row_asks_for_its_symbol_once_until_something_changes(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    c.set_style(dike.id, RED)
+    model = FeatureListModel(c)
+    asked = []
+    real = c.display_symbol
+    c.display_symbol = lambda fid: (asked.append(fid), real(fid))[1]
+    for _ in range(2):
+        _picture_centre_pixel(model)
+        model.index(0).data(SYMBOL_ROLE)
+    assert asked == [dike.id]
+    c.stylesChanged.emit()
+    model.index(0).data(SWATCH_ROLE)
+    assert asked == [dike.id, dike.id]

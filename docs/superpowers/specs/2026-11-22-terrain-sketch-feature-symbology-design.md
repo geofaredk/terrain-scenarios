@@ -52,7 +52,7 @@ Why: not stated beyond the request. The working assumption is telling features a
 
 ### The layer
 
-- "Sketch outlines" gets a `fid` (feature id) field next to `name` and `tool`. The plugin writes a `QgsCategorizedSymbolRenderer` on `fid` with one category per **enabled** feature, so the legend, Layers panel and print layouts list exactly what is on the map. A turned-off feature keeps its style in the model and gets its category back when turned on. The category label is the feature's name and follows renames. *(Claude's call.)*
+- "Sketch outlines" gets a `feature_id` field next to `name` and `tool` (not `fid`: a GeoPackage export — QGIS's default for Save Features As and Make Permanent — reserves that name for its integer key). The plugin writes a `QgsCategorizedSymbolRenderer` on `feature_id` with one category per **enabled** feature, so the legend, Layers panel and print layouts list exactly what is on the map. A turned-off feature keeps its style in the model and gets its category back when turned on. The category label is the feature's name and follows renames. *(Claude's call.)*
 - The renderer is updated **in place** (categories added, removed, relabelled, re-symbolled), not replaced, so renderer- and layer-level settings the user sets — opacity, blending, symbol levels, label font — last for the session. Only the per-feature symbols are saved in the scenario; the rest goes back to defaults on Start or Open. *(Claude's call: saving the whole layer style would change the file format for settings few users touch.)*
 - Layers panel controls on a category: unticking a category's checkbox only hides it on the map for the session, like any QGIS layer — it does not turn the feature off or touch the terrain. Editing a category's label in Layer Properties renames the feature (undoable). *(Claude's calls.)*
 - A feature with `style is None` gets the default symbol: today's transparent fill with a 0.5 dark-grey dashed outline.
@@ -62,18 +62,18 @@ Why: not stated beyond the request. The working assumption is telling features a
 ### Editing
 
 - **In QGIS's UI:** when the user changes the outline layer's renderer (`rendererChanged` / `styleChanged`), the plugin reads each category's symbol back, compares it with the feature's `style`, and commits the differences as one undoable change ("Change style of North dike" for one, "Change styles" for several). A symbol equal to the default symbol is stored as `None`.
-- **On the feature page:** a `QgsSymbolButton` (fill symbol type, connected to the canvas and the outline layer for the expression context) in the feature page's form, labelled "Style". Changing it commits the same change. Its built-in menu gives copy/paste of a symbol between features and a reset — "Reset" here means back to default (`None`).
+- **On the feature page:** a `QgsSymbolButton` (fill symbol type, connected to the canvas and the outline layer for the expression context) in the feature page's form, labelled "Style". Changing it commits the same change. The steps of one editing session merge into one undo step: one opening of the inline symbol selector (until it closes) is one session, and so is each action from the button's menu (a paste, the reset, a colour). Separate sessions stay separate steps, so undo never skips past an earlier style. Its built-in menu gives copy/paste of a symbol between features and a reset — "Reset" here means back to default (`None`).
 - A style-only change does not run the terrain engine: the controller recognises a change whose only differing field is `style` the way it already recognises name-only and enabled-only changes, and only refreshes the outline layer and the list.
 - The change marks the scenario unsaved, like any other edit.
 - While the user's own renderer is in charge (see below), the Style button is disabled, with a tooltip pointing to "Use feature styles again": an edit there would not show on the map. *(Claude's call, made while planning.)*
 
 ### When the user replaces the layer's style (decided by Niklas)
 
-- The plugin manages the layer only while its renderer is a Categorized renderer on `fid`. Editing symbols inside it, adding or deleting categories, and pressing **Classify** (random colours) all count as style edits: matched symbols are written back to the features as one undoable change. A feature whose category was deleted keeps its stored style and gets its category back on the next update.
+- The plugin manages the layer only while its renderer is a Categorized renderer on `feature_id`. Editing symbols inside it, adding or deleting categories, and pressing **Classify** (random colours) all count as style edits: matched symbols are written back to the features as one undoable change. A feature whose category was deleted keeps its stored style and gets its category back on the next update.
 - Once the user switches to anything else — Single symbol, Rule-based, Graduated, Categorized on another field, Paste Style, a loaded .qml — the plugin **keeps their renderer and stops managing it**: it no longer adds, removes or rewrites categories, and writes nothing back. Features keep their stored styles untouched.
 - While their renderer is in charge, each row shows the symbol the layer actually draws for that feature (asked from the renderer per feature), so the list still matches the map. A turned-off feature, not on the map, shows its stored style or the tool diagram.
 - A **"Use feature styles again"** action puts the per-feature Categorized renderer back from the stored styles. It sits in the outline layer's context menu in the Layers panel and in the feature list's menu, and is an ordinary QGIS-styled action.
-- The user's own renderer is not saved in the scenario. After Save and Open, or on Start, the per-feature styles are back in charge.
+- The user's own renderer is not saved in the scenario. After Save and Open, on New, or on Start, the per-feature styles are back in charge: Open and New put the per-feature renderer back on the outline layer (a fresh start), and Start builds a new layer with it.
 
 ### The feature list
 
@@ -85,7 +85,7 @@ Why: not stated beyond the request. The working assumption is telling features a
 - Duplicate copies `style` (it is just another field on the copy).
 - Undo/redo restore `style` with everything else; the renderer follows.
 - **Save** writes a new `style` text column on the features table (empty = no style). Older files without the column open with every feature unstyled. Files saved with styles open in older plugin versions without error (the extra column is ignored).
-- **Open** reads it back; the renderer is rebuilt from the loaded features.
+- **Open** reads it back; the renderer is rebuilt from the loaded features, and replaces the user's own renderer if one was in charge.
 - **Start** begins a session with an empty feature list (as today), and its new outline layer starts with the per-feature renderer. *(Corrected while planning: Start does not carry features over, so there are no styles to carry.)*
 
 ## Left to the builder / calls made by Claude (to check)

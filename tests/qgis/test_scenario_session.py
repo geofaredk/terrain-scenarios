@@ -167,3 +167,43 @@ def test_a_session_without_changes_is_dropped_without_asking(tmp_path):
     c.before_discard = lambda: asked.append(True)  # recorded, not pytest.fail: that would escape a Qt slot
     QgsProject.instance().clear()
     assert not c.has_dem and asked == []
+
+
+def _group_name(c) -> str:
+    return c.layers.group.name()
+
+
+def test_the_group_is_called_scenario_before_any_file(tmp_path):
+    c = start_session(tmp_path)
+    assert _group_name(c) == "Scenario"
+
+
+def test_the_group_takes_the_name_of_the_scenario_opened(tmp_path):
+    c = start_session(tmp_path)
+    two_features(c)
+    path = str(tmp_path / "flood defence.gpkg")
+    c.save_scenario(path)
+    c.new_scenario()
+    assert _group_name(c) == "Scenario"
+    c.open_scenario(path)
+    assert _group_name(c) == "flood defence"
+
+
+def test_the_group_takes_the_name_a_scenario_is_saved_as(tmp_path):
+    c = start_session(tmp_path)
+    two_features(c)
+    c.save_scenario(str(tmp_path / "north.gpkg"))
+    assert _group_name(c) == "north"
+    c.save_scenario(str(tmp_path / "south.gpkg"))
+    assert _group_name(c) == "south"
+
+
+def test_a_scenario_that_fails_to_open_keeps_the_group_name(tmp_path):
+    c = start_session(tmp_path)
+    two_features(c)
+    c.save_scenario(str(tmp_path / "kept.gpkg"))
+    broken = tmp_path / "broken.gpkg"
+    broken.write_text("not a geopackage")
+    with pytest.raises(ScenarioError):
+        c.open_scenario(str(broken))
+    assert _group_name(c) == "kept"

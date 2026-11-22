@@ -1,4 +1,5 @@
-"""The "Terrain Sketch" layer group: modified DEM, change and sketch outlines."""
+"""The session's layer group, named after the scenario ("Scenario" before it has a file): modified
+DEM, change and sketch outlines."""
 from __future__ import annotations
 
 from qgis.core import (Qgis, QgsCategorizedSymbolRenderer, QgsColorRampShader, QgsDataProvider, QgsExpression,
@@ -10,7 +11,7 @@ from qgis.PyQt.QtGui import QColor
 
 from .symbols import default_symbol, from_xml, style_of, to_xml
 
-GROUP_NAME = "Terrain Sketch"
+GROUP_NAME = "Scenario"
 FID_FIELD = "feature_id"  # not "fid": a GeoPackage export keeps that name for its own integer key
 CHANGE_LIMIT = 2.0  # metres of cut or fill shown at full colour
 
@@ -165,6 +166,11 @@ class SketchLayers:
             return symbol.clone() if symbol is not None else None
         finally:
             renderer.stopRender(context)
+
+    def name_group(self, name: str | None) -> None:
+        """Call the group `name` (the scenario's), or GROUP_NAME for none. Skipped once the user removed it."""
+        if not sip.isdeleted(self.group):
+            self.group.setName(name or GROUP_NAME)
 
     def remove(self) -> None:
         """Remove the group and whatever of its layers is still in the project."""

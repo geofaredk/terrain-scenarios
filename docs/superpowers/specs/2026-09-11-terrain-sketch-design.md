@@ -92,7 +92,7 @@ terrain_sketch/
     scenario.py          GeoPackage save/load (uses ogr, no qgis)
   qgis_io/
     raster_io.py         read DEM band into DemGrid; create/update working + difference GeoTIFFs by window
-    layers.py            "Terrain Sketch" layer group: Modified DEM, Change, Sketch outlines; refresh; 3D view
+    layers.py            layer group named after the scenario ("Scenario" before a file): Modified DEM, Change, Sketch outlines; refresh; 3D view
     convert.py           QgsGeometry ↔ core geometry, CRS transforms, makeValid
   gui/
     main_dock.py         right dock: DEM picker, scenario actions, feature list, stacked pages

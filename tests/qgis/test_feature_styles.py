@@ -114,6 +114,17 @@ def test_layers_panel_label_edit_renames_the_feature(tmp_path):
     assert c.find(dike.id).name == dike.name and cats[0].label() == dike.name
 
 
+def test_a_repaint_does_not_strip_a_name_with_spaces(tmp_path):
+    c = start_session(tmp_path)
+    # From layer takes the layer's name as is; older scenario files can hold such names, too
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM, name="Dike ")
+    c.save_scenario(str(tmp_path / "work.gpkg"))
+    count = c.undo_stack.count()
+    c.layers.outlines.triggerRepaint()
+    _settle()
+    assert c.find(dike.id).name == "Dike " and c.undo_stack.count() == count and not c.is_dirty
+
+
 def test_unticking_a_category_changes_no_feature(tmp_path):
     c = start_session(tmp_path)
     dike = _dike(c)

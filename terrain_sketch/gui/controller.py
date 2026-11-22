@@ -778,7 +778,8 @@ class SketchController(QObject):
             if feature.enabled and feature.id in styles:
                 label, style = styles[feature.id]
                 changes = {}
-                if label.strip() not in ("", feature.id, feature.name):
+                # stripped both sides: a name with a trailing space ("Dike " from From layer) is no rename
+                if label.strip() not in ("", feature.id, feature.name.strip()):
                     changes["name"] = label.strip()
                 if style != style_of(from_xml(feature.style)):  # compared as the layer would save it
                     changes["style"] = style

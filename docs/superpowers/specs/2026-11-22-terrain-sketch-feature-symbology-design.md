@@ -36,6 +36,7 @@ Why: not stated beyond the request. The working assumption is telling features a
 - Scenario Open gives every feature a fresh id (`scenario.py:_from_ogr`), so nothing persisted may be keyed by feature id.
 - Disabled features are not in the "Sketch outlines" layer (`controller._outline_items`), yet their row must still show their symbol.
 - Paths are drawn on the map as buffered corridor polygons, so every feature's symbol is a fill symbol.
+- Verified by probe in QGIS 4.2.3 (2026-11-22): a symbol edited from the Layers panel (`QgsSymbolLegendNode.setSymbol`) emits only `repaintRequested` on the layer — not `styleChanged` or `rendererChanged`; a category checkbox or label edit emits `styleChanged`; Layer Properties ▸ Apply emits `rendererChanged`. Symbol XML carries a fresh random `id` per symbol layer, so equality must ignore it. `QgsCategorizedSymbolRenderer.originalSymbolForFeature` segfaults unless the renderer was started (`startRender`). A symbol taken from `renderer.categories()[i]` dies with the temporary list: keep the list.
 
 ## Approaches
 
@@ -64,6 +65,7 @@ Why: not stated beyond the request. The working assumption is telling features a
 - **On the feature page:** a `QgsSymbolButton` (fill symbol type, connected to the canvas and the outline layer for the expression context) in the feature page's form, labelled "Style". Changing it commits the same change. Its built-in menu gives copy/paste of a symbol between features and a reset — "Reset" here means back to default (`None`).
 - A style-only change does not run the terrain engine: the controller recognises a change whose only differing field is `style` the way it already recognises name-only and enabled-only changes, and only refreshes the outline layer and the list.
 - The change marks the scenario unsaved, like any other edit.
+- While the user's own renderer is in charge (see below), the Style button is disabled, with a tooltip pointing to "Use feature styles again": an edit there would not show on the map. *(Claude's call, made while planning.)*
 
 ### When the user replaces the layer's style (decided by Niklas)
 
@@ -84,7 +86,7 @@ Why: not stated beyond the request. The working assumption is telling features a
 - Undo/redo restore `style` with everything else; the renderer follows.
 - **Save** writes a new `style` text column on the features table (empty = no style). Older files without the column open with every feature unstyled. Files saved with styles open in older plugin versions without error (the extra column is ignored).
 - **Open** reads it back; the renderer is rebuilt from the loaded features.
-- **Start** on a new DEM builds the layer from the current features' styles, so nothing is lost.
+- **Start** begins a session with an empty feature list (as today), and its new outline layer starts with the per-feature renderer. *(Corrected while planning: Start does not carry features over, so there are no styles to carry.)*
 
 ## Left to the builder / calls made by Claude (to check)
 

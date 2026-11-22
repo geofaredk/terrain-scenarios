@@ -1,5 +1,6 @@
-from qgis.core import (QgsCategorizedSymbolRenderer, QgsFillSymbol, QgsGeometry, QgsPointXY, QgsProject,
-                       QgsRendererCategory, QgsSingleSymbolRenderer)
+from qgis.core import (QgsCategorizedSymbolRenderer, QgsCoordinateTransformContext, QgsFillSymbol, QgsGeometry,
+                       QgsPointXY, QgsProject, QgsRendererCategory, QgsSingleSymbolRenderer, QgsVectorFileWriter,
+                       QgsVectorLayer)
 
 from qgis_helpers import dem_layer, world
 from terrain_sketch.core.grid import Window
@@ -61,12 +62,28 @@ def _blue():
     return to_xml(QgsFillSymbol.createSimple({"color": "0,0,255,255"}))
 
 
-def test_a_new_outline_layer_draws_features_by_fid(tmp_path):
+def test_a_new_outline_layer_draws_features_by_feature_id(tmp_path):
     _, _, layers = _layers(tmp_path)
     renderer = layers.outlines.renderer()
-    assert isinstance(renderer, QgsCategorizedSymbolRenderer) and renderer.classAttribute() == "fid"
+    assert isinstance(renderer, QgsCategorizedSymbolRenderer) and renderer.classAttribute() == "feature_id"
     assert renderer.categories() == [] and layers.is_managed()
-    assert [f.name() for f in layers.outlines.fields()] == ["fid", "name", "tool"]
+    assert [f.name() for f in layers.outlines.fields()] == ["feature_id", "name", "tool"]
+
+
+def test_the_outline_layer_exports_to_geopackage(tmp_path):
+    """Save Features As and Make Permanent write a GeoPackage by default, whose own `fid` is its integer key."""
+    _, _, layers = _layers(tmp_path)
+    triangle = QgsGeometry.fromWkt("POLYGON((0 0, 5 0, 5 5, 0 0))")
+    layers.set_outlines([("a1", "Pond", "Lower flat", triangle), ("b2", "Dike", "Raise path", triangle)])
+    options = QgsVectorFileWriter.SaveVectorOptions()
+    options.driverName = "GPKG"
+    path = str(tmp_path / "outlines.gpkg")
+    error, message, _path, _layer = QgsVectorFileWriter.writeAsVectorFormatV3(
+        layers.outlines, path, QgsCoordinateTransformContext(), options)
+    assert error == QgsVectorFileWriter.WriterError.NoError, message
+    written = QgsVectorLayer(path, "written", "ogr")
+    assert sorted((f["feature_id"], f["name"], f["tool"]) for f in written.getFeatures()) == [
+        ("a1", "Pond", "Lower flat"), ("b2", "Dike", "Raise path")]
 
 
 def test_apply_styles_gives_each_feature_a_category(tmp_path):

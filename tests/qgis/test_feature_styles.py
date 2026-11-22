@@ -213,7 +213,7 @@ def test_classify_takes_the_new_colours_and_keeps_the_names(tmp_path):
     levee = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 30, 34, 30), UTM)
     count = c.undo_stack.count()
     # Layer Properties > Symbology > Classify labels each category with its value: here the feature id
-    c.layers.outlines.setRenderer(QgsCategorizedSymbolRenderer("fid", [
+    c.layers.outlines.setRenderer(QgsCategorizedSymbolRenderer("feature_id", [
         QgsRendererCategory(dike.id, QgsFillSymbol.createSimple({"color": "255,0,0,255"}), dike.id),
         QgsRendererCategory(levee.id, QgsFillSymbol.createSimple({"color": "0,0,255,255"}), levee.id)]))
     _settle()

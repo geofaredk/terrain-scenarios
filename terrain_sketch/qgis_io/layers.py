@@ -11,7 +11,7 @@ from qgis.PyQt.QtGui import QColor
 from .symbols import default_symbol, from_xml, style_of, to_xml
 
 GROUP_NAME = "Terrain Sketch"
-FID_FIELD = "fid"
+FID_FIELD = "feature_id"  # not "fid": a GeoPackage export keeps that name for its own integer key
 CHANGE_LIMIT = 2.0  # metres of cut or fill shown at full colour
 
 

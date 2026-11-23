@@ -466,6 +466,15 @@ def test_shape_and_selection_tool_buttons_share_their_row_equally(tmp_path):
             assert not button.icon().isNull() and button.text()
 
 
+def test_shape_and_selection_tool_buttons_are_half_again_as_tall_as_a_normal_button():
+    from qgis.core import QgsApplication
+
+    gallery = ToolGallery()
+    normal = QPushButton(QgsApplication.getThemeIcon(METHOD_ICONS[Method.CLICK]), "Draw").sizeHint().height()
+    for button in [gallery.line_mode, gallery.area_mode, *gallery.method_buttons.values()]:
+        assert button.height() == button.minimumHeight() == button.maximumHeight() == round(normal * 1.5)
+
+
 def test_the_selection_tool_in_use_stays_highlighted_until_its_drawing_ends(tmp_path):
     _iface, _c, dock = panel(tmp_path)
     dock.new_button.click()

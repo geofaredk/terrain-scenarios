@@ -61,7 +61,22 @@ def test_the_user_does_not_receive_our_tests_or_caches(built):
     assert not [n for n in names if "/.devdeps/" in n or "/scripts/" in n]
 
 
-def fake_repo(tmp_path, metadata="[general]\nversion=1.0\n", init=True):
+def test_the_licence_ships_inside_the_plugin_folder(built):
+    """plugins.qgis.org rejects an upload without a LICENSE in the plugin folder."""
+    _path, names = built
+    assert "terrain_scenarios/LICENSE" in names
+
+
+def test_metadata_names_the_public_repository_and_tracker():
+    """plugins.qgis.org refuses an upload whose metadata has no repository; the tracker is what
+    the Plugin Manager links users to for bug reports."""
+    parser = configparser.ConfigParser()
+    parser.read(ROOT / "terrain_scenarios" / "metadata.txt")
+    assert parser.get("general", "repository").startswith("https://")
+    assert parser.get("general", "tracker").startswith("https://")
+
+
+def fake_repo(tmp_path, metadata="[general]\nversion=1.0\n", init=True, licence=True):
     """A minimal repo the script can be pointed at, so its refusals can be exercised."""
     fake = tmp_path / "repo"
     (fake / "terrain_scenarios").mkdir(parents=True)
@@ -73,6 +88,8 @@ def fake_repo(tmp_path, metadata="[general]\nversion=1.0\n", init=True):
         (fake / "terrain_scenarios" / "metadata.txt").write_text(metadata)
     if init:
         (fake / "terrain_scenarios" / "__init__.py").write_text("")
+    if licence:
+        (fake / "LICENSE").write_text("MIT License\n")
     return script
 
 
@@ -89,6 +106,14 @@ def test_a_plugin_without_an_init_file_is_refused(tmp_path):
     result = subprocess.run([str(script), str(tmp_path)], capture_output=True, text=True)
     assert result.returncode != 0
     assert "__init__.py missing" in result.stderr
+    assert not list(tmp_path.glob("*.zip"))
+
+
+def test_a_repo_without_a_licence_is_refused(tmp_path):
+    script = fake_repo(tmp_path, licence=False)
+    result = subprocess.run([str(script), str(tmp_path)], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "LICENSE missing" in result.stderr
     assert not list(tmp_path.glob("*.zip"))
 
 

@@ -40,6 +40,14 @@ tar -c -C "$ROOT/$PACKAGE" \
     --exclude="*~" --exclude="*.swp" --exclude=".pytest_cache" \
     . | tar -x -C "$STAGE/$PACKAGE"
 
+# The licence lives once, at the repo root where GitHub finds it, but plugins.qgis.org rejects a
+# ZIP without a LICENSE inside the plugin folder, so it is copied into the staging copy here.
+if [ ! -f "$ROOT/LICENSE" ]; then
+  echo "build_zip.sh: LICENSE missing at the repo root" >&2
+  exit 1
+fi
+cp "$ROOT/LICENSE" "$STAGE/$PACKAGE/LICENSE"
+
 # __init__.py is what makes QGIS able to import the plugin at all. Checked on the staging copy,
 # which also catches a tar that produced nothing.
 test -f "$STAGE/$PACKAGE/__init__.py"  || { echo "build_zip.sh: __init__.py missing" >&2; exit 1; }

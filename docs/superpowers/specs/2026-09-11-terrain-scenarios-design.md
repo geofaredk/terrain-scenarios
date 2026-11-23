@@ -207,7 +207,7 @@ Only methods that fit the tool's modes are enabled. Raise path and Lower path ac
 
 > **Note (2026-11-23):** the Brush method described in this section and in §6 was removed from the plugin at the owner's request. The New feature page offers Draw, Freehand and From layer only; the Brush rows above are kept as history.
 
-> **Note (2026-11-23):** the New feature page was restructured at the owner's request into three sections, each under a bold heading: **Feature** (the tool tiles, with the tool's description in a bordered "Info" box below them), **Shape** (Line and Area as two icon buttons, half the panel's width each) and **Selection Tool** (Draw, Freehand and From layer as three icon buttons, a third of the width each, with small gaps). The selection tool in use stays highlighted until its drawing ends, and From layer stays highlighted while its form is open; picking From layer stops a drawing still running.
+> **Note (2026-11-23):** the New feature page was restructured at the owner's request into three sections, each under a bold heading: **Feature** (the tool tiles, with the tool's description in a bordered "Info" box below them), **Shape** (Line and Area as two icon buttons, half the panel's width each) and **Selection Tool** (Draw, Freehand and From layer as three icon buttons, a third of the width each, with small gaps). Both rows' buttons are half again as tall as a standard button. The selection tool in use stays highlighted until its drawing ends, and From layer stays highlighted while its form is open; picking From layer stops a drawing still running.
 
 ### 6.2 Geometry handling
 

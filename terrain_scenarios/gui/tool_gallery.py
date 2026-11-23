@@ -22,6 +22,7 @@ from .selection import METHOD_ICONS, METHOD_LABELS, METHOD_TIPS, Method
 TILE_ICON_SIZE = QSize(96, 48)
 TILE_GRID_SIZE = QSize(116, 92)
 BUTTON_GAP = 4          # the small gap between the buttons of a row
+BUTTON_HEIGHT_SCALE = 1.5   # Shape and Selection Tool buttons: half again the style's own button height
 SHAPE_ICONS = {Mode.PATH: "/mIconLineLayer.svg", Mode.AREA: "/mIconPolygonLayer.svg"}
 
 
@@ -206,6 +207,7 @@ class ToolGallery(QgsPanelWidget):
         button = QPushButton(QgsApplication.getThemeIcon(icon), text)
         button.setCheckable(True)
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        button.setFixedHeight(round(button.sizeHint().height() * BUTTON_HEIGHT_SCALE))
         return button
 
     def _method_button(self, method: Method) -> QPushButton:

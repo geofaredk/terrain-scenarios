@@ -69,10 +69,8 @@ NO_SESSION = "Pick a DEM and press Start first."
 
 START_HEADING = "Sketch changes on your terrain"
 START_INTRO = "Terrain Scenarios works on a copy; your DEM is never changed."
-SKETCHING_ON = "Sketching on: {}"
-CHANGE_DEM_LINK = ' <a href="change">Change…</a>'
-KEEP_SKETCHING = "Keep sketching"
-KEEP_SKETCHING_TIP = "Go back to the session that is still running, without starting a new one."
+DEM_CHOOSER_TIP = ("The DEM you are sketching on. Choosing another one starts again on it; "
+                   "the DEM itself is never changed.")
 SCENARIO_MENU_TIP = "Start, open or save a scenario file."
 
 EXPORT_OVER_SOURCE = "Choose a new file name: Terrain Scenarios never overwrites your DEM or its own working files."

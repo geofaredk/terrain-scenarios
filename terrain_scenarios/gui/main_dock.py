@@ -1,17 +1,16 @@
 """The Terrain Scenarios panel: DEM, feature list, tool gallery and feature properties."""
 from __future__ import annotations
 
-import html
 import importlib
 import os
 import traceback
 
-from qgis.core import (Qgis, QgsApplication, QgsCoordinateTransform, QgsCsException, QgsGeometry, QgsMessageLog,
-                       QgsProject, QgsRasterLayer)
+from qgis.core import (Qgis, QgsApplication, QgsCoordinateTransform, QgsCsException, QgsGeometry, QgsIconUtils,
+                       QgsMessageLog, QgsProject, QgsRasterLayer)
 from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsPanelWidget, QgsPanelWidgetStack, QgsRubberBand
 from qgis.PyQt import sip
 from qgis.PyQt.QtCore import QEvent, QSize, Qt, QTimer
-from qgis.PyQt.QtGui import QAction
+from qgis.PyQt.QtGui import QAction, QActionGroup
 from qgis.PyQt.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
                                  QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
@@ -19,13 +18,13 @@ from ..core.tools import Mode
 from ..qgis_io.convert import from_wkb
 from ..qgis_io.raster_io import DemError, GeographicDemError
 from ..qgis_io.scenario import ScenarioError
-from .help_texts import (CHANGE_DEM_LINK, DEM_NOT_READABLE, EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE,
-                         EXPORT_NOT_ADDED, EXPORT_REPLACE, KEEP_SKETCHING, KEEP_SKETCHING_TIP,
+from .help_texts import (DEM_CHOOSER_TIP, DEM_NOT_READABLE, EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE,
+                         EXPORT_NOT_ADDED, EXPORT_REPLACE,
                          REPROJECT_UNAVAILABLE, SAVE_FAILED_BEFORE_CLOSING, SCENARIO_DEM_DIFFERS,
                          SCENARIO_MAY_NOT_BE_SAVED, SCENARIO_MENU_TIP, SCENARIO_NOT_APPLIED,
                          SCENARIO_NOT_APPLIED_ON_ITS_DEM, SCENARIO_OPENED, SCENARIO_OTHER_DEM, SCENARIO_REPLACE,
                          SCENARIO_SAVED, SECTION_LINE_HINT,
-                         SHAPE_NOT_TRANSFORMED, SKETCHING_ON, START_HEADING, START_INTRO, UNSAVED_BEFORE_CLOSING,
+                         SHAPE_NOT_TRANSFORMED, START_HEADING, START_INTRO, UNSAVED_BEFORE_CLOSING,
                          UNSAVED_CHANGES, USE_FEATURE_STYLES, PROFILES_TIP, VIEW_3D_NOT_OPENED, VIEW_3D_TIP)
 from . import illustrations
 from .controller import LOG_TAG
@@ -36,7 +35,6 @@ from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
 from .map_tools.freehand import FreehandTool
 from .map_tools.vertex_edit import VertexEditTool
-from .muted import MutedLabel
 from .overlay import PreviewOverlay
 from .page_layout import apply_page_margins
 from .properties_page import PropertiesPage
@@ -206,8 +204,7 @@ class MainDock(QgsDockWidget):
         self.choose_dem = self._dem_choice_dialog
         self._asked_about_unsaved = False
         self._last_save_reason = None       # set by _save_scenario; read back by _offer_save_before_discard
-        self._dem_name = ""                 # set by _start_session before its sessionChanged fires
-        self._dem_layer = None              # tracked only to keep the status line's name in sync with a rename
+        self._dem_layer = None              # the DEM layer whose rename the button's tooltip follows
         self._session_has_dem = False       # _session_changed's own memory of has_dem, to spot a real transition
         controller.before_discard = self._offer_save_before_discard
         self.edit_tool = None
@@ -229,9 +226,8 @@ class MainDock(QgsDockWidget):
 
         # Welcome view (no session): the raise_path illustration, a heading and intro, centred, then
         # the DEM picker and Start — the same row and behaviour as before, just no longer sharing
-        # the panel with a session. "Keep sketching" is shown only while a session is still running
-        # underneath (reached through the status line's Change… link), to get back to it without
-        # pressing Start and discarding every feature.
+        # the panel with a session. Shown only while there is no session: a running one changes
+        # its DEM from the toolbar's own chooser.
         welcome_view = QWidget()
         welcome_layout = QVBoxLayout(welcome_view)
         welcome_layout.addStretch(1)
@@ -261,17 +257,26 @@ class MainDock(QgsDockWidget):
         self.start_button.setToolTip(self.tr("Start sketching on this DEM. The DEM itself is never changed."))
         dem_row.addWidget(self.start_button)
         welcome_layout.addLayout(dem_row)
-        self.keep_sketching_button = QPushButton(KEEP_SKETCHING)
-        self.keep_sketching_button.setToolTip(KEEP_SKETCHING_TIP)
-        self.keep_sketching_button.hide()   # shown by _session_changed only while a session is live
-        welcome_layout.addWidget(self.keep_sketching_button)
         welcome_layout.addStretch(1)
 
         # The session view: a toolbar, like QGIS's own panels (when the panel is narrower than its
         # buttons, the ones that do not fit move behind the » button instead of forcing it wider),
-        # the feature list, and a status line.
+        # and the feature list. The toolbar opens with the session's DEM: picking another one there
+        # starts again on it, as Start does (spec §5.3, 2026-11-23 note): an icon-only button whose
+        # menu lists the project's rasters, rebuilt each time it opens.
         self.toolbar = QToolBar()
         self.toolbar.setIconSize(iface.iconSize(True))
+        self.dem_button = QToolButton()
+        self.dem_button.setIcon(QgsApplication.getThemeIcon("/mIconRaster.svg"))
+        self.dem_button.setText(self.tr("DEM"))    # for screen readers; the icon is all that shows
+        self.dem_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.dem_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.dem_button.setAutoRaise(True)
+        self.dem_button.setToolTip(DEM_CHOOSER_TIP)
+        self.dem_menu = QMenu(self)
+        self.dem_menu.aboutToShow.connect(self._fill_dem_menu)
+        self.dem_button.setMenu(self.dem_menu)
+        self.toolbar.addWidget(self.dem_button)
         self.new_button = QToolButton()
         self.new_button.setIcon(QgsApplication.getThemeIcon("/mActionAdd.svg"))
         self.new_button.setText(self.tr("New feature"))
@@ -328,9 +333,6 @@ class MainDock(QgsDockWidget):
         self.model = FeatureListModel(controller, self)
         self.feature_view = FeatureListView(self.model)
 
-        self.status_label = MutedLabel()
-        self.status_label.setOpenExternalLinks(False)
-
         # A hint for work with no page open — a section line drawn from the Profiles dock after
         # going back to the list (spec §6 item 6) — shows here, under the toolbar.
         self.session_hint = QLabel()
@@ -343,7 +345,6 @@ class MainDock(QgsDockWidget):
         session_layout.addWidget(self.toolbar)
         session_layout.addLayout(self._text_row(self.session_hint, session_view))
         session_layout.addWidget(self.feature_view, 1)
-        session_layout.addLayout(self._text_row(self.status_label, session_view))
 
         self.views = QStackedWidget()
         self.views.addWidget(welcome_view)   # VIEW_WELCOME
@@ -418,8 +419,6 @@ class MainDock(QgsDockWidget):
         self.properties.editShapeToggled.connect(self._toggle_edit)
         self.feature_view.selectionModel().selectionChanged.connect(self._selection_changed)
         self.feature_view.customContextMenuRequested.connect(self._context_menu)
-        self.status_label.linkActivated.connect(self._show_welcome_view)
-        self.keep_sketching_button.clicked.connect(self._keep_sketching)
         self.iface.mapCanvas().mapToolSet.connect(self._map_tool_set)
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_radius_units)
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_overlay_transform)
@@ -556,15 +555,15 @@ class MainDock(QgsDockWidget):
             for action in self.scenario_actions:
                 action.setEnabled(has_dem)
             self.scenario_button.setEnabled(has_dem)
-            self.keep_sketching_button.setVisible(has_dem)
             if self.controller.layers is not None:
                 project = self.controller.project
-                self.dem_combo.setExceptedLayerList(
-                    [project.mapLayer(i) for i in self.controller.layers.layer_ids])
+                excepted = [project.mapLayer(i) for i in self.controller.layers.layer_ids]
             else:
-                self.dem_combo.setExceptedLayerList([])
-            if has_dem:
-                self.status_label.setText(SKETCHING_ON.format(html.escape(self._dem_name)) + CHANGE_DEM_LINK)
+                excepted = []
+            self.dem_combo.setExceptedLayerList(excepted)
+            self.dem_button.setEnabled(has_dem)
+            self._connect_dem_name(self.controller.project.mapLayer(self.controller.dem_layer_id)
+                                   if has_dem else None)
             # new_scenario/save_scenario/open_scenario also emit sessionChanged while the same
             # session keeps running (has_dem unchanged): only a real transition closes the open
             # page and moves the view — a stale page over a scenario that was just replaced is
@@ -572,7 +571,6 @@ class MainDock(QgsDockWidget):
             if has_dem != self._session_has_dem:
                 self.close_page()
                 self.views.setCurrentIndex(VIEW_SESSION if has_dem else VIEW_WELCOME)
-                self._disconnect_dem_name()
             self._session_has_dem = has_dem
             self._update_radius_units()
             self._update_overlay_transform()
@@ -719,28 +717,6 @@ class MainDock(QgsDockWidget):
         except Exception:  # noqa: BLE001 — this runs off a Qt signal
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
-    def _show_welcome_view(self, _link: str = "") -> None:
-        """The status line's Change… link: back to the welcome view, asking nothing (spec §5.3).
-        The session keeps running behind it, so no work is at risk yet: Keep sketching returns to
-        it, and Start asks about unsaved work once, when it actually replaces the session.
-        Stops any drawing or edit in progress: it was running on the map behind the session view,
-        which the welcome view no longer shows, and a drawing that then finished would open a
-        feature page on top of it."""
-        try:
-            self.stop_tools()
-            self.close_page()
-            self.views.setCurrentIndex(VIEW_WELCOME)
-        except Exception:  # noqa: BLE001 — this runs in a slot
-            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-
-    def _keep_sketching(self) -> None:
-        """The welcome view's second button, shown only while a session is still live: the way back
-        to that session from Change…, since Start would replace it."""
-        try:
-            self.views.setCurrentIndex(VIEW_SESSION)
-        except Exception:  # noqa: BLE001 — this runs in a slot
-            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-
     def _update_overlay_transform(self) -> None:
         """Keep the drag preview georeferenced.
 
@@ -805,25 +781,66 @@ class MainDock(QgsDockWidget):
     def _start_session(self, layer) -> bool:
         """Start on `layer` once any unsaved work has been dealt with. True when the session started."""
         self._asked_about_unsaved = True   # the user has just answered; closing the old session must not ask again
-        self._dem_name = layer.name()      # set before set_dem: sessionChanged fires from inside it
         try:
             self.controller.set_dem(layer)
-            self._connect_dem_name(layer)
             return True
         except DemError as error:
             if isinstance(error, GeographicDemError):
-                self._offer_reproject(str(error))
+                self._offer_reproject(str(error), layer)
             else:
                 self._show_message(Qgis.MessageLevel.Warning, str(error))
             return False
         finally:
             self._asked_about_unsaved = False
 
+    def _fill_dem_menu(self) -> None:
+        """Rebuild the DEM button's menu from the project, so it always matches it: every raster
+        layer but the session's own, in Layers-panel order, the session's DEM checked. Guarded:
+        reached from `aboutToShow`, a Qt signal."""
+        try:
+            self.dem_menu.clear()
+            project = self.controller.project
+            own = set(self.controller.layers.layer_ids) if self.controller.layers is not None else set()
+            group = QActionGroup(self.dem_menu)     # exclusive: the check mark is the session's DEM
+            for layer in project.layerTreeRoot().layerOrder():
+                if not isinstance(layer, QgsRasterLayer) or layer.id() in own:
+                    continue
+                action = self.dem_menu.addAction(QgsIconUtils.iconForLayer(layer), layer.name())
+                action.setData(layer.id())
+                action.setCheckable(True)
+                action.setActionGroup(group)
+                current = self.controller.has_dem and layer.id() == self.controller.dem_layer_id
+                action.setChecked(current)
+                if current:   # macOS draws a checked entry's mark faintly over its icon: bold says it too
+                    font = action.font()
+                    font.setBold(True)
+                    action.setFont(font)
+                action.triggered.connect(lambda _checked=False, layer_id=layer.id(): self._dem_chosen(layer_id))
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _dem_chosen(self, layer_id: str) -> None:
+        """A layer picked in the DEM menu: start again on it, exactly as Start does — the
+        unsaved-work question first. Backing out or a refused start leaves the session as it was.
+        Guarded: reached from a menu action's `triggered`, a Qt signal."""
+        try:
+            layer = self.controller.project.mapLayer(layer_id)
+            if layer is None or layer_id == self.controller.dem_layer_id:
+                return
+            if not self._keep_unsaved_work():
+                self._start_session(layer)
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
     def _connect_dem_name(self, layer) -> None:
-        """Keep the status line's DEM name in sync with a rename in the Layers panel."""
-        self._disconnect_dem_name()
-        self._dem_layer = layer
-        layer.nameChanged.connect(self._dem_renamed)
+        """Keep the DEM button's tooltip in sync with the DEM layer's name, also after a rename in
+        the Layers panel; with no session (layer None) the tooltip is just the tip."""
+        if layer is not self._dem_layer:
+            self._disconnect_dem_name()
+            if layer is not None:
+                self._dem_layer = layer
+                layer.nameChanged.connect(self._dem_renamed)
+        self._dem_renamed()
 
     def _disconnect_dem_name(self) -> None:
         if self._dem_layer is not None and not sip.isdeleted(self._dem_layer):
@@ -835,10 +852,11 @@ class MainDock(QgsDockWidget):
 
     def _dem_renamed(self) -> None:
         try:
-            if self._dem_layer is not None and not sip.isdeleted(self._dem_layer):
-                self._dem_name = self._dem_layer.name()
-                if self.controller.has_dem:
-                    self.status_label.setText(SKETCHING_ON.format(html.escape(self._dem_name)) + CHANGE_DEM_LINK)
+            layer = self._dem_layer
+            if layer is not None and not sip.isdeleted(layer):
+                self.dem_button.setToolTip(f"{self.tr('DEM')}: {layer.name()}\n{DEM_CHOOSER_TIP}")
+            else:
+                self.dem_button.setToolTip(DEM_CHOOSER_TIP)
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
@@ -1470,14 +1488,13 @@ class MainDock(QgsDockWidget):
         except Exception:  # noqa: BLE001 — this runs off a Qt signal
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
-    def _offer_reproject(self, text: str) -> None:
+    def _offer_reproject(self, text: str, layer) -> None:
         """A geographic DEM is refused with a button that opens Processing's warp tool, so the
-        user is not left to find it themselves."""
+        user is not left to find it themselves. `layer` is the DEM this message is about, passed
+        in rather than read from a combo: either chooser can hold something else by the time the
+        button is pressed, and warping a layer the user never saw refused would be worse than
+        warping nothing."""
         try:
-            # the DEM this message is about, captured now: the combo can hold something else by
-            # the time the button is pressed, and warping a layer the user never saw refused
-            # would be worse than warping nothing
-            layer = self.dem_combo.currentLayer()
             bar = self.iface.messageBar()
             widget = bar.createMessage(self.tr("Terrain Scenarios"), text)
             button = QPushButton(self.tr("Reproject…"), widget)

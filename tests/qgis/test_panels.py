@@ -425,6 +425,150 @@ def test_the_new_feature_page_offers_exactly_click_freehand_and_from_layer():
     assert [b.text() for b in gallery.method_buttons.values()] == ["Draw", "Freehand", "From layer"]
 
 
+def test_the_new_feature_page_reads_feature_then_shape_then_selection_tool():
+    """Three sections in that order, each under a bold heading in the one heading style; the tool's
+    description sits in a bordered "Info" box below the tiles."""
+    from qgis.PyQt.QtWidgets import QGroupBox, QLabel
+
+    gallery = ToolGallery()
+    layout = gallery.layout()
+    widgets = [layout.itemAt(i).widget() for i in range(layout.count()) if layout.itemAt(i).widget()]
+    headings = [w for w in widgets if isinstance(w, QLabel) and w.font().bold()]
+    assert [h.text() for h in headings] == ["Feature", "Shape", "Selection Tool"]
+    assert len({h.font().pointSizeF() for h in headings}) == 1
+    order = widgets.index
+    assert order(headings[0]) < order(gallery.tool_list) < order(gallery.info_box) < order(headings[1])
+    assert isinstance(gallery.info_box, QGroupBox) and gallery.info_box.title() == "Info"
+    assert gallery.summary.parent() is gallery.info_box and gallery.info_box.isFlat() is False
+
+
+def test_the_feature_tiles_are_buttons_that_fill_the_row(tmp_path):
+    """The tiles are painted as the style's push buttons on the panel itself (no list frame or
+    background), and their cells widen to share the panel's whole width, like the button rows."""
+    from qgis.PyQt.QtWidgets import QApplication, QFrame
+    from qgis_helpers import spin_event_loop
+    from terrain_scenarios.gui.tool_gallery import TILE_GRID_SIZE, _ButtonTileDelegate
+
+    _iface, _c, dock = panel(tmp_path)
+    dock.show()
+    dock.new_button.click()
+    tiles = dock.gallery.tool_list
+    assert isinstance(tiles.itemDelegate(), _ButtonTileDelegate)
+    assert tiles.frameShape() == QFrame.Shape.NoFrame and not tiles.viewport().autoFillBackground()
+    for width in (300, 333, 420, 517):
+        dock.resize(width, 900)
+        QApplication.processEvents()
+        spin_event_loop(10)
+        cell = tiles.gridSize()
+        columns = len({tiles.visualItemRect(tiles.item(i)).left() for i in range(tiles.count())})
+        assert cell.width() >= TILE_GRID_SIZE.width()
+        assert 0 < tiles.viewport().width() - columns * cell.width() <= columns   # the whole width, bar rounding
+
+
+def test_the_feature_tiles_keep_their_button_frame_under_an_application_stylesheet(tmp_path):
+    """QGIS always sets an application stylesheet. A button painted on the list view's behalf
+    then gets the list's rules and shows no outline at all; painted for a real push button it
+    keeps the button's frame. Down the middle of the first tile, the top edge must stand out."""
+    from qgis.PyQt.QtGui import QColor
+    from qgis.PyQt.QtWidgets import QApplication, QStyleFactory
+    from qgis_helpers import spin_event_loop
+
+    app = QApplication.instance()
+    style = app.style().name()
+    app.setStyle(QStyleFactory.create("Fusion"))
+    app.setStyleSheet("QListView { border: none; }")
+    try:
+        _iface, _c, dock = panel(tmp_path)
+        dock.resize(320, 900)
+        dock.show()
+        dock.new_button.click()
+        QApplication.processEvents()
+        spin_event_loop(20)
+        tiles = dock.gallery.tool_list
+        image = tiles.viewport().grab().toImage()
+        tile = tiles.visualItemRect(tiles.item(0))
+        x = tile.center().x()
+        background = QColor(image.pixel(x, tile.top()))
+        edge = [QColor(image.pixel(x, y)) for y in range(tile.top() + 1, tile.top() + 6)]
+        assert any(abs(c.lightness() - background.lightness()) > 30 for c in edge)
+    finally:
+        app.setStyleSheet("")
+        app.setStyle(QStyleFactory.create(style))
+
+
+def test_shape_and_selection_tool_buttons_share_their_row_equally(tmp_path):
+    """Line and Area each take half the panel's width, the three selection tools a third each, with
+    only a small gap between them, and every one carries an icon beside its text."""
+    from qgis.PyQt.QtWidgets import QApplication
+    from qgis_helpers import spin_event_loop
+
+    _iface, _c, dock = panel(tmp_path)
+    dock.resize(380, 900)
+    dock.show()
+    dock.new_button.click()
+    QApplication.processEvents()
+    spin_event_loop(20)
+    gallery = dock.gallery
+    for row in ([gallery.line_mode, gallery.area_mode], list(gallery.method_buttons.values())):
+        geometries = [b.geometry() for b in row]
+        assert len({g.top() for g in geometries}) == 1                       # one row
+        assert max(g.width() for g in geometries) - min(g.width() for g in geometries) <= 1
+        span = geometries[-1].right() - geometries[0].left()
+        assert span >= gallery.tool_list.width() - 2                          # the panel's width
+        assert all(0 < b.left() - a.right() <= 8 for a, b in zip(geometries, geometries[1:]))
+        for button in row:
+            assert not button.icon().isNull() and button.text()
+
+
+def test_shape_and_selection_tool_buttons_are_half_again_as_tall_as_a_normal_button():
+    from qgis.core import QgsApplication
+
+    gallery = ToolGallery()
+    normal = QPushButton(QgsApplication.getThemeIcon(METHOD_ICONS[Method.CLICK]), "Draw").sizeHint().height()
+    for button in [gallery.line_mode, gallery.area_mode, *gallery.method_buttons.values()]:
+        assert button.height() == button.minimumHeight() == button.maximumHeight() == round(normal * 1.5)
+
+
+def test_the_selection_tool_in_use_stays_highlighted_until_its_drawing_ends(tmp_path):
+    _iface, _c, dock = panel(tmp_path)
+    dock.new_button.click()
+    gallery = dock.gallery
+    gallery.select_tool(Tool.RAISE_PATH)
+    assert gallery.active_method() is None
+    gallery.method_buttons[Method.CLICK].click()
+    assert gallery.active_method() is Method.CLICK
+    gallery.method_buttons[Method.CLICK].click()          # again: restarts, and stays highlighted
+    assert gallery.active_method() is Method.CLICK and dock.draw_tool is not None
+    gallery.method_buttons[Method.FREEHAND].click()
+    assert gallery.active_method() is Method.FREEHAND
+    assert [b.isChecked() for b in gallery.method_buttons.values()] == [False, True, False]
+    dock.draw_tool.cancelled.emit()                       # Esc
+    assert gallery.active_method() is None
+
+
+def test_from_layer_stops_a_running_drawing_and_takes_the_highlight(tmp_path):
+    _iface, _c, dock = panel(tmp_path)
+    dock.new_button.click()
+    gallery = dock.gallery
+    gallery.select_tool(Tool.RAISE_PATH)
+    gallery.method_buttons[Method.FREEHAND].click()
+    assert dock.draw_tool is not None
+    gallery.method_buttons[Method.LAYER].click()
+    assert dock.draw_tool is None and gallery.active_method() is Method.LAYER
+    assert not gallery.layer_source.isHidden()
+    gallery.method_buttons[Method.CLICK].click()
+    assert gallery.active_method() is Method.CLICK and gallery.layer_source.isHidden()
+
+
+def test_a_finished_drawing_clears_the_highlight(tmp_path):
+    _iface, _c, dock = panel(tmp_path)
+    dock.new_button.click()
+    dock.gallery.select_tool(Tool.RAISE_PATH)
+    dock.gallery.method_buttons[Method.CLICK].click()
+    dock.draw_tool.finished.emit(line_through(5, 20, 34, 20))
+    assert dock.gallery.active_method() is None
+
+
 def test_shape_is_a_segmented_pair_that_disables_what_the_tool_cannot_do(tmp_path):
     _iface, _c, dock = panel(tmp_path)
     dock.new_button.click()
@@ -434,20 +578,22 @@ def test_shape_is_a_segmented_pair_that_disables_what_the_tool_cannot_do(tmp_pat
     assert dock.gallery.mode_group.checkedButton() is dock.gallery.line_mode
 
 
-def test_the_shape_buttons_look_like_buttons_in_either_state(tmp_path):
-    """With `autoRaise` on, the unchecked one of the pair has no visible border at all — reading as
-    plain text next to the checked one's highlight, rather than as a pair of buttons."""
+def test_the_shape_and_selection_tool_buttons_look_like_buttons_in_either_state(tmp_path):
+    """Push buttons keep their frame checked or not; a flat one would read as plain text next to a
+    checked one's highlight, rather than as a row of buttons."""
     _iface, _c, dock = panel(tmp_path)
     dock.new_button.click()
-    assert not dock.gallery.line_mode.autoRaise() and not dock.gallery.area_mode.autoRaise()
+    gallery = dock.gallery
+    for button in [gallery.line_mode, gallery.area_mode, *gallery.method_buttons.values()]:
+        assert isinstance(button, QPushButton) and not button.isFlat() and button.isCheckable()
 
 
 def test_the_tile_grid_is_sized_to_its_content_not_stretched(tmp_path):
     """With a `QListWidget`'s default vertical size policy, `Expanding`, the tile view stretches to
-    fill the whole New feature page, crowding the summary, Shape and Where controls into whatever
+    fill the whole New feature page, crowding the Info, Shape and Selection Tool controls into whatever
     space is left at the bottom of a tall dock. Sized to content
     (`_ToolTileList.heightForWidth`) instead: all seven tiles show without a scrollbar, and the
-    Where buttons sit well up the page rather than pushed to its bottom."""
+    Selection Tool buttons sit well up the page rather than pushed to its bottom."""
     from qgis.PyQt.QtWidgets import QApplication
     from qgis_helpers import spin_event_loop
 
@@ -460,9 +606,11 @@ def test_the_tile_grid_is_sized_to_its_content_not_stretched(tmp_path):
 
     gallery = dock.gallery
     assert gallery.tool_list.count() == len(Tool) == 7
-    where_button = gallery.method_buttons[Method.CLICK]
-    top = where_button.mapTo(dock, where_button.rect().topLeft()).y()
-    assert 0 < top < dock.height() * 2 / 3   # well up the page, not crammed at the bottom
+    grid = gallery.tool_list
+    assert grid.height() == grid.heightForWidth(grid.width())   # just its rows, no more
+    button = gallery.method_buttons[Method.CLICK]
+    bottom = button.mapTo(dock, button.rect().bottomLeft()).y()
+    assert 0 < bottom < dock.height() - 150   # leftover space collects below, not above the buttons
 
 
 def test_the_tile_grid_reports_a_height_that_keeps_every_tile_reachable(tmp_path):

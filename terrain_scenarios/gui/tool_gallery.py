@@ -1,11 +1,11 @@
 """The 'New feature' page: the drawing hint while one is running, a tile grid of tools, a segmented
-Line/Area pair and the four ways to draw."""
+Line/Area pair and the three ways to draw."""
 from __future__ import annotations
 
 import traceback
 
-from qgis.core import Qgis, QgsApplication, QgsMessageLog, QgsUnitTypes
-from qgis.gui import QgsDoubleSpinBox, QgsPanelWidget
+from qgis.core import Qgis, QgsApplication, QgsMessageLog
+from qgis.gui import QgsPanelWidget
 from qgis.PyQt.QtCore import QEvent, QSize, Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import (QButtonGroup, QGridLayout, QHBoxLayout, QLabel, QListView, QListWidget,
                                  QListWidgetItem, QSizePolicy, QToolButton, QVBoxLayout)
@@ -18,10 +18,9 @@ from .layer_source import LayerSource
 from .page_layout import apply_page_margins
 from .selection import METHOD_ICONS, METHOD_LABELS, METHOD_TIPS, Method
 
-DEFAULT_BRUSH_RADIUS = 5.0
 TILE_ICON_SIZE = QSize(96, 48)
 TILE_GRID_SIZE = QSize(116, 92)
-METHOD_GRID_POSITIONS = {Method.CLICK: (0, 0), Method.FREEHAND: (0, 1), Method.BRUSH: (1, 0), Method.LAYER: (1, 1)}
+METHOD_GRID_POSITIONS = {Method.CLICK: (0, 0), Method.FREEHAND: (0, 1), Method.LAYER: (1, 0)}
 
 
 class _ToolTileList(QListWidget):
@@ -126,18 +125,6 @@ class ToolGallery(QgsPanelWidget):
             method_grid.addWidget(button, *METHOD_GRID_POSITIONS[method])
         layout.addLayout(method_grid)
 
-        brush_row = QHBoxLayout()
-        self.brush_label = QLabel(self.tr("Brush radius"))
-        brush_row.addWidget(self.brush_label)
-        self.brush_spin = QgsDoubleSpinBox()
-        self.brush_spin.setRange(0.1, 1000.0)
-        self.brush_spin.setDecimals(1)
-        self.brush_spin.setValue(DEFAULT_BRUSH_RADIUS)
-        self.brush_spin.setToolTip(self.tr("Radius of the round brush; [ and ] or Ctrl+wheel change it while painting."))
-        brush_row.addWidget(self.brush_spin)
-        brush_row.addStretch(1)
-        layout.addLayout(brush_row)
-
         self.layer_source = LayerSource()
         self.layer_source.hide()
         layout.addWidget(self.layer_source)
@@ -188,25 +175,8 @@ class ToolGallery(QgsPanelWidget):
     def select_mode(self, mode: Mode) -> None:
         (self.area_mode if mode is Mode.AREA else self.line_mode).setChecked(True)
 
-    def brush_radius(self) -> float:
-        return self.brush_spin.value()
-
-    def set_brush_radius(self, radius: float) -> None:
-        self.brush_spin.setValue(radius)
-
-    def set_radius_units(self, units) -> None:
-        """Name the units the brush radius is really in — the canvas's map units, never converted."""
-        self.brush_spin.setSuffix(f" {self._unit_label(units)}")
-
     def clear_hint(self) -> None:
         self.hint.hide()
-
-    def _unit_label(self, units) -> str:
-        if units == Qgis.DistanceUnit.Meters:
-            return self.tr("m")
-        if units == Qgis.DistanceUnit.Degrees:
-            return self.tr("degrees")
-        return QgsUnitTypes.toAbbreviatedString(units) or self.tr("map units")
 
     def _shape_button(self, text: str) -> QToolButton:
         """`autoRaise` off, on both Line and Area, so each looks like a button in either state —
@@ -245,13 +215,8 @@ class ToolGallery(QgsPanelWidget):
 
     def _mode_changed(self, *_args) -> None:
         mode = self.selected_mode()
-        for method, button in self.method_buttons.items():
-            button.setEnabled(mode is not None and (mode is Mode.AREA or method is not Method.BRUSH))
-        brush_usable = self.method_buttons[Method.BRUSH].isEnabled()
-        self.brush_label.setEnabled(brush_usable)
-        self.brush_spin.setEnabled(brush_usable)
-        self.brush_label.setVisible(brush_usable)
-        self.brush_spin.setVisible(brush_usable)
+        for button in self.method_buttons.values():
+            button.setEnabled(mode is not None)
         if mode is not None:
             self.layer_source.set_mode(mode)
         else:

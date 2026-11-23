@@ -30,7 +30,6 @@ from . import illustrations
 from .controller import LOG_TAG
 from .feature_list import FeatureListModel, FeatureListView
 from .map_tools.base import SketchTool
-from .map_tools.brush import BrushTool
 from .map_tools.draw_line import DrawLineTool
 from .map_tools.draw_polygon import DrawPolygonTool
 from .map_tools.freehand import FreehandTool
@@ -38,7 +37,7 @@ from .map_tools.vertex_edit import VertexEditTool
 from .overlay import PreviewOverlay
 from .page_layout import apply_page_margins
 from .properties_page import PropertiesPage
-from .selection import BRUSH_EXTEND_HINT, EDIT_HINT, METHOD_HINTS, ZOOM_ICON, Method
+from .selection import EDIT_HINT, METHOD_HINTS, ZOOM_ICON, Method
 from .tool_gallery import ToolGallery
 from .undo import UndoKeys
 from .view_3d import TerrainViews
@@ -108,7 +107,7 @@ class _PagePanel(QgsPanelWidget):
     A wrapper kept for both `ToolGallery` and `PropertiesPage`: each is a single, persistent
     instance (`dock.gallery`, `dock.properties`) that must survive being closed and reopened many
     times over the dock's life — reused across sessions and features so state like the picked tool,
-    the brush radius or the undo-key filters installed on `properties`' fields keeps working — but
+    the undo-key filters installed on `properties`' fields keeps working — but
     pushing the very same `QgsPanelWidget` through `openPanel`/`acceptPanel` a second time corrupts
     the stack (verified by probe). So neither is ever pushed itself: a *fresh* `_PagePanel` wraps
     it on every open, and only the wrapper is ever pushed and accepted. `content` keeps its
@@ -209,11 +208,6 @@ class MainDock(QgsDockWidget):
         self._session_has_dem = False       # _session_changed's own memory of has_dem, to spot a real transition
         controller.before_discard = self._offer_save_before_discard
         self.edit_tool = None
-        # The brush can extend the selected area instead of adding a feature (`_brush_target`). The
-        # panel cannot reach that today — New feature clears the selection before its page opens —
-        # but it is kept as the hook for a future "paint more" action on the feature page.
-        self._brush_fid = None
-        self._brush_extends = False       # set with _brush_fid, but kept when that feature goes
         self._section_fid = None          # the area whose section line is being drawn
         self._hint_text = None            # remembered so `_reroute_hint` can follow a page opening or closing
         self.highlight = QgsRubberBand(iface.mapCanvas(), Qgis.GeometryType.Line)
@@ -380,8 +374,8 @@ class MainDock(QgsDockWidget):
 
         # `gallery` and `properties` keep their names and behaviour (spec §12); each is wrapped as a
         # drill-in page (see `_PagePanel`) — a single, persistent instance that survives being
-        # closed and reopened for the dock's whole life, since state like the picked tool, the
-        # brush radius, or `spin_undo_keys`' filters on `properties`' fields must keep working.
+        # closed and reopened for the dock's whole life, since state like the picked tool or
+        # `spin_undo_keys`' filters on `properties`' fields must keep working.
         self.gallery = ToolGallery(self._released_pages)
         self.gallery.drawRequested.connect(self._begin_drawing)
         self.gallery.layerRequested.connect(self._use_layer)
@@ -421,11 +415,9 @@ class MainDock(QgsDockWidget):
         self.feature_view.selectionModel().selectionChanged.connect(self._selection_changed)
         self.feature_view.customContextMenuRequested.connect(self._context_menu)
         self.iface.mapCanvas().mapToolSet.connect(self._map_tool_set)
-        self.iface.mapCanvas().destinationCrsChanged.connect(self._update_radius_units)
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_overlay_transform)
         self.iface.mapCanvas().destinationCrsChanged.connect(self._refresh_highlight)   # drawn in the map's CRS
         controller.featuresChanged.connect(self._refresh_highlight)
-        controller.featuresChanged.connect(self._drop_missing_brush_target)
         controller.featuresChanged.connect(self._sync_selection_page)
         controller.sessionChanged.connect(self._session_changed)
         controller.message.connect(self._show_message)
@@ -490,7 +482,7 @@ class MainDock(QgsDockWidget):
         from many plain callers that only depend on it running — it never returns a value, so a
         caller loses nothing when the guard below swallows an exception instead of raising it."""
         try:
-            tool, self.draw_tool, self._brush_fid, self._brush_extends = self.draw_tool, None, None, False
+            tool, self.draw_tool = self.draw_tool, None
             self._section_fid = None
             self._release_tool(tool)
         except Exception:  # noqa: BLE001 — this runs off a Qt signal
@@ -579,7 +571,6 @@ class MainDock(QgsDockWidget):
                 self.close_page()
                 self.views.setCurrentIndex(VIEW_SESSION if has_dem else VIEW_WELCOME)
             self._session_has_dem = has_dem
-            self._update_radius_units()
             self._update_overlay_transform()
             self._register_styles_action()
             self._refresh_styles_action()
@@ -643,7 +634,7 @@ class MainDock(QgsDockWidget):
 
     def show_hint(self, text: str) -> None:
         """Show the instruction text for whichever activity is running. `METHOD_HINTS` and
-        `BRUSH_EXTEND_HINT` belong to the New feature page. `EDIT_HINT` (Edit shape) and
+        belong to the New feature page. `EDIT_HINT` (Edit shape) and
         `SECTION_LINE_HINT` (Draw section line, from the Profiles dock) belong to the feature page
         (spec §6 item 6, §7) and show there whenever it is the page open; with no page open at all —
         a section line drawn from the Profiles dock after going back to the list — the hint shows
@@ -753,23 +744,6 @@ class MainDock(QgsDockWidget):
             self.overlay.crs_transform = transform
             if failed:
                 self.overlay.clear()
-        except Exception:  # noqa: BLE001 — this runs in a slot
-            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-
-    def _update_radius_units(self) -> None:
-        """Label the brush radius with the canvas's own map units — the brush buffers in them.
-        Guarded: reached from `destinationCrsChanged`, a Qt signal."""
-        try:
-            self.gallery.set_radius_units(self.iface.mapCanvas().mapUnits())
-        except Exception:  # noqa: BLE001 — this runs in a slot
-            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
-
-    def _drop_missing_brush_target(self) -> None:
-        """The feature a brush stroke extends can be deleted while the stroke is still running.
-        Guarded: runs from `featuresChanged`, a Qt signal."""
-        try:
-            if self._brush_fid is not None and self._brush_fid not in {f.id for f in self.controller.features}:
-                self._brush_fid = None
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
@@ -1012,19 +986,7 @@ class MainDock(QgsDockWidget):
         try:
             self.stop_tools()
             canvas = self.iface.mapCanvas()
-            if method is Method.BRUSH:
-                self._brush_fid = self._brush_target(tool, mode)
-                self._brush_extends = self._brush_fid is not None
-                try:
-                    initial = (self._to_canvas(self.controller.feature_geometry(self._brush_fid))
-                              if self._brush_fid else None)
-                except QgsCsException:
-                    self._brush_fid, self._brush_extends = None, False
-                    self._show_message(Qgis.MessageLevel.Warning, SHAPE_NOT_TRANSFORMED)
-                    return
-                self.draw_tool = BrushTool(canvas, self.gallery.brush_radius(), initial)
-                self.draw_tool.radiusChanged.connect(self.gallery.set_brush_radius)
-            elif method is Method.FREEHAND:
+            if method is Method.FREEHAND:
                 shape = Qgis.GeometryType.Line if mode is Mode.PATH else Qgis.GeometryType.Polygon
                 self.draw_tool = FreehandTool(canvas, shape)
             else:
@@ -1072,33 +1034,15 @@ class MainDock(QgsDockWidget):
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _drawing_hint(self, method) -> str:
-        """The instruction text for `method`, naming the feature when the brush extends one."""
-        if self._brush_fid is not None:
-            return BRUSH_EXTEND_HINT.format(self.controller.feature(self._brush_fid).name)
+        """The instruction text for `method`."""
         return METHOD_HINTS[method]
-
-    def _brush_target(self, tool, mode) -> str | None:
-        """The selected feature the brush should extend, if it fits the chosen tool and shape.
-        Currently always None from the panel itself: `_new_feature` clears the selection before
-        the New feature page opens, so only code that drives the gallery directly reaches an
-        extending brush (see the note on `_brush_fid` in `__init__`)."""
-        fid = self.feature_view.selected_id()
-        if fid is None or mode is not Mode.AREA:
-            return None
-        feature = self.controller.feature(fid)
-        return fid if feature.tool is tool and feature.mode is Mode.AREA else None
 
     def _drawn(self, tool, mode, geometry) -> None:
         """Guarded: reached from `draw_tool.finished` (via the lambda `_begin_drawing` connects),
         a Qt signal."""
         try:
             crs = self.iface.mapCanvas().mapSettings().destinationCrs()
-            fid = self._brush_fid
             self.end_drawing()
-            if fid is not None:
-                self.controller.set_geometry(fid, geometry, crs)
-                self.feature_view.select_id(fid)
-                return
             feature = self.controller.add_drawn(tool, mode, geometry, crs)
             if feature is not None:
                 self._open_feature_page(feature.id)   # a finished drawing opens the new feature's page (spec §9)
@@ -1199,17 +1143,13 @@ class MainDock(QgsDockWidget):
 
     def _history_restored(self) -> None:
         """Undo or redo replaced the feature list underneath whatever the panel shows. A vertex
-        edit or a brush stroke that extends a feature holds that feature's old outline and would
-        put it straight back, so both stop; drawing a new feature does not depend on the list and
-        carries on. (The Properties page follows every change on its own.)
-        `_brush_extends`, not `_brush_fid`: an undo that removes the feature itself has already cleared
-        the id (featuresChanged comes first), and the brush would then add the old outline as a new feature.
+        edit holds that feature's old outline and would put it straight back, so it stops; drawing a
+        new feature does not depend on the list and carries on. (The Properties page follows every
+        change on its own.)
 
         Guarded: reached from `controller.featuresRestored`, a Qt signal."""
         try:
             self.stop_editing()
-            if self._brush_extends:
-                self.end_drawing()
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 

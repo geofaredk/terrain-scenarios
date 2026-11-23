@@ -7,7 +7,7 @@ from qgis.PyQt.QtGui import QAction, QKeySequence
 from qgis.PyQt.QtTest import QTest
 from qgis.PyQt.QtWidgets import QApplication
 
-from qgis_helpers import UTM, dem_layer, fake_iface, line_through, spin_event_loop, square
+from qgis_helpers import UTM, dem_layer, fake_iface, line_through, spin_event_loop
 from terrain_scenarios.core.tools import Mode, Tool
 from terrain_scenarios.gui.controller import SketchController
 from terrain_scenarios.gui.help_texts import UNDO_ADD
@@ -119,36 +119,6 @@ def test_undo_stops_a_vertex_edit_that_would_put_the_old_outline_back(tmp_path):
     assert dock.edit_tool is not None
     dock.undo_button.click()
     assert dock.edit_tool is None and not dock.edit_button.isChecked()
-
-
-def test_undo_stops_a_brush_that_extends_a_feature(tmp_path):
-    _iface, c, dock = panel(tmp_path)
-    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
-    c.update_feature(pond.id, amount=2.0)
-    dock.feature_view.select_id(pond.id)
-    dock.gallery.select_tool(Tool.LOWER_FLAT)
-    dock.gallery.select_mode(Mode.AREA)
-    dock.gallery.method_buttons[Method.BRUSH].click()
-    assert dock.draw_tool is not None and dock._brush_fid == pond.id
-    dock.undo_button.click()
-    assert dock.draw_tool is None and dock._brush_fid is None
-
-
-def test_undo_that_removes_the_feature_a_brush_extends_stops_the_brush(tmp_path):
-    """The undo removes the pond itself. The brush still holds the pond's outline, and finishing it
-    must not bring the undone pond back as a new feature."""
-    _iface, c, dock = panel(tmp_path)
-    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
-    dock.feature_view.select_id(pond.id)
-    dock.gallery.select_tool(Tool.LOWER_FLAT)
-    dock.gallery.select_mode(Mode.AREA)
-    dock.gallery.method_buttons[Method.BRUSH].click()
-    brush = dock.draw_tool
-    assert brush is not None and dock._brush_fid == pond.id
-    dock.undo_button.click()                               # undoes the Add of the pond
-    assert c.features == () and dock.draw_tool is None
-    brush.finish()                                         # a click that was already on its way
-    assert c.features == ()
 
 
 def test_undo_reloads_the_properties_page(tmp_path):

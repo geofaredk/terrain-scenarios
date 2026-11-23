@@ -28,6 +28,16 @@ the drawing itself to follow the values, so the shape on the page is the shape h
 - The diagram redraws on every value change: typing in a field, profile-dock drags, undo/redo,
   and theme changes.
 
+## Where it sits
+
+- The diagram sits in its own bordered, collapsible box titled "Cross-section", just above the
+  fields. Niklas asked for this on 2026-11-23.
+- The box is a `QgsCollapsibleGroupBox`, the same native control as the Advanced box below the
+  fields.
+- It starts expanded, and whether it is collapsed is remembered between sessions, like Advanced's
+  (`settings.remember_collapsed`).
+- The whole box is hidden for tools that have no diagram.
+
 ## Proportions (approach B)
 
 - Horizontal: the whole section, crest plus both sides out to where they meet the ground or stop,

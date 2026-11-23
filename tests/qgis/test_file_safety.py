@@ -6,13 +6,12 @@ from unittest import mock
 import pytest
 from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsCsException, QgsGeometry, QgsProject
 
-from qgis_helpers import UTM, dem_layer, fake_iface, line_through, square, start_session
+from qgis_helpers import UTM, dem_layer, fake_iface, line_through, start_session
 from terrain_scenarios.core.tools import Mode, Tool
 from terrain_scenarios.gui import controller as controller_module
 from terrain_scenarios.gui.controller import SketchController
 from terrain_scenarios.gui.help_texts import EXPORT_REPLACE, SHAPE_NOT_TRANSFORMED
 from terrain_scenarios.gui.main_dock import MainDock
-from terrain_scenarios.gui.selection import Method
 from terrain_scenarios.qgis_io.layers import GROUP_NAME
 from terrain_scenarios.qgis_io.raster_io import DemError
 
@@ -55,19 +54,6 @@ def test_editing_a_shape_that_cannot_be_projected_is_a_message_not_a_crash(tmp_p
     with mock.patch.object(QgsGeometry, "transform", side_effect=QgsCsException("forced")):
         dock.edit_button.setChecked(True)          # toggled -> slot; an exception there aborts QGIS
     assert dock.edit_tool is None and not dock.edit_button.isChecked()
-    assert SHAPE_NOT_TRANSFORMED in messages(iface)
-
-
-def test_brushing_onto_a_shape_that_cannot_be_projected_is_a_message_not_a_crash(tmp_path):
-    iface, c, dock = panel(tmp_path)
-    iface.mapCanvas().setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:3857"))
-    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)
-    dock.feature_view.select_id(pond.id)
-    dock.gallery.select_tool(Tool.LOWER_FLAT)
-    dock.gallery.select_mode(Mode.AREA)
-    with mock.patch.object(QgsGeometry, "transform", side_effect=QgsCsException("forced")):
-        dock.gallery.method_buttons[Method.BRUSH].click()
-    assert dock.draw_tool is None and dock._brush_fid is None
     assert SHAPE_NOT_TRANSFORMED in messages(iface)
 
 

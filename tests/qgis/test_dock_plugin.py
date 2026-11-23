@@ -6,18 +6,17 @@ from qgis.PyQt.QtCore import QEvent, Qt
 from qgis.PyQt.QtGui import QKeyEvent
 from qgis.PyQt.QtWidgets import QApplication
 
-from qgis.core import QgsCoordinateReferenceSystem, QgsCsException, QgsGeometry, QgsPointXY
+from qgis.core import QgsCoordinateReferenceSystem, QgsCsException, QgsGeometry
 
 from qgis.core import QgsRectangle
 
-from qgis_helpers import UTM, dem_layer, fake_iface, line_through, sample, square, world
+from qgis_helpers import UTM, dem_layer, fake_iface, line_through, sample, square
 from terrain_scenarios import classFactory
 from terrain_scenarios.core.tools import Mode, Tool
 from terrain_scenarios.gui.selection import Method
 from terrain_scenarios.gui.controller import SketchController
 from terrain_scenarios.gui.main_dock import VIEW_SESSION, VIEW_WELCOME, MainDock
 from terrain_scenarios.gui.map_tools.draw_line import DrawLineTool
-from terrain_scenarios.qgis_io.layers import GROUP_NAME
 
 
 def test_drawing_a_dike_from_the_panel(tmp_path):
@@ -146,23 +145,6 @@ def _session_dock(tmp_path):
     return iface, controller, dock
 
 
-def test_the_brush_extends_the_selected_area_feature(tmp_path):
-    """Drives the gallery directly, with a feature selected: the panel itself cannot reach an
-    extending brush, because New feature clears the selection before its page opens. The code is
-    kept as the hook for a future "paint more" action."""
-    _iface, controller, dock = _session_dock(tmp_path)
-    pond = controller.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
-    dock.feature_view.select_id(pond.id)
-    dock.gallery.select_tool(Tool.LOWER_FLAT)
-    dock.gallery.select_mode(Mode.AREA)
-    dock.gallery.method_buttons[Method.BRUSH].click()
-    assert dock._brush_fid == pond.id and not dock.draw_tool.geometry.isEmpty()
-    dock.draw_tool.apply_stroke([QgsPointXY(*world(25, 15))])  # paint next to the pond
-    dock.draw_tool.finish()
-    assert len(controller.features) == 1  # the pond grew, no second feature
-    assert sample(controller.layers.working, 25, 15) < 10.0
-
-
 def test_vertex_editing_reshapes_the_selected_feature(tmp_path):
     _iface, controller, dock = _session_dock(tmp_path)
     dike = controller.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
@@ -218,36 +200,6 @@ def test_deleting_the_shown_feature_leaves_the_properties_page(tmp_path):
         assert dock.stack.currentPanel() is not dock.properties_page
 
 
-def test_deleting_the_brushed_feature_mid_stroke_does_not_take_qgis_down(tmp_path):
-    _iface, controller, dock = _session_dock(tmp_path)
-    pond = controller.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
-    dock.feature_view.select_id(pond.id)
-    dock.gallery.select_tool(Tool.LOWER_FLAT)
-    dock.gallery.select_mode(Mode.AREA)
-    dock.gallery.method_buttons[Method.BRUSH].click()
-    brush = dock.draw_tool
-    assert dock._brush_fid == pond.id
-    controller.delete_feature(pond.id)  # the Delete button or the row context menu, still painting
-    assert dock._brush_fid is None
-    brush.apply_stroke([QgsPointXY(*world(25, 15))])
-    brush.finish()  # a stale target used to raise StopIteration out of this Qt callback
-    assert len(controller.features) == 1 and controller.features[0].id != pond.id
-
-
-def test_the_brush_hint_names_the_feature_it_extends(tmp_path):
-    _iface, controller, dock = _session_dock(tmp_path)
-    pond = controller.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 20, 20), UTM)
-    dock.feature_view.select_id(pond.id)
-    dock.gallery.select_tool(Tool.LOWER_FLAT)
-    dock.gallery.select_mode(Mode.AREA)
-    dock.gallery.method_buttons[Method.BRUSH].click()
-    assert dock._brush_fid == pond.id and pond.name in dock.hint.text()
-    dock.end_drawing()
-    dock.feature_view.clearSelection()
-    dock.gallery.method_buttons[Method.BRUSH].click()  # nothing selected: this paints a new feature
-    assert dock._brush_fid is None and pond.name not in dock.hint.text()
-
-
 def test_opening_a_row_takes_the_new_feature_page_and_its_hint_off_screen(tmp_path):
     """`isHidden()` is False for a widget that was never put on screen at all, so the original form
     of this test (no `dock.show()`, no `dock.new_button.click()`) could not tell a visible hint from
@@ -280,13 +232,6 @@ def test_closing_the_panel_stops_the_edit_tool_too(tmp_path):
     assert dock.edit_tool is not None
     dock.close()
     assert dock.edit_tool is None and iface.mapCanvas().mapTool() is None
-
-
-def test_the_brush_radius_follows_the_canvas_crs(tmp_path):
-    iface, _controller, dock = _session_dock(tmp_path)
-    assert dock.gallery.brush_spin.suffix() == " m"  # the test canvas is UTM
-    iface.mapCanvas().setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
-    assert dock.gallery.brush_spin.suffix() == " degrees"
 
 
 def _dock_on(tmp_path, canvas_crs=None):

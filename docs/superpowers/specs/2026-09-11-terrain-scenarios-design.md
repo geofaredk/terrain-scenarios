@@ -205,6 +205,8 @@ All map tools share `map_tools/base.py`:
 
 Only methods that fit the tool's modes are enabled. Raise path and Lower path accept lines only. Tools with both modes show a **Line / Area** toggle above the "Where?" buttons.
 
+> **Note (2026-11-23):** the Brush method described in this section and in §6 was removed from the plugin at the owner's request. The New feature page offers Draw, Freehand and From layer only; the Brush rows above are kept as history.
+
 ### 6.2 Geometry handling
 
 - Geometries are transformed to the DEM CRS on creation (`qgis_io/convert.py`) and repaired with `makeValid`.

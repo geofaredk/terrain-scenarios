@@ -1,5 +1,5 @@
 import pytest
-from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsProject
+from qgis.core import QgsApplication, QgsProject
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QListView, QPushButton
 
@@ -419,14 +419,10 @@ def test_the_tools_are_shown_as_tiles(tmp_path):
     assert not gallery.tool_list.item(0).icon().isNull()
 
 
-def test_the_brush_radius_is_only_there_when_the_brush_is(tmp_path):
-    _iface, _c, dock = panel(tmp_path)
-    dock.new_button.click()
-    dock.gallery.select_tool(Tool.ADD)   # a tool that reaches both shapes, unlike RAISE_PATH
-    dock.gallery.select_mode(Mode.PATH)
-    assert not dock.gallery.brush_spin.isVisibleTo(dock.gallery)     # no brush on a line
-    dock.gallery.select_mode(Mode.AREA)
-    assert dock.gallery.brush_spin.isVisibleTo(dock.gallery)
+def test_the_new_feature_page_offers_exactly_click_freehand_and_from_layer():
+    gallery = ToolGallery()
+    assert list(gallery.method_buttons) == [Method.CLICK, Method.FREEHAND, Method.LAYER]
+    assert [b.text() for b in gallery.method_buttons.values()] == ["Draw", "Freehand", "From layer"]
 
 
 def test_shape_is_a_segmented_pair_that_disables_what_the_tool_cannot_do(tmp_path):
@@ -565,32 +561,17 @@ def test_reopening_new_feature_does_not_build_a_new_gallery(tmp_path):
 
 
 def test_the_gallery_keeps_its_state_across_close_and_reopen(tmp_path):
-    """Closing and reopening the New feature page must not reset the tool, shape or brush radius
+    """Closing and reopening the New feature page must not reset the tool or shape
     the user picked — only meaningful because `dock.gallery` is the same instance every time
     (see `test_reopening_new_feature_does_not_build_a_new_gallery`)."""
     _iface, _c, dock = panel(tmp_path)
     dock.new_button.click()
     dock.gallery.select_tool(Tool.LOWER_FLAT)
     dock.gallery.select_mode(Mode.AREA)
-    dock.gallery.set_brush_radius(17.0)
     dock.close_page()
     dock.new_button.click()
     assert dock.gallery.selected_tool() is Tool.LOWER_FLAT
     assert dock.gallery.selected_mode() is Mode.AREA
-    assert dock.gallery.brush_radius() == pytest.approx(17.0)
-
-
-def test_a_brush_strokes_radius_change_updates_the_one_gallery(tmp_path):
-    """[ and ] (or Ctrl+wheel) change the brush radius while painting; `BrushTool.radiusChanged` is
-    wired to `dock.gallery.set_brush_radius` — with one persistent gallery this always lands on the
-    spin box the user can see, not on a spin box belonging to some other, already-replaced page."""
-    _iface, _c, dock = panel(tmp_path)
-    dock.new_button.click()
-    dock.gallery.select_tool(Tool.LOWER_FLAT)
-    dock.gallery.select_mode(Mode.AREA)
-    dock.gallery.method_buttons[Method.BRUSH].click()
-    dock.draw_tool.radiusChanged.emit(9.0)
-    assert dock.gallery.brush_radius() == pytest.approx(9.0)
 
 
 def test_pressing_back_while_drawing_stops_the_map_tool(tmp_path):
@@ -624,10 +605,9 @@ def test_gallery_offers_only_the_shapes_and_methods_a_tool_supports():
     assert gallery.line_mode.isEnabled() and not gallery.area_mode.isEnabled()
     assert gallery.selected_mode() is Mode.PATH
     assert gallery.method_buttons[Method.FREEHAND].isEnabled()
-    assert not gallery.method_buttons[Method.BRUSH].isEnabled() and not gallery.brush_spin.isEnabled()
     gallery.select_tool(Tool.LOWER_FLAT)
     gallery.select_mode(Mode.AREA)
-    assert gallery.method_buttons[Method.BRUSH].isEnabled() and gallery.brush_spin.isEnabled()
+    assert gallery.method_buttons[Method.FREEHAND].isEnabled() and gallery.method_buttons[Method.LAYER].isEnabled()
     requests = []
     gallery.drawRequested.connect(lambda tool, mode, method: requests.append((tool, mode, method)))
     gallery.method_buttons[Method.FREEHAND].click()
@@ -672,19 +652,6 @@ def test_every_panel_icon_exists_in_the_qgis_theme():
     from terrain_scenarios.gui.main_dock import PROFILES_ICON
     for name in (*METHOD_ICONS.values(), EDIT_ICON, ZOOM_ICON, PROFILES_ICON):
         assert not QgsApplication.getThemeIcon(name).isNull(), name
-
-
-def test_the_brush_radius_is_labelled_with_the_units_it_is_really_in():
-    gallery = ToolGallery()
-    gallery.set_radius_units(QgsCoordinateReferenceSystem("EPSG:25832").mapUnits())
-    assert gallery.brush_spin.suffix() == " m"
-    gallery.set_radius_units(QgsCoordinateReferenceSystem("EPSG:4326").mapUnits())
-    assert gallery.brush_spin.suffix() == " degrees"
-    gallery.set_radius_units(Qgis.DistanceUnit.Unknown)
-    assert gallery.brush_spin.suffix() == " map units"
-
-
-# --- The feature page -----------------------------------------------------------------------
 
 
 def test_opening_a_feature_shows_its_page_with_name_and_tool(tmp_path):

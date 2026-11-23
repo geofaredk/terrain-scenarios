@@ -192,7 +192,7 @@ def test_set_geometry_replaces_the_shape(tmp_path):
 def test_reshaping_a_feature_that_was_deleted_is_reported_not_raised(tmp_path):
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    c.delete_feature(dike.id)  # e.g. the Delete button while a brush stroke was still running
+    c.delete_feature(dike.id)  # e.g. the Delete button while a vertex edit was still running
     messages = []
     c.message.connect(lambda level, text: messages.append(text))
     assert c.set_geometry(dike.id, line_through(5, 30, 34, 30), UTM) is False

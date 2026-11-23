@@ -231,8 +231,8 @@ class SketchController(QObject):
         return self.add_drawn(tool, mode, combined, layer.crs(), name=layer.name())
 
     def set_geometry(self, fid: str, geometry: QgsGeometry, crs) -> bool:
-        """Replace a feature's shape (brush and vertex editing); False, with a message, if unusable.
-        A feature that no longer exists — deleted while a brush or vertex edit was still running —
+        """Replace a feature's shape (vertex editing); False, with a message, if unusable.
+        A feature that no longer exists — deleted while a vertex edit was still running —
         is reported like a missing session, never raised: this runs inside a Qt callback."""
         feature = next((f for f in self._features if f.id == fid), None)
         if not self.has_dem or feature is None:

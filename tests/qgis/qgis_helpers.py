@@ -77,6 +77,7 @@ def fake_iface():
     canvas.setExtent(QgsRectangle(X0, Y0 - 40, X0 + 40, Y0))
     iface.mapCanvas.return_value = canvas
     iface.iconSize.return_value = QSize(16, 16)   # QGIS's default docked-toolbar icon size
+    iface.mapCanvases3D.return_value = []          # no 3D views open
     # The bar stays a Mock so tests can assert pushMessage was called, but createMessage hands
     # back a REAL item: the panel builds a button onto it, and a Mock there would let a broken
     # widget path pass unnoticed — it aborted the interpreter instead.

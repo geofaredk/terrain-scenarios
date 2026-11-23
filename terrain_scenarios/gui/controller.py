@@ -79,6 +79,7 @@ class SketchController(QObject):
     message = pyqtSignal(object, str)  # (Qgis.MessageLevel, text for the message bar)
     featuresRestored = pyqtSignal()    # undo or redo replaced the feature list
     stylesChanged = pyqtSignal()       # a feature's displayed symbol may have changed
+    terrainWritten = pyqtSignal()      # the Modified DEM layer reads a new file or new contents (3D views rebuild)
 
     def __init__(self, project: QgsProject, parent=None):
         super().__init__(parent)
@@ -596,6 +597,7 @@ class SketchController(QObject):
         self._files_owner, self._files_edited = owner, False
         if self.layers is not None:
             self.layers.repoint(self.files.working_path, self.files.change_path)
+            self.terrainWritten.emit()
         if old_owner is None:
             shutil.rmtree(old_folder, ignore_errors=True)
         elif old_edited:
@@ -703,6 +705,7 @@ class SketchController(QObject):
                 self._files_edited = True
                 self.files.write(window, self.stack.working)
                 self.layers.refresh()
+                self.terrainWritten.emit()
             with self._outline_writes():
                 self.layers.set_outlines(self._outline_items())
                 self.layers.apply_styles(self._style_entries())

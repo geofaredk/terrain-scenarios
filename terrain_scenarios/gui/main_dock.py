@@ -41,6 +41,7 @@ from .properties_page import PropertiesPage
 from .selection import BRUSH_EXTEND_HINT, EDIT_HINT, METHOD_HINTS, ZOOM_ICON, Method
 from .tool_gallery import ToolGallery
 from .undo import UndoKeys
+from .view_3d import TerrainViews
 
 VIEW_WELCOME, VIEW_SESSION = range(2)
 PROFILES_ICON = "/mActionElevationProfile.svg"
@@ -431,6 +432,11 @@ class MainDock(QgsDockWidget):
         controller.previewUpdated.connect(self._preview_updated)
         controller.previewCleared.connect(self._clear_preview)
         controller.featuresRestored.connect(self._history_restored)
+        # 3D views of the Modified DEM: full detail when they open, and rebuilt after each change (spec §8.5)
+        self.terrain_views = TerrainViews(iface, controller.project,
+                                          lambda: controller.layers.working_id if controller.layers is not None else None,
+                                          parent=self)
+        controller.terrainWritten.connect(self.terrain_views.schedule_rebuild)
         # Ctrl+Z / Ctrl+Shift+Z: in the panel always, on the map only while a Terrain Scenarios tool is active
         self.undo_keys = UndoKeys(controller.undo_stack, parent=self)
         self.installEventFilter(self.undo_keys)
@@ -521,6 +527,7 @@ class MainDock(QgsDockWidget):
         # The filters on the panels are this dock's children and go with it; the canvas outlives the plugin
         self.iface.mapCanvas().removeEventFilter(self.canvas_undo_keys)
         self.iface.removeCustomActionForLayerType(self.use_styles_action)
+        self.terrain_views.shutdown()
 
     def _release_tool(self, tool) -> None:
         if tool is not None:
@@ -1417,12 +1424,14 @@ class MainDock(QgsDockWidget):
                 return
             try:
                 if _3d_types_loaded() and self.iface.createNewMapCanvas3D(self.tr("Terrain Scenarios 3D")) is not None:
+                    self.terrain_views.check_soon()     # its detail, whichever way QGIS showed it
                     return
             except Exception:  # noqa: BLE001 — a QGIS built without 3D; the menu action may still work
                 QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Warning)
             action = self.iface.mainWindow().findChild(QAction, "mActionNew3DMapCanvas")
             if action is not None and action.isEnabled():
                 action.trigger()
+                self.terrain_views.check_soon()
                 return
         except Exception:  # noqa: BLE001 — this runs in a click slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)

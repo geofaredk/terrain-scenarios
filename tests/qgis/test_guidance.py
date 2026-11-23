@@ -74,13 +74,46 @@ def test_the_diagram_highlights_the_field_that_has_focus(tmp_path):
     assert on_width != neutral and on_slope != neutral and on_width != on_slope
 
 
-def test_the_diagram_is_hidden_for_a_tool_that_has_no_slopes(tmp_path):
+def test_the_diagram_box_is_hidden_for_a_tool_that_has_no_slopes(tmp_path):
     c = start_session(tmp_path)
     page = PropertiesPage(c)
     page.show_feature(c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM).id)
-    assert page.diagram.isVisibleTo(page)
+    assert page.diagram_box.isVisibleTo(page)
     page.show_feature(c.add_drawn(Tool.ADD, Mode.AREA, square(10, 10, 25, 25), UTM).id)
-    assert not page.diagram.isVisibleTo(page)
+    assert not page.diagram_box.isVisibleTo(page)
+
+
+def test_the_diagram_sits_in_a_collapsible_cross_section_box(tmp_path):
+    from qgis.gui import QgsCollapsibleGroupBox
+    c = start_session(tmp_path)
+    page = PropertiesPage(c)
+    page.show_feature(c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM).id)
+    assert isinstance(page.diagram_box, QgsCollapsibleGroupBox)
+    assert page.diagram_box.title() == "Cross-section"
+    assert page.diagram.parent() is page.diagram_box
+
+
+def test_the_diagram_follows_a_changed_value(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    page = PropertiesPage(c)
+    page.show_feature(dike.id)
+    before = page.diagram.pixmap().toImage()
+    c.update_feature(dike.id, amount=dike.amount + 1.5)
+    assert page.diagram.pixmap().toImage() != before
+
+
+def test_a_changed_value_keeps_the_highlight(tmp_path):
+    c = start_session(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    page = PropertiesPage(c)
+    page.show_feature(dike.id)
+    focus(page.slope)
+    c.update_feature(dike.id, amount=dike.amount + 1.5)
+    from terrain_scenarios.gui.illustrations import section
+    expected = section.section_pixmap(c.find(dike.id), page.diagram.pixmap().size(), page.palette(),
+                                      highlight="slope").toImage()
+    assert page.diagram.pixmap().toImage() == expected
 
 
 def test_every_numeric_field_quotes_a_real_measurement_in_its_tooltip(tmp_path):

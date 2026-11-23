@@ -29,35 +29,45 @@ SHAPE_ICONS = {Mode.PATH: "/mIconLineLayer.svg", Mode.AREA: "/mIconPolygonLayer.
 
 
 class _ButtonTileDelegate(QStyledItemDelegate):
-    """Paints each tool tile as the style's own push button — icon above, text below — pressed
-    while it is the selected tool, so the tiles read as the same kind of button as the Shape and
-    Selection Tool rows. Each button keeps half a gap clear on every side of its cell, which makes
-    a full gap between neighbours."""
+    """Paints each tool tile as a push button — icon above, text below — pressed while it is the
+    selected tool, so the tiles read as the same kind of button as the Shape and Selection Tool
+    rows. Each button keeps half a gap clear on every side of its cell, which makes a full gap
+    between neighbours.
+
+    The bevel is drawn on behalf of a hidden, real `QPushButton` (`_template`), never the list view:
+    under an application stylesheet — QGIS always sets one — the style picks its rules by the
+    widget it is handed, and painted for the list view a "button" gets the list's rules instead,
+    showing no outline or gradient at all."""
+
+    def __init__(self, view):
+        super().__init__(view)
+        self._template = QPushButton(view.viewport())
+        self._template.setCheckable(True)
+        self._template.hide()
 
     def paint(self, painter, option, index):  # noqa: D102 — Qt override
         # Guarded: a Qt virtual override, reached from the view's paint event.
         try:
-            widget = option.widget
-            style = widget.style()
+            template = self._template
+            template.ensurePolished()
+            rect = option.rect.adjusted(BUTTON_GAP // 2, BUTTON_GAP // 2, -BUTTON_GAP // 2, -BUTTON_GAP // 2)
+            template.setChecked(bool(option.state & QStyle.StateFlag.State_Selected))
+            template.resize(rect.size())
             button = QStyleOptionButton()
-            button.rect = option.rect.adjusted(BUTTON_GAP // 2, BUTTON_GAP // 2, -BUTTON_GAP // 2, -BUTTON_GAP // 2)
-            button.palette = option.palette
-            button.state = QStyle.StateFlag.State_Enabled
-            if option.state & QStyle.StateFlag.State_Selected:
-                button.state |= QStyle.StateFlag.State_On | QStyle.StateFlag.State_Sunken
-            else:
-                button.state |= QStyle.StateFlag.State_Off | QStyle.StateFlag.State_Raised
+            template.initStyleOption(button)
+            button.rect = rect
             if option.state & QStyle.StateFlag.State_MouseOver:
                 button.state |= QStyle.StateFlag.State_MouseOver
-            style.drawControl(QStyle.ControlElement.CE_PushButtonBevel, button, painter, widget)
+            style = template.style()
+            style.drawControl(QStyle.ControlElement.CE_PushButtonBevel, button, painter, template)
 
-            inner = button.rect.adjusted(4, 6, -4, -4)
+            inner = rect.adjusted(4, 6, -4, -4)
             icon_rect = inner.adjusted(0, 0, 0, -(inner.height() - TILE_ICON_SIZE.height()))
             index.data(Qt.ItemDataRole.DecorationRole).paint(painter, icon_rect, Qt.AlignmentFlag.AlignCenter)
             text_rect = inner.adjusted(0, TILE_ICON_SIZE.height() + 2, 0, 0)
             style.drawItemText(painter, text_rect,
                                int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop) | int(Qt.TextFlag.TextWordWrap),
-                               option.palette, True, index.data(Qt.ItemDataRole.DisplayRole),
+                               button.palette, True, index.data(Qt.ItemDataRole.DisplayRole),
                                QPalette.ColorRole.ButtonText)
         except Exception:  # noqa: BLE001 — this runs from a Qt virtual override
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)

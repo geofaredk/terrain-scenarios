@@ -465,6 +465,37 @@ def test_the_feature_tiles_are_buttons_that_fill_the_row(tmp_path):
         assert 0 < tiles.viewport().width() - columns * cell.width() <= columns   # the whole width, bar rounding
 
 
+def test_the_feature_tiles_keep_their_button_frame_under_an_application_stylesheet(tmp_path):
+    """QGIS always sets an application stylesheet. A button painted on the list view's behalf
+    then gets the list's rules and shows no outline at all; painted for a real push button it
+    keeps the button's frame. Down the middle of the first tile, the top edge must stand out."""
+    from qgis.PyQt.QtGui import QColor
+    from qgis.PyQt.QtWidgets import QApplication, QStyleFactory
+    from qgis_helpers import spin_event_loop
+
+    app = QApplication.instance()
+    style = app.style().name()
+    app.setStyle(QStyleFactory.create("Fusion"))
+    app.setStyleSheet("QListView { border: none; }")
+    try:
+        _iface, _c, dock = panel(tmp_path)
+        dock.resize(320, 900)
+        dock.show()
+        dock.new_button.click()
+        QApplication.processEvents()
+        spin_event_loop(20)
+        tiles = dock.gallery.tool_list
+        image = tiles.viewport().grab().toImage()
+        tile = tiles.visualItemRect(tiles.item(0))
+        x = tile.center().x()
+        background = QColor(image.pixel(x, tile.top()))
+        edge = [QColor(image.pixel(x, y)) for y in range(tile.top() + 1, tile.top() + 6)]
+        assert any(abs(c.lightness() - background.lightness()) > 30 for c in edge)
+    finally:
+        app.setStyleSheet("")
+        app.setStyle(QStyleFactory.create(style))
+
+
 def test_shape_and_selection_tool_buttons_share_their_row_equally(tmp_path):
     """Line and Area each take half the panel's width, the three selection tools a third each, with
     only a small gap between them, and every one carries an icon beside its text."""

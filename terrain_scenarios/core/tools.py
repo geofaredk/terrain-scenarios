@@ -40,23 +40,14 @@ class ToolInfo:
     combine: Combine
     has_slopes: bool
     direction: int  # -1: side slopes go down (raise tools), +1: go up (lower tools), 0: no slopes
-    reports_storage: bool
 
 
 TOOL_INFO = {
-    Tool.INTERPOLATE: ToolInfo((Mode.PATH, Mode.AREA), Combine.SET, False, 0, True),
-    Tool.RAISE_PATH: ToolInfo((Mode.PATH,), Combine.MAX, True, -1, False),
-    Tool.LOWER_PATH: ToolInfo((Mode.PATH,), Combine.MIN, True, 1, True),
-    Tool.RAISE_FLAT: ToolInfo((Mode.PATH, Mode.AREA), Combine.MAX, True, -1, False),
-    Tool.LOWER_FLAT: ToolInfo((Mode.PATH, Mode.AREA), Combine.MIN, True, 1, True),
-    Tool.ADD: ToolInfo((Mode.PATH, Mode.AREA), Combine.ADD, False, 0, False),
-    Tool.SUBTRACT: ToolInfo((Mode.PATH, Mode.AREA), Combine.SUBTRACT, False, 0, True),
+    Tool.INTERPOLATE: ToolInfo((Mode.PATH, Mode.AREA), Combine.SET, False, 0),
+    Tool.RAISE_PATH: ToolInfo((Mode.PATH,), Combine.MAX, True, -1),
+    Tool.LOWER_PATH: ToolInfo((Mode.PATH,), Combine.MIN, True, 1),
+    Tool.RAISE_FLAT: ToolInfo((Mode.PATH, Mode.AREA), Combine.MAX, True, -1),
+    Tool.LOWER_FLAT: ToolInfo((Mode.PATH, Mode.AREA), Combine.MIN, True, 1),
+    Tool.ADD: ToolInfo((Mode.PATH, Mode.AREA), Combine.ADD, False, 0),
+    Tool.SUBTRACT: ToolInfo((Mode.PATH, Mode.AREA), Combine.SUBTRACT, False, 0),
 }
-
-
-def reports_storage(tool: Tool, mode: Mode) -> bool:
-    """Whether a feature can hold water, so its storage is worth computing and showing.
-    Interpolate only does in area mode (spec §5.5): along a path it grades a strip between two
-    ends and leaves no basin. The engine and the Volumes panel both ask here, so they cannot
-    disagree about when a Storage figure exists."""
-    return TOOL_INFO[tool].reports_storage and (tool is not Tool.INTERPOLATE or mode is Mode.AREA)

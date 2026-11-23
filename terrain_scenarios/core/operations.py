@@ -15,8 +15,7 @@ from .grid import DemGrid, Window
 from .mask import polygon_mask
 from .profiles import side_dz, side_limit
 from .stations import stations_offsets, vertex_stations
-from .tools import TOOL_INFO, Combine, Mode, Tool, reports_storage
-from .volumes import cut_fill, pond_storage
+from .tools import TOOL_INFO, Combine, Mode, Tool
 
 MARGIN_CELLS = 4  # >= nearest-valid search radius (3) + 1 for bilinear sampling
 
@@ -28,10 +27,6 @@ FLAG_BAD_GEOMETRY = "bad_geometry"
 
 @dataclass(frozen=True)
 class FeatureStats:
-    cut: float = 0.0
-    fill: float = 0.0
-    storage: float | None = None
-    changed_cells: int = 0
     flags: tuple = ()
 
 
@@ -105,7 +100,7 @@ def footprint_flags(feature) -> tuple:
 
 
 def apply_feature(feature, grid: DemGrid) -> FeatureStats:
-    """Apply one feature to `grid` in place and report its volumes and problems."""
+    """Apply one feature to `grid` in place and report its problems."""
     info = TOOL_INFO[feature.tool]
     try:
         parts = split_parts(feature.geometry_wkb)
@@ -114,9 +109,6 @@ def apply_feature(feature, grid: DemGrid) -> FeatureStats:
     want_line = feature.mode is Mode.PATH
     long_profile = feature.long_profile if len(parts) == 1 else None
     flags: set = set()
-    cut = fill = 0.0
-    storage = None
-    changed = 0
     on_grid = selected_any = False
     for part in parts:
         if is_line(part) != want_line:
@@ -127,7 +119,6 @@ def apply_feature(feature, grid: DemGrid) -> FeatureStats:
             continue
         on_grid = True
         view = grid.view(window)
-        before = view.data.astype(np.float64)
         try:
             if want_line:
                 new, selected = _path_values(feature, info, part, view, long_profile)
@@ -141,19 +132,11 @@ def apply_feature(feature, grid: DemGrid) -> FeatureStats:
             continue
         selected_any = True
         view.data[selected] = new[selected].astype(view.data.dtype)
-        after = view.data.astype(np.float64)
-        c, f = cut_fill(before, after, view.valid, grid.cell_area)
-        cut, fill = cut + c, fill + f
-        changed += int(((after != before) & view.valid).sum())
-        if reports_storage(feature.tool, feature.mode):
-            s = pond_storage(after, (after < before) & view.valid, view.valid, grid.cell_area)
-            if s is not None:
-                storage = (storage or 0.0) + s
     if not on_grid and not flags:
         flags.add(FLAG_OUTSIDE)
     elif on_grid and not selected_any and not flags:
         flags.add(FLAG_NO_PIXELS)
-    return FeatureStats(cut, fill, storage, changed, tuple(sorted(flags)))
+    return FeatureStats(flags=tuple(sorted(flags)))
 
 
 def _combine(combine: Combine, old: np.ndarray, design: np.ndarray) -> np.ndarray:

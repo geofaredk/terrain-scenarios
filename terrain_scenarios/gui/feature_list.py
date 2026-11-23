@@ -12,7 +12,7 @@ from qgis.PyQt.QtWidgets import (QAbstractItemView, QApplication, QListView, QSt
 
 from ..qgis_io.symbols import preview_pixmap
 from . import illustrations
-from .help_texts import FLAG_TEXTS, TOOL_LABELS, cubic_metres
+from .help_texts import FLAG_TEXTS, TOOL_LABELS
 from .muted import muted_between
 
 LOG_TAG = "Terrain Scenarios"
@@ -27,18 +27,11 @@ MIME_TYPE = "application/x-terrain-scenarios-feature-ids"
 
 
 def feature_subtitle(controller, fid: str) -> str:
-    """What the feature is, plus the volume(s) it moves — nothing extra for a feature that, being
-    turned off or otherwise inert, moves no volume at all."""
+    """What the feature is: its tool's label."""
     feature = controller.find(fid)
     if feature is None:
         return ""
-    stats = controller.stats(fid)
-    parts = [TOOL_LABELS[feature.tool]]
-    if stats.fill:
-        parts.append(f"fill {cubic_metres(stats.fill)}")
-    if stats.cut:
-        parts.append(f"cut {cubic_metres(stats.cut)}")
-    return " · ".join(parts)
+    return TOOL_LABELS[feature.tool]
 
 
 class FeatureListModel(QAbstractListModel):

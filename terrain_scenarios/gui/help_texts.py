@@ -234,25 +234,6 @@ REPROJECT_UNAVAILABLE = ("Processing is not available, so Terrain Scenarios cann
                          "Raster ▸ Projections ▸ Warp.")
 
 
-NO_VOLUME_YET = "—"
-
-
-def cubic_metres(value: float | None) -> str:
-    """A volume a user can read at a glance: no decimals once it is past a hundred.
-
-    Cut and fill are magnitudes, so a minus sign here can only be floating-point residue —
-    a negative zero out of a subtraction, or a few millilitres left over a million cells.
-    Either would reach the user as "-0.00 m³", which reads as a bug, so the sign is dropped
-    from anything that rounds to zero."""
-    if value is None:
-        return NO_VOLUME_YET
-    size = abs(value)
-    text = f"{value:,.0f}" if size >= 100.0 else f"{value:,.1f}" if size >= 1.0 else f"{value:.2f}"
-    if text.startswith("-") and not any(digit in "123456789" for digit in text):
-        text = text[1:]
-    return f"{text} m³"
-
-
 UNSAVED_CHANGES = ("This scenario has changes that are not saved. Save them before continuing?")
 SCENARIO_SAVED = "Scenario saved to {}"
 SCENARIO_MAY_NOT_BE_SAVED = ("The scenario may not have been saved completely ({error}); see the 'Terrain Scenarios' "

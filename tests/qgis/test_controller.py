@@ -16,7 +16,7 @@ def test_drawing_a_dike_updates_the_modified_dem(tmp_path):
     assert dike.name == "Raise path 1" and c.features == (dike,)
     assert sample(c.layers.working, 20, 20) == pytest.approx(11.0)  # 1 m above the flat 10 m ground
     assert sample(c.layers.change, 20, 20) == pytest.approx(1.0)
-    assert c.stats(dike.id).fill > 0 and c.layers.outlines.featureCount() == 1
+    assert c.layers.outlines.featureCount() == 1
 
 
 def test_editing_toggling_and_deleting_recompute(tmp_path):

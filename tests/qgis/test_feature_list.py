@@ -40,14 +40,13 @@ def test_flagged_features_show_a_warning(tmp_path):
     assert size.height() > 0 and size.width() >= 0                            # does not raise, gives a real size
 
 
-def test_a_row_says_what_the_feature_is_and_what_it_moves(tmp_path):
+def test_a_row_says_only_what_the_feature_is(tmp_path):
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     model = FeatureListModel(c)
     subtitle = model.index(0).data(SUBTITLE_ROLE)
-    assert subtitle.startswith("Raise path") and "fill" in subtitle and "m³" in subtitle
-    assert "cut" not in subtitle                      # a raise tool only fills
-    c.set_enabled(dike.id, False)                     # a feature that changes nothing says only what it is
+    assert subtitle == "Raise path" and "m³" not in subtitle
+    c.set_enabled(dike.id, False)
     assert model.index(0).data(SUBTITLE_ROLE) == "Raise path"
 
 

@@ -460,13 +460,6 @@ class SketchController(QObject):
             return
         self._run_preview()
 
-    def totals(self) -> tuple[float, float]:
-        """(cut, fill) for the whole scenario, in cubic metres. `FeatureStack` keeps this running
-        incrementally, so reading it does not rescan the whole grid on every commit."""
-        if not self.has_dem:
-            return (0.0, 0.0)
-        return self.stack.totals
-
     @property
     def is_dirty(self) -> bool:
         """Whether there is work a save would keep: the features differ from the last save or load.

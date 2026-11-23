@@ -1,4 +1,4 @@
-"""The feature page: header (illustration, name, tool + volume), actions, problems, the fields and
+"""The feature page: header (illustration, name, tool), actions, problems, the fields and
 the Advanced section. Every change is applied to the terrain immediately."""
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ class PropertiesPage(QgsPanelWidget):
         self._loading = False
 
         # Header: the tool illustration beside the name — renames commit through the controller, so
-        # they are undoable — with the tool label and volume line under it, muted (spec §7.1).
+        # they are undoable — with the tool label under it, muted (spec §7.1).
         self.header_picture = QLabel()
         self.header_picture.setFixedSize(HEADER_PICTURE)
         self.name_edit = QLineEdit()

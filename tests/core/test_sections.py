@@ -4,12 +4,12 @@ import numpy as np
 import pytest
 
 from helpers import feature, flat, make_grid, tilted
-from terrain_sketch.core.engine import FeatureStack
-from terrain_sketch.core.geometry import line_wkb, multi_wkb, polygon_wkb
-from terrain_sketch.core.sections import (cross_section, default_section_line, long_section, section_along,
+from terrain_scenarios.core.engine import FeatureStack
+from terrain_scenarios.core.geometry import line_wkb, multi_wkb, polygon_wkb
+from terrain_scenarios.core.sections import (cross_section, default_section_line, long_section, section_along,
                                           set_cross_section, set_whole_cross_section, supports_long_profile,
                                           whole_cross_section)
-from terrain_sketch.core.tools import Mode, Tool
+from terrain_scenarios.core.tools import Mode, Tool
 
 
 def dike(**kw):
@@ -100,14 +100,14 @@ def test_terrain_before_is_none_for_a_feature_that_is_not_there():
 
 
 def test_a_custom_long_profile_follows_a_reshaped_path():
-    from terrain_sketch.core.sections import rescale_long_profile
+    from terrain_scenarios.core.sections import rescale_long_profile
     f = dike(long_profile=((0.0, 10.0), (15.0, 12.0), (30.0, 11.0)))
     longer = line_wkb([(5, 20), (65, 20)])          # the path doubles in length
     assert rescale_long_profile(f, longer, 1.0) == ((0.0, 10.0), (30.0, 12.0), (60.0, 11.0))
 
 
 def test_rescaling_leaves_a_rule_profile_and_an_unchanged_path_alone():
-    from terrain_sketch.core.sections import rescale_long_profile
+    from terrain_scenarios.core.sections import rescale_long_profile
     rule = dike()
     assert rescale_long_profile(rule, line_wkb([(5, 20), (65, 20)]), 1.0) is None
     same = dike(long_profile=((0.0, 10.0), (30.0, 11.0)))

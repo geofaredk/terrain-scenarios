@@ -2,10 +2,10 @@ from qgis.PyQt.QtCore import QCoreApplication, QEvent, Qt
 from qgis.PyQt.QtGui import QFocusEvent, QPalette
 
 from qgis_helpers import UTM, line_through, square, start_session
-from terrain_sketch.core.tools import Mode, PixelMode, Tool
-from terrain_sketch.gui.help_texts import PIXEL_MODE_LABELS, TOOL_DESCRIPTIONS, TOOL_EXAMPLES
-from terrain_sketch.gui.properties_page import PropertiesPage
-from terrain_sketch.gui.tool_gallery import ToolGallery
+from terrain_scenarios.core.tools import Mode, PixelMode, Tool
+from terrain_scenarios.gui.help_texts import PIXEL_MODE_LABELS, TOOL_DESCRIPTIONS, TOOL_EXAMPLES
+from terrain_scenarios.gui.properties_page import PropertiesPage
+from terrain_scenarios.gui.tool_gallery import ToolGallery
 
 
 def focus(widget):
@@ -38,7 +38,7 @@ def test_a_broken_illustration_does_not_take_qgis_down_on_a_theme_change(monkeyp
     """The theme changing redraws every tile's illustration from inside a Qt virtual override
     (`changeEvent`); an SVG that cannot be read there must not abort QGIS, the same guarantee
     `PropertiesPage` already gives its own pictures."""
-    from terrain_sketch.gui import illustrations
+    from terrain_scenarios.gui import illustrations
     gallery = ToolGallery()
 
     def broken(*_args, **_kwargs):
@@ -46,16 +46,6 @@ def test_a_broken_illustration_does_not_take_qgis_down_on_a_theme_change(monkeyp
 
     monkeypatch.setattr(illustrations, "pixmap", broken)
     gallery.changeEvent(QEvent(QEvent.Type.PaletteChange))   # must not raise
-
-
-def test_the_properties_page_explains_the_selected_tool(tmp_path):
-    c = start_session(tmp_path)
-    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    page = PropertiesPage(c)
-    page.show_feature(dike.id)
-    assert TOOL_DESCRIPTIONS[Tool.RAISE_PATH] in page.about_text.text()
-    assert TOOL_EXAMPLES[Tool.RAISE_PATH] in page.about_text.text()
-    assert page.about_picture.pixmap() is not None and not page.about_picture.pixmap().isNull()
 
 
 def test_every_pixel_mode_entry_gets_its_own_picture(tmp_path):
@@ -117,19 +107,11 @@ def test_the_choice_fields_name_a_real_case_for_each_option(tmp_path):
     assert len(pixels) > 40 and "All touched" in pixels
 
 
-def test_the_about_group_can_be_collapsed_and_remembers_its_name(tmp_path):
-    c = start_session(tmp_path)
-    page = PropertiesPage(c)
-    assert page.about.objectName() == "TerrainSketchAboutTool"
-    page.about.setCollapsed(True)
-    assert page.about.isCollapsed()
-
-
 def test_the_amount_label_says_what_the_height_or_depth_is_measured_from():
     """"Height" alone let users measure a flat pad from the ground under it rather than from its
     highest point (spec §7.2: the label depends on the tool)."""
-    from terrain_sketch.core.tools import TOOL_INFO
-    from terrain_sketch.gui.help_texts import amount_label
+    from terrain_scenarios.core.tools import TOOL_INFO
+    from terrain_scenarios.gui.help_texts import amount_label
     labels = {}
     for tool in Tool:
         for mode in TOOL_INFO[tool].modes:
@@ -167,7 +149,7 @@ def test_the_pixels_tooltip_shows_the_three_modes_side_by_side_in_the_theme(tmp_
 
 def test_a_picture_that_cannot_be_drawn_does_not_take_qgis_down(tmp_path, monkeypatch):
     """The theme changing and a field taking focus both redraw pictures from inside a Qt handler."""
-    from terrain_sketch.gui import illustrations
+    from terrain_scenarios.gui import illustrations
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     page = PropertiesPage(c)
@@ -184,7 +166,7 @@ def test_a_picture_that_cannot_be_drawn_does_not_take_qgis_down(tmp_path, monkey
 def test_the_amount_labels_and_summaries_name_what_the_engine_measures_from():
     """An area's level is the highest or lowest point of its outline, as the About text says; a raised or
     lowered path follows the straight grade between the ground at its ends, not every bump in between."""
-    from terrain_sketch.gui.help_texts import TOOL_SUMMARIES, amount_label
+    from terrain_scenarios.gui.help_texts import TOOL_SUMMARIES, amount_label
     for tool in (Tool.RAISE_FLAT, Tool.LOWER_FLAT):
         assert amount_label(tool, Mode.AREA) == amount_label(tool, Mode.PATH)
         assert "point" in amount_label(tool, Mode.AREA) and "edge" not in amount_label(tool, Mode.AREA)

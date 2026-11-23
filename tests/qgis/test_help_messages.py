@@ -5,12 +5,12 @@ from qgis.core import QgsProject
 from qgis.PyQt.QtWidgets import QPushButton
 
 from qgis_helpers import dem_layer, fake_iface, line_layer, line_through, start_session
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.help_texts import (EMPTY_LAYER, NO_FEATURES_SELECTED, PICK_A_LAYER,
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.gui.help_texts import (EMPTY_LAYER, NO_FEATURES_SELECTED, PICK_A_LAYER,
                                            REPROJECT_UNAVAILABLE)
-from terrain_sketch.gui.main_dock import MainDock
-from terrain_sketch.gui.tool_gallery import ToolGallery
+from terrain_scenarios.gui.main_dock import MainDock
+from terrain_scenarios.gui.tool_gallery import ToolGallery
 
 
 def offer_reproject(iface, dock, tmp_path):

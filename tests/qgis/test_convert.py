@@ -2,10 +2,10 @@ import pytest
 from qgis.core import QgsCoordinateReferenceSystem, QgsGeometry
 
 from qgis_helpers import UTM
-from terrain_sketch.core.geometry import is_line, split_parts
-from terrain_sketch.core.tools import Mode
-from terrain_sketch.qgis_io.compat import gdal_problems
-from terrain_sketch.qgis_io.convert import from_wkb, to_dem_wkb
+from terrain_scenarios.core.geometry import is_line, split_parts
+from terrain_scenarios.core.tools import Mode
+from terrain_scenarios.qgis_io.compat import gdal_problems
+from terrain_scenarios.qgis_io.convert import from_wkb, to_dem_wkb
 
 WGS84 = QgsCoordinateReferenceSystem("EPSG:4326")
 

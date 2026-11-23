@@ -4,13 +4,13 @@ import pytest
 from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsGeometry, QgsProject
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_through, square, start_session
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.help_texts import SECTION_LINE_HINT, UNDO_SECTION_LINE
-from terrain_sketch.gui.main_dock import MainDock
-from terrain_sketch.gui.map_tools.draw_line import DrawLineTool
-from terrain_sketch.gui.profile_dock import ProfileDock
-from terrain_sketch.qgis_io.convert import from_wkb
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.gui.help_texts import SECTION_LINE_HINT, UNDO_SECTION_LINE
+from terrain_scenarios.gui.main_dock import MainDock
+from terrain_scenarios.gui.map_tools.draw_line import DrawLineTool
+from terrain_scenarios.gui.profile_dock import ProfileDock
+from terrain_scenarios.qgis_io.convert import from_wkb
 
 
 def pond_and_dike(c):

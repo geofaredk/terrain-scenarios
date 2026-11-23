@@ -2,10 +2,10 @@ import numpy as np
 import pytest
 
 from helpers import feature, flat, make_grid
-from terrain_sketch.core.geometry import line_wkb
-from terrain_sketch.core.operations import apply_feature
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.core.volumes import cut_fill, pond_storage, total_cut_fill
+from terrain_scenarios.core.geometry import line_wkb
+from terrain_scenarios.core.operations import apply_feature
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.core.volumes import cut_fill, pond_storage, total_cut_fill
 
 
 def test_cut_fill_and_storage_on_small_arrays():

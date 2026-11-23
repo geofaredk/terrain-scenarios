@@ -6,15 +6,15 @@ import pytest
 from qgis.core import QgsProject
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_through, square, start_session
-from terrain_sketch import classFactory
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.help_texts import (SCENARIO_DEM_DIFFERS, SCENARIO_MAY_NOT_BE_SAVED, SCENARIO_OPENED,
+from terrain_scenarios import classFactory
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.gui.help_texts import (SCENARIO_DEM_DIFFERS, SCENARIO_MAY_NOT_BE_SAVED, SCENARIO_OPENED,
                                            SCENARIO_OTHER_DEM, SCENARIO_REPLACE, UNSAVED_BEFORE_CLOSING,
                                            UNSAVED_CHANGES)
-from terrain_sketch.gui.main_dock import MainDock
-from terrain_sketch.qgis_io import scenario as scenario_module
-from terrain_sketch.qgis_io.scenario import dem_meta, load, save
+from terrain_scenarios.gui.main_dock import MainDock
+from terrain_scenarios.qgis_io import scenario as scenario_module
+from terrain_scenarios.qgis_io.scenario import dem_meta, load, save
 
 ASK_LIMIT = 10
 
@@ -609,7 +609,7 @@ def test_a_replace_check_that_raises_is_shown_as_a_warning_not_crashed(tmp_path)
     Qt slot, which would abort QGIS."""
     from unittest import mock
 
-    from terrain_sketch.qgis_io import scenario
+    from terrain_scenarios.qgis_io import scenario
 
     _iface, c, dock = panel(tmp_path)
     c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
@@ -710,7 +710,7 @@ def test_the_dem_question_has_both_choices_and_cancel(tmp_path, monkeypatch):
 
 def test_a_dem_that_cannot_be_started_on_is_not_left_in_the_project(tmp_path):
     from unittest import mock
-    from terrain_sketch.qgis_io.raster_io import DemError
+    from terrain_scenarios.qgis_io.raster_io import DemError
     path = scenario_from_another_dem(tmp_path, np.full((30, 30), 12.0, np.float32))
     other_dem = str(tmp_path / "other30" / "dem.tif")
     project = QgsProject.instance()
@@ -728,8 +728,8 @@ def test_a_dem_that_cannot_be_started_on_is_not_left_in_the_project(tmp_path):
 def test_a_scenario_that_fails_on_its_own_dem_does_not_claim_the_old_features_are_still_there(tmp_path):
     """Starting on its DEM already closed the session the features belonged to."""
     from unittest import mock
-    from terrain_sketch.gui.help_texts import SCENARIO_NOT_APPLIED, SCENARIO_NOT_APPLIED_ON_ITS_DEM
-    from terrain_sketch.qgis_io.scenario import ScenarioError
+    from terrain_scenarios.gui.help_texts import SCENARIO_NOT_APPLIED, SCENARIO_NOT_APPLIED_ON_ITS_DEM
+    from terrain_scenarios.qgis_io.scenario import ScenarioError
     path = scenario_from_another_dem(tmp_path, np.full((30, 30), 12.0, np.float32))
     iface, c, dock = panel(tmp_path)
     c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 10, 25, 25), UTM)

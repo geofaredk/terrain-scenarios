@@ -3,10 +3,10 @@ from qgis.core import (QgsCategorizedSymbolRenderer, QgsCoordinateTransformConte
                        QgsVectorLayer)
 
 from qgis_helpers import dem_layer, world
-from terrain_sketch.core.grid import Window
-from terrain_sketch.qgis_io.layers import GROUP_NAME, SketchLayers
-from terrain_sketch.qgis_io.raster_io import WorkingFiles, read_dem
-from terrain_sketch.qgis_io.symbols import default_symbol, style_of, to_xml
+from terrain_scenarios.core.grid import Window
+from terrain_scenarios.qgis_io.layers import GROUP_NAME, SketchLayers
+from terrain_scenarios.qgis_io.raster_io import WorkingFiles, read_dem
+from terrain_scenarios.qgis_io.symbols import default_symbol, style_of, to_xml
 
 
 def _layers(tmp_path):

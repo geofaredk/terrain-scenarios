@@ -3,9 +3,9 @@ from unittest import mock
 import pytest
 
 from qgis_helpers import UTM, line_through, sample, spin_event_loop, start_session
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui import controller as controller_module
-from terrain_sketch.gui.controller import PREVIEW_INTERVAL
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui import controller as controller_module
+from terrain_scenarios.gui.controller import PREVIEW_INTERVAL
 
 
 def test_dragging_a_profile_previews_without_committing(tmp_path):

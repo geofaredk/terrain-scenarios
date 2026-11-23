@@ -4,8 +4,8 @@ import os
 import pytest
 from qgis.core import QgsApplication, QgsProject, QgsSettings
 
-from terrain_sketch.gui import settings as plugin_settings
-from terrain_sketch.gui.controller import SketchController
+from terrain_scenarios.gui import settings as plugin_settings
+from terrain_scenarios.gui.controller import SketchController
 
 QgsApplication.setPrefixPath(os.environ.get("QGIS_PREFIX_PATH", "/Applications/QGIS-final-4_2_2.app"), True)
 QGIS_APP = QgsApplication([], True)

@@ -1,8 +1,8 @@
 """Shared helpers for core tests: synthetic DEMs and features."""
 import numpy as np
 
-from terrain_sketch.core.grid import DemGrid
-from terrain_sketch.model.feature import TerrainFeature
+from terrain_scenarios.core.grid import DemGrid
+from terrain_scenarios.model.feature import TerrainFeature
 
 NODATA = -9999.0
 

@@ -11,7 +11,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # the script has cd'd there, silently writing the ZIP where the EXIT trap then deletes it. `cd`ing
 # into it here also makes a missing output directory fail immediately, with a clear reason.
 OUT_DIR="$(cd "${1:-$ROOT}" && pwd)"
-PACKAGE="terrain_sketch"
+PACKAGE="terrain_scenarios"
 
 if ! command -v zip >/dev/null 2>&1; then
   echo "build_zip.sh: the zip command is not installed" >&2

@@ -6,11 +6,11 @@ import pytest
 from qgis.core import Qgis, QgsGeometry, QgsPointXY
 
 from qgis_helpers import fake_iface, world
-from terrain_sketch.gui.map_tools.draw_line import DrawLineTool
-from terrain_sketch.gui.map_tools.draw_polygon import DrawPolygonTool
-from terrain_sketch.gui.map_tools.brush import BrushTool
-from terrain_sketch.gui.map_tools.freehand import FreehandTool
-from terrain_sketch.gui.map_tools.vertex_edit import VertexEditTool
+from terrain_scenarios.gui.map_tools.draw_line import DrawLineTool
+from terrain_scenarios.gui.map_tools.draw_polygon import DrawPolygonTool
+from terrain_scenarios.gui.map_tools.brush import BrushTool
+from terrain_scenarios.gui.map_tools.freehand import FreehandTool
+from terrain_scenarios.gui.map_tools.vertex_edit import VertexEditTool
 
 
 def click(tool, canvas, x, y, button=Qt.MouseButton.LeftButton):

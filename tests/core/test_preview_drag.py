@@ -4,10 +4,10 @@ from dataclasses import replace
 import numpy as np
 
 from helpers import feature, flat, make_grid
-from terrain_sketch.core.engine import FeatureStack
-from terrain_sketch.core.geometry import line_wkb, polygon_wkb
-from terrain_sketch.core.operations import apply_feature
-from terrain_sketch.core.tools import Mode, Tool
+from terrain_scenarios.core.engine import FeatureStack
+from terrain_scenarios.core.geometry import line_wkb, polygon_wkb
+from terrain_scenarios.core.operations import apply_feature
+from terrain_scenarios.core.tools import Mode, Tool
 
 
 def square(x0, y0, x1, y1):

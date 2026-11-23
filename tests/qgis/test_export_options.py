@@ -5,10 +5,10 @@ from osgeo import gdal
 from qgis.core import QgsProject, QgsRasterLayer
 
 from qgis_helpers import CELL, UTM, X0, Y0, fake_iface, line_through
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.help_texts import EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED
-from terrain_sketch.gui.main_dock import MainDock
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.gui.help_texts import EXPORT_ADD_FAILED, EXPORT_DONE, EXPORT_INTEGER_NOTE, EXPORT_NOT_ADDED
+from terrain_scenarios.gui.main_dock import MainDock
 
 
 def integer_dem(tmp_path) -> QgsRasterLayer:

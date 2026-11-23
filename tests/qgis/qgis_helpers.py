@@ -88,7 +88,7 @@ def fake_iface():
 
 def start_session(tmp_path, array=None):
     """A SketchController with a session on a fresh test DEM."""
-    from terrain_sketch.gui.controller import SketchController  # imported late: the GUI package comes in a later task
+    from terrain_scenarios.gui.controller import SketchController  # imported late: the GUI package comes in a later task
 
     controller = SketchController(QgsProject.instance())
     controller.set_dem(dem_layer(tmp_path, array))
@@ -98,8 +98,8 @@ def start_session(tmp_path, array=None):
 def panel(tmp_path):
     """A fake iface, a SketchController and a MainDock with a session already started on a fresh
     test DEM — the panel tests' usual starting point."""
-    from terrain_sketch.gui.controller import SketchController  # imported late, as start_session does
-    from terrain_sketch.gui.main_dock import MainDock
+    from terrain_scenarios.gui.controller import SketchController  # imported late, as start_session does
+    from terrain_scenarios.gui.main_dock import MainDock
 
     iface = fake_iface()
     controller = SketchController(QgsProject.instance())

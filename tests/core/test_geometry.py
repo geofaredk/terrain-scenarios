@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from osgeo import ogr
 
-from terrain_sketch.core.geometry import (corridor, densify, envelope, is_line, line_coords,
+from terrain_scenarios.core.geometry import (corridor, densify, envelope, is_line, line_coords,
                                           line_wkb, multi_wkb, polygon_wkb, split_parts)
 
 

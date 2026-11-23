@@ -3,9 +3,9 @@ from qgis.PyQt.QtCore import QEvent, QPointF, Qt
 from qgis.PyQt.QtGui import QKeyEvent, QMouseEvent
 
 from qgis_helpers import UTM, line_layer, line_through, sample, square, start_session
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.help_texts import AREA_SECTION_EMPTY_HINT, AREA_SECTION_NOTE, MULTIPART_LONG_SECTION_NOTE
-from terrain_sketch.gui.profile_dock import ProfileDock
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.help_texts import AREA_SECTION_EMPTY_HINT, AREA_SECTION_NOTE, MULTIPART_LONG_SECTION_NOTE
+from terrain_scenarios.gui.profile_dock import ProfileDock
 
 
 def test_the_profile_dock_loads_the_selected_feature(tmp_path):
@@ -127,7 +127,7 @@ def two_part_dike(controller):
 def test_a_multi_part_path_gets_a_read_only_long_panel_and_keeps_its_height_field(tmp_path):
     """The engine applies a custom long profile only to a single-part path, so offering one here
     would store the user's drags, disable Height, and change no terrain at all."""
-    from terrain_sketch.gui.properties_page import PropertiesPage
+    from terrain_scenarios.gui.properties_page import PropertiesPage
     c = start_session(tmp_path)
     dike = two_part_dike(c)
     dock = ProfileDock(c)
@@ -194,7 +194,7 @@ def test_deleting_the_shown_feature_does_not_take_qgis_down(tmp_path):
 
 
 def test_a_custom_long_profile_disables_the_height_field(tmp_path):
-    from terrain_sketch.gui.properties_page import PropertiesPage
+    from terrain_scenarios.gui.properties_page import PropertiesPage
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     page = PropertiesPage(c)
@@ -232,7 +232,7 @@ def test_undoing_the_shown_feature_during_a_drag_does_not_take_qgis_down(tmp_pat
 def test_the_properties_page_follows_a_cross_profile_drag(tmp_path):
     """A drag moves the width, slope and reach. A page still showing the old values would write the
     old width back with the next arrow step on any of them."""
-    from terrain_sketch.gui.properties_page import PropertiesPage
+    from terrain_scenarios.gui.properties_page import PropertiesPage
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     page = PropertiesPage(c)
@@ -285,7 +285,7 @@ def test_an_area_section_follows_the_features_own_line_and_a_path_has_none(tmp_p
 
 
 def test_the_cross_plot_explains_its_sides_only_for_a_path_it_can_edit(tmp_path):
-    from terrain_sketch.gui.help_texts import CROSS_SIDES_TIP
+    from terrain_scenarios.gui.help_texts import CROSS_SIDES_TIP
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 25, 25, 35), UTM)

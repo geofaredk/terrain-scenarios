@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from qgis_helpers import CELL, X0, Y0, dem_layer, read_tif
-from terrain_sketch.core.grid import Window
-from terrain_sketch.qgis_io.raster_io import DemError, WorkingFiles, export_dem, read_dem
+from terrain_scenarios.core.grid import Window
+from terrain_scenarios.qgis_io.raster_io import DemError, WorkingFiles, export_dem, read_dem
 
 
 def test_read_dem_returns_grid_and_info(tmp_path):

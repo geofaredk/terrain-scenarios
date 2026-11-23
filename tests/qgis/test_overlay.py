@@ -3,7 +3,7 @@ import pytest
 from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsProject, QgsRectangle
 
 from qgis_helpers import UTM, X0, Y0, fake_iface
-from terrain_sketch.gui.overlay import change_image, PreviewOverlay
+from terrain_scenarios.gui.overlay import change_image, PreviewOverlay
 
 
 def test_the_change_image_is_warm_for_fill_and_cool_for_cut():

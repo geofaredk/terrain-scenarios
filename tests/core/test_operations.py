@@ -1,12 +1,12 @@
 import numpy as np
 import pytest
 
-import terrain_sketch.core.operations as operations_module
+import terrain_scenarios.core.operations as operations_module
 from helpers import feature, flat, make_grid, tilted
-from terrain_sketch.core.geometry import line_wkb, multi_wkb, polygon_wkb
-from terrain_sketch.core.operations import (FLAG_BAD_GEOMETRY, FLAG_NO_PIXELS,
+from terrain_scenarios.core.geometry import line_wkb, multi_wkb, polygon_wkb
+from terrain_scenarios.core.operations import (FLAG_BAD_GEOMETRY, FLAG_NO_PIXELS,
                                             FLAG_NODATA_REFERENCE, FLAG_OUTSIDE, apply_feature)
-from terrain_sketch.core.tools import Mode, PixelMode, Tool
+from terrain_scenarios.core.tools import Mode, PixelMode, Tool
 
 # On the default 40 x 40 grid (1 m cells) cell (r, c) has its centre at x = c + 0.5, y = 39.5 - r.
 EAST_WEST = line_wkb([(5.25, 20.25), (34.75, 20.25)])  # runs through row 19 (y 20..21)
@@ -236,7 +236,7 @@ def test_the_axis_past_the_far_end_is_found_even_when_the_lengths_differ_in_the_
 
 
 def test_a_point_straight_ahead_of_an_end_is_on_neither_side():
-    from terrain_sketch.core.stations import stations_offsets
+    from terrain_scenarios.core.stations import stations_offsets
     coords = np.array([[0.0, 0.0], [10.0, 0.0]])
     station, offset = stations_offsets(coords, np.array([15.0, -3.0, 5.0, 5.0]), np.array([0.0, 0.0, 2.0, -2.0]))
     assert list(offset) == [0.0, 0.0, -2.0, 2.0] and list(station) == [10.0, 0.0, 5.0, 5.0]

@@ -6,10 +6,10 @@ import pytest
 from qgis.core import QgsProject
 
 from qgis_helpers import UTM, dem_layer, line_through, sample, square, start_session
-from terrain_sketch.core.tools import Mode, PixelMode, Tool
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.help_texts import SCENARIO_NOT_APPLIED
-from terrain_sketch.qgis_io.scenario import ScenarioError, dem_meta, load, load_meta, save
+from terrain_scenarios.core.tools import Mode, PixelMode, Tool
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.gui.help_texts import SCENARIO_NOT_APPLIED
+from terrain_scenarios.qgis_io.scenario import ScenarioError, dem_meta, load, load_meta, save
 
 LOCAL_GRID = ('PROJCS["Local survey grid",GEOGCS["ETRS89",DATUM["ETRS89",SPHEROID["GRS 1980",6378137,'
               '298.257222101]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],'

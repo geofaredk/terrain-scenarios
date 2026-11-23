@@ -8,10 +8,10 @@ from osgeo import ogr
 from qgis.core import QgsProject
 
 from qgis_helpers import UTM, dem_layer, line_through, square, start_session
-from terrain_sketch.core.tools import Mode, PixelMode, Tool
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.qgis_io import scenario
-from terrain_sketch.qgis_io.scenario import (FEATURES_LAYER, META_TABLE, ScenarioError, ScenarioMeta,
+from terrain_scenarios.core.tools import Mode, PixelMode, Tool
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.qgis_io import scenario
+from terrain_scenarios.qgis_io.scenario import (FEATURES_LAYER, META_TABLE, ScenarioError, ScenarioMeta,
                                              dem_meta, load, load_meta, save)
 
 # A projected CRS with no EPSG code, like a local survey grid. GDAL cannot identify it.
@@ -152,9 +152,9 @@ def test_a_geopackage_without_the_features_layer_is_not_taken_for_a_scenario(tmp
     source = ogr.GetDriverByName("GPKG").CreateDataSource(path)
     source.CreateLayer("roads", None, ogr.wkbLineString)
     source.Close()
-    with pytest.raises(ScenarioError, match="not a Terrain Sketch scenario"):
+    with pytest.raises(ScenarioError, match="not a Terrain Scenarios file"):
         load(path)
-    with pytest.raises(ScenarioError, match="not a Terrain Sketch scenario"):
+    with pytest.raises(ScenarioError, match="not a Terrain Scenarios file"):
         load_meta(path)
 
 
@@ -183,7 +183,7 @@ def test_saving_over_a_geopackage_that_is_not_a_scenario_is_refused(tmp_path):
     source.Close()
     before = (tmp_path / "other.gpkg").read_bytes()
 
-    with pytest.raises(ScenarioError, match="not a Terrain Sketch scenario"):
+    with pytest.raises(ScenarioError, match="not a Terrain Scenarios file"):
         save(path, c.features, dem_meta(c.info, c.stack.original))
     assert (tmp_path / "other.gpkg").read_bytes() == before
 
@@ -194,7 +194,7 @@ def test_saving_over_a_non_geopackage_file_is_refused(tmp_path):
     path.write_text("not a geopackage")
     before = path.read_bytes()
 
-    with pytest.raises(ScenarioError, match="not a Terrain Sketch scenario"):
+    with pytest.raises(ScenarioError, match="not a Terrain Scenarios file"):
         save(str(path), c.features, dem_meta(c.info, c.stack.original))
     assert path.read_bytes() == before
 
@@ -289,3 +289,44 @@ def test_a_section_line_that_cannot_be_read_goes_back_to_the_default_line(tmp_pa
     source.Close()
     loaded, _meta = load(path)
     assert len(loaded) == 2 and all(f.section_line is None for f in loaded)
+
+
+def saved_as_terrain_sketch(tmp_path, c):
+    """A scenario as the plugin wrote it while it was still called Terrain Sketch: the same file,
+    with the metadata table under its old name."""
+    path = str(tmp_path / "terrain_sketch_era.gpkg")
+    save(path, two_features(c), dem_meta(c.info, c.stack.original, version="0.1.0"))
+    source = ogr.Open(path, 1)
+    source.ExecuteSQL(f'ALTER TABLE "{META_TABLE}" RENAME TO "terrain_sketch_meta"')
+    source.Close()
+    return path
+
+
+def test_a_scenario_saved_as_terrain_sketch_still_opens(tmp_path):
+    c = start_session(tmp_path)
+    path = saved_as_terrain_sketch(tmp_path, c)
+    features, meta = load(path)
+    assert [f.name for f in features] == [f.name for f in c.features]
+    assert meta.plugin_version == "0.1.0"
+    assert meta.dem_size == f"{c.stack.original.cols}x{c.stack.original.rows}"
+
+
+def test_a_scenario_saved_as_terrain_sketch_reports_its_metadata(tmp_path):
+    c = start_session(tmp_path)
+    meta = load_meta(saved_as_terrain_sketch(tmp_path, c))
+    assert meta.plugin_version == "0.1.0" and meta.created and meta.modified
+    assert meta.differences(dem_meta(c.info, c.stack.original)) == []
+
+
+def test_a_scenario_saved_as_terrain_sketch_can_be_saved_over_in_the_new_format(tmp_path):
+    c = start_session(tmp_path)
+    path = saved_as_terrain_sketch(tmp_path, c)
+    save(path, c.features[:1], dem_meta(c.info, c.stack.original, version="9.9"))
+    features, meta = load(path)
+    assert len(features) == 1 and meta.plugin_version == "9.9"
+    source = ogr.Open(path)
+    tables = source.ExecuteSQL("SELECT name FROM sqlite_master WHERE type='table'")
+    names = {row.GetField("name") for row in tables}
+    source.ReleaseResultSet(tables)
+    source.Close()
+    assert META_TABLE in names and "terrain_sketch_meta" not in names

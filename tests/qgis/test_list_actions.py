@@ -8,11 +8,11 @@ from qgis.PyQt.QtCore import QCoreApplication, QEvent, QMimeData, QModelIndex, Q
 from qgis.PyQt.QtWidgets import QAbstractItemView, QMenu
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_through, square, start_session
-from terrain_sketch.core.tools import Mode, Tool
-from terrain_sketch.gui.controller import SketchController
-from terrain_sketch.gui.feature_list import MIME_TYPE
-from terrain_sketch.gui.help_texts import COPY_NAME, UNDO_DUPLICATE
-from terrain_sketch.gui.main_dock import MainDock
+from terrain_scenarios.core.tools import Mode, Tool
+from terrain_scenarios.gui.controller import SketchController
+from terrain_scenarios.gui.feature_list import MIME_TYPE
+from terrain_scenarios.gui.help_texts import COPY_NAME, UNDO_DUPLICATE
+from terrain_scenarios.gui.main_dock import MainDock
 
 
 def panel(tmp_path):

@@ -2,7 +2,7 @@ import pytest
 from qgis.PyQt.QtCore import QEvent, QPointF, Qt
 from qgis.PyQt.QtGui import QKeyEvent, QMouseEvent
 
-from terrain_sketch.gui.profile_widget import NUDGE, NUDGE_FINE, Kind, ProfileWidget
+from terrain_scenarios.gui.profile_widget import NUDGE, NUDGE_FINE, Kind, ProfileWidget
 
 
 def press(widget, x, y, button=Qt.MouseButton.LeftButton, kind=QEvent.Type.MouseButtonPress):

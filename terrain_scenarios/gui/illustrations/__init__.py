@@ -40,7 +40,11 @@ def svg_source(name: str, palette: QPalette, highlight: str | None = None) -> st
     template does not tag emphasises nothing rather than dimming the whole picture: renaming a
     part key in an SVG must not silently turn the diagram grey.
     """
-    text = (HERE / f"{name}.svg").read_text()
+    return fill_tokens((HERE / f"{name}.svg").read_text(), palette, highlight)
+
+
+def fill_tokens(text: str, palette: QPalette, highlight: str | None = None) -> str:
+    """`text` with its colour and `{opacity-<key>}` tokens filled in, as `svg_source` describes."""
     for token, value in colours(palette).items():
         text = text.replace("{" + token + "}", value)
     keys = tagged_parts(text)
@@ -67,10 +71,15 @@ def tagged_parts(source: str) -> list[str]:
 
 def pixmap(name: str, size, palette: QPalette, highlight: str | None = None) -> QPixmap:
     """Render an illustration at `size` (a QSize or an int for a square)."""
+    return render(svg_source(name, palette, highlight), size)
+
+
+def render(source: str, size) -> QPixmap:
+    """Render filled-in SVG text at `size` (a QSize or an int for a square)."""
     if isinstance(size, int):
         from qgis.PyQt.QtCore import QSize
         size = QSize(size, size)
-    renderer = QSvgRenderer(QByteArray(svg_source(name, palette, highlight).encode()))
+    renderer = QSvgRenderer(QByteArray(source.encode()))
     out = QPixmap(size)
     out.fill(Qt.GlobalColor.transparent)
     painter = QPainter(out)

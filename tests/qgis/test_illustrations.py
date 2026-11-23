@@ -3,9 +3,12 @@ import re
 from qgis.PyQt.QtCore import QSize
 from qgis.PyQt.QtGui import QColor, QPalette
 
-from terrain_scenarios.core.tools import PixelMode, Tool
+from terrain_scenarios.core.geometry import line_wkb
+from terrain_scenarios.core.tools import Mode, PixelMode, Tool
 from terrain_scenarios.gui import illustrations
+from terrain_scenarios.gui.illustrations import section
 from terrain_scenarios.gui.overlay import CUT, FILL
+from terrain_scenarios.model.feature import TerrainFeature
 
 
 def light() -> QPalette:
@@ -30,7 +33,6 @@ def test_every_tool_and_pixel_mode_has_an_illustration():
         assert f"tool_{tool.value}" in names, f"no illustration for {tool.value}"
     for mode in PixelMode:
         assert f"pixels_{mode.value}" in names, f"no illustration for {mode.value}"
-    assert "parameters" in names
 
 
 def test_no_colour_token_survives_rendering():
@@ -53,22 +55,62 @@ def test_fill_and_cut_stay_the_map_colours_in_both_themes():
         assert cut in illustrations.svg_source("tool_lower_path", palette)
 
 
-def test_the_parameter_diagram_exposes_the_parts_the_fields_control():
-    assert illustrations.tagged_parts(open(
-        illustrations.HERE / "parameters.svg").read()) == ["width", "amount", "slope", "reach"]
+def _path(tool=Tool.RAISE_PATH, **kw):
+    values = dict(id="f1", name="test", width=3.0, amount=1.2, slope_n=2.0, reach=20.0)
+    values.update(kw)
+    return TerrainFeature(tool=tool, mode=Mode.PATH, geometry_wkb=line_wkb([(0, 0), (30, 0)]), **values)
+
+
+def test_the_section_is_labelled_with_the_feature_s_own_values():
+    source = section.section_svg(_path(), light())
+    assert "3.0 m" in source and "1.20 m" in source and "1:2" in source
+    assert "{" not in source and "}" not in source
+
+
+def test_a_dike_is_drawn_in_the_fill_colour_and_a_ditch_in_the_cut_colour():
+    fill, cut = QColor(*FILL).name(), QColor(*CUT).name()
+    dike = section.section_svg(_path(), light())
+    ditch = section.section_svg(_path(Tool.LOWER_PATH), light())
+    assert fill in dike and cut not in dike
+    assert cut in ditch and fill not in ditch
+
+
+def test_the_drawing_follows_the_values():
+    low = section.section_pixmap(_path(amount=1.0), QSize(200, 110), light()).toImage()
+    high = section.section_pixmap(_path(amount=2.0), QSize(200, 110), light()).toImage()
+    assert low != high
+
+
+def test_a_flat_feature_is_exaggerated_and_says_so():
+    assert "Height ×" in section.section_svg(_path(amount=0.3, width=20.0), light())
+    assert "Height ×" not in section.section_svg(_path(amount=2.0, width=2.0), light())
+    assert "Height ×" not in section.section_svg(_path(amount=0.0), light())
+
+
+def test_the_reach_is_labelled_only_when_it_cuts_a_slope_short():
+    assert "8 m" not in section.section_svg(_path(reach=8.0), light())       # the slope meets the ground first
+    assert "1 m" in section.section_svg(_path(reach=1.0), light())
+
+
+def test_no_side_slope_draws_no_slope_label():
+    assert "1:" not in section.section_svg(_path(slope_n=0.0), light())
+
+
+def test_the_section_exposes_the_parts_the_fields_control():
+    raw = section.section_template(_path(reach=1.0))
+    assert illustrations.tagged_parts(raw) == ["width", "amount", "slope", "reach"]
 
 
 def test_highlighting_one_part_dims_the_others():
-    source = illustrations.svg_source("parameters", light(), highlight="slope")
+    source = section.section_svg(_path(reach=1.0), light(), highlight="slope")
     assert source.count('opacity="0.25"') == 3 and source.count('opacity="1"') == 1
-    every = illustrations.svg_source("parameters", light())
+    every = section.section_svg(_path(reach=1.0), light())
     assert every.count('opacity="1"') == 4 and '0.25' not in every
 
 
 def test_an_unknown_highlight_leaves_every_part_visible():
-    """A key the template does not tag must emphasise nothing, not dim the whole diagram: that is
-    what a renamed part in an SVG would otherwise do, silently."""
-    source = illustrations.svg_source("parameters", light(), highlight="nope")
+    """A key the drawing does not tag must emphasise nothing, not dim the whole diagram."""
+    source = section.section_svg(_path(reach=1.0), light(), highlight="nope")
     assert source.count('opacity="1"') == 4 and '0.25' not in source
 
 

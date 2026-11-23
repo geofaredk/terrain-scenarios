@@ -1,6 +1,6 @@
 import pytest
 from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsProject
-from qgis.PyQt.QtWidgets import QListView
+from qgis.PyQt.QtWidgets import QListView, QPushButton
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_layer, line_through, panel, sample, square, start_session
 from terrain_scenarios.core.tools import Mode, PixelMode, Tool
@@ -20,7 +20,7 @@ def test_the_panel_opens_on_a_welcome_view_and_switches_to_the_session(tmp_path)
     dock.dem_combo.setLayer(layer)
     dock.start_button.click()
     assert dock.views.currentIndex() == VIEW_SESSION
-    assert layer.name() in dock.status_label.text()
+    assert dock.session_dem_combo.currentLayer() is layer
 
 
 def test_the_welcome_view_shows_the_raise_path_illustration(tmp_path):
@@ -43,24 +43,6 @@ def test_the_welcome_illustration_follows_a_theme_change(tmp_path):
     assert after != before
 
 
-def test_the_dem_name_is_escaped_in_the_status_line(tmp_path):
-    """The DEM name goes into a rich-text label alongside a real `<a href>` link; an unescaped
-    ampersand (or `<`/`>`) in a layer name must not be read as markup."""
-    iface = fake_iface()
-    dock = MainDock(iface, SketchController(QgsProject.instance()))
-    layer = dem_layer(tmp_path, name="A&B")
-    dock.dem_combo.setLayer(layer)
-    dock.start_button.click()
-    assert "A&amp;B" in dock.status_label.text()
-
-
-def test_the_status_line_follows_a_dem_rename(tmp_path):
-    _iface, c, dock = panel(tmp_path)
-    layer = c.project.mapLayer(c.dem_layer_id)
-    layer.setName("Renamed DEM")
-    assert "Renamed DEM" in dock.status_label.text()
-
-
 def test_every_page_the_panel_opens_is_in_dock_mode(tmp_path):
     """A panel that is not in dock mode opens a modal dialog, which never returns offscreen. The
     panel opens two pages (spec §11): New feature, and a feature's own page."""
@@ -74,109 +56,110 @@ def test_every_page_the_panel_opens_is_in_dock_mode(tmp_path):
     assert dock.stack.currentPanel() is dock.properties_page and dock.properties_page.dockMode()
 
 
-def test_the_status_line_keeps_the_styles_normal_margin_from_the_panel_edge(tmp_path):
-    from qgis.PyQt.QtCore import QPoint
-
-    _iface, _c, dock = panel(tmp_path)
-    dock.resize(360, 650)
-    dock.show()
-    status = dock.status_label
-    left = status.mapTo(dock.views, QPoint(0, 0)).x()
-    right = dock.views.width() - (left + status.width())
-    assert left > 0 and right > 0, (left, right)
-
-
 def test_the_scenario_actions_live_behind_one_menu_button(tmp_path):
     _iface, _c, dock = panel(tmp_path)
     assert [a.text() for a in dock.scenario_button.menu().actions()] == [
         "New scenario", "Open scenario…", "Save scenario", "Save scenario as…"]
 
 
-def test_changing_the_dem_goes_back_to_the_welcome_view(tmp_path):
+def _choose_dem(dock, layer):
+    """What a user's pick in the toolbar's DEM chooser does: `activated` is emitted only for a user
+    choice, never for `setLayer`."""
+    dock.session_dem_combo.setLayer(layer)
+    dock.session_dem_combo.activated.emit(dock.session_dem_combo.currentIndex())
+
+
+def test_the_toolbar_starts_with_the_dem_chooser_showing_the_session_dem(tmp_path):
     _iface, c, dock = panel(tmp_path)
-    dock.status_label.linkActivated.emit("change")
-    assert dock.views.currentIndex() == VIEW_WELCOME and c.has_dem     # the session keeps running until Start
+    first = dock.toolbar.actions()[0]
+    assert dock.toolbar.widgetForAction(first) is dock.session_dem_combo
+    assert dock.session_dem_combo.currentLayer().id() == c.dem_layer_id
+    assert "never changed" in dock.session_dem_combo.toolTip()
 
 
-def test_changing_the_dem_stops_a_drawing_in_progress(tmp_path):
-    """A drawing left running behind the welcome view runs on the map behind a view that does not
-    show it, and finishing it would open the new feature's page on top of the welcome view."""
-    _iface, _c, dock = panel(tmp_path)
-    dock.new_button.click()
-    dock.gallery.select_tool(Tool.RAISE_PATH)
-    dock.gallery.select_mode(Mode.PATH)
-    dock.gallery.method_buttons[Method.CLICK].click()
-    assert dock.draw_tool is not None
-    dock.status_label.linkActivated.emit("change")
-    assert dock.draw_tool is None and dock.views.currentIndex() == VIEW_WELCOME
-
-
-def test_keep_sketching_returns_to_the_session_without_touching_it(tmp_path):
-    """Keep sketching is the way back to a live session from Change…: Start would replace the
-    session, discarding every feature just to return to the same one."""
-    _iface, c, dock = panel(tmp_path)
-    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    dock.status_label.linkActivated.emit("change")
-    assert dock.views.currentIndex() == VIEW_WELCOME and not dock.keep_sketching_button.isHidden()
-    dock.keep_sketching_button.click()
-    assert dock.views.currentIndex() == VIEW_SESSION
-    assert c.has_dem and [f.id for f in c.features] == [dike.id]      # untouched
-
-
-def test_keep_sketching_is_hidden_without_a_session(tmp_path):
-    dock = MainDock(fake_iface(), SketchController(QgsProject.instance()))
-    assert dock.keep_sketching_button.isHidden()
-
-
-def test_changing_the_dem_with_unsaved_work_asks_nothing_and_keeps_the_session(tmp_path):
-    """spec §5.3: Change… only shows the welcome view. Nothing is discarded there, so there is
-    nothing to ask; Keep sketching returns to the same session and its unsaved work."""
-    _iface, c, dock = panel(tmp_path)
-    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    asked = []
-    dock.confirm_save = lambda text, can_cancel=True: asked.append(text) or None     # cancel, if asked
-    dock.status_label.linkActivated.emit("change")
-    assert asked == []
-    assert dock.views.currentIndex() == VIEW_WELCOME and c.has_dem and c.is_dirty
-    dock.keep_sketching_button.click()
-    assert dock.views.currentIndex() == VIEW_SESSION and [f.id for f in c.features] == [dike.id]
-    assert asked == []
-
-
-def test_change_then_start_asks_about_unsaved_work_exactly_once(tmp_path):
-    """The unsaved-work question belongs to Start, which is what replaces the session (spec §5.3)."""
+def test_picking_another_dem_in_the_toolbar_starts_on_it(tmp_path):
     _iface, c, dock = panel(tmp_path)
     c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
-    asked = []
-    dock.confirm_save = lambda text, can_cancel=True: asked.append(text) or False     # Discard
-    dock.status_label.linkActivated.emit("change")
-    dock.start_button.click()
-    assert asked == [UNSAVED_CHANGES]
-    assert c.has_dem and c.features == () and dock.views.currentIndex() == VIEW_SESSION
-
-
-def test_a_section_line_started_behind_the_welcome_view_brings_the_session_back(tmp_path):
-    """The Profiles dock stays usable while the welcome view shows (the session keeps running);
-    the line being drawn, and its hint under the toolbar, must be on screen."""
-    from terrain_scenarios.gui.help_texts import SECTION_LINE_HINT
-    from terrain_scenarios.gui.profile_dock import ProfileDock
-
-    iface = fake_iface()
-    c = SketchController(QgsProject.instance())
-    profiles = ProfileDock(c)
-    dock = MainDock(iface, c, profiles)
-    dock.show()
-    dock.dem_combo.setLayer(dem_layer(tmp_path))
-    dock.start_button.click()
-    pond = c.add_drawn(Tool.LOWER_FLAT, Mode.AREA, square(10, 12, 29, 22), UTM)
-    dock.feature_view.select_id(pond.id)
-    dock.status_label.linkActivated.emit("change")
-    assert dock.views.currentIndex() == VIEW_WELCOME
-
-    profiles.draw_section.click()
-    assert dock.draw_tool is not None
+    dock.confirm_save = lambda text, can_cancel=True: False                  # Discard
+    (tmp_path / "other").mkdir()
+    other = dem_layer(tmp_path / "other", name="other")
+    _choose_dem(dock, other)
+    assert c.has_dem and c.dem_layer_id == other.id() and c.features == ()
+    assert dock.session_dem_combo.currentLayer() is other
     assert dock.views.currentIndex() == VIEW_SESSION
-    assert dock.session_hint.isVisible() and dock.session_hint.text() == SECTION_LINE_HINT
+
+
+def test_cancelling_the_unsaved_question_keeps_the_session_and_the_chooser(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    old = c.dem_layer_id
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    asked = []
+    dock.confirm_save = lambda text, can_cancel=True: asked.append(text) or None     # Cancel
+    (tmp_path / "other").mkdir()
+    _choose_dem(dock, dem_layer(tmp_path / "other", name="other"))
+    assert asked == [UNSAVED_CHANGES]
+    assert c.dem_layer_id == old and [f.id for f in c.features] == [dike.id]
+    assert dock.session_dem_combo.currentLayer().id() == old
+
+
+def test_a_failed_start_from_the_toolbar_puts_the_chooser_back(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    old = c.dem_layer_id
+    (tmp_path / "geo").mkdir()
+    geo = dem_layer(tmp_path / "geo", name="geo", crs="EPSG:4326")
+    reprojected = []
+    dock._run_reproject = lambda layer=None: reprojected.append(layer)
+    _choose_dem(dock, geo)                                                    # refused: geographic
+    assert c.dem_layer_id == old
+    assert dock.session_dem_combo.currentLayer().id() == old
+
+
+def test_the_reproject_offer_is_about_the_dem_picked_in_the_toolbar(tmp_path):
+    """The welcome view's combo still shows the first DEM; the offer must warp the refused one."""
+    iface, _c, dock = panel(tmp_path)
+    (tmp_path / "geo").mkdir()
+    geo = dem_layer(tmp_path / "geo", name="geo", crs="EPSG:4326")
+    reprojected = []
+    dock._run_reproject = lambda layer=None: reprojected.append(layer)
+    _choose_dem(dock, geo)
+    widget = iface.messageBar().pushWidget.call_args[0][0]
+    next(b for b in widget.findChildren(QPushButton) if b.text() == "Reproject…").click()
+    assert reprojected == [geo]
+
+
+def test_setting_the_chooser_from_code_never_starts_a_session(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    old = c.dem_layer_id
+    (tmp_path / "other").mkdir()
+    dock.session_dem_combo.setLayer(dem_layer(tmp_path / "other", name="other"))
+    assert c.dem_layer_id == old
+
+
+def test_a_dem_switch_from_open_scenario_starts_one_session_and_shows_it(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    (tmp_path / "other").mkdir()
+    other = dem_layer(tmp_path / "other", name="other")
+    started = []
+    set_dem = c.set_dem
+    c.set_dem = lambda layer: started.append(layer.id()) or set_dem(layer)
+    assert dock._start_on_file(other.source())
+    assert started == [other.id()]
+    assert dock.session_dem_combo.currentLayer() is other
+
+
+def test_the_chooser_does_not_offer_the_sessions_own_layers(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    combo = dock.session_dem_combo
+    offered = {combo.layer(i).id() for i in range(combo.count()) if combo.layer(i) is not None}
+    assert c.dem_layer_id in offered
+    assert not offered & set(c.layers.layer_ids)
+
+
+def test_removing_the_dem_leaves_the_chooser_on_no_stale_layer(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    QgsProject.instance().removeMapLayer(c.dem_layer_id)
+    assert not c.has_dem and dock.views.currentIndex() == VIEW_WELCOME
+    assert dock.session_dem_combo.currentLayer() is None
 
 
 def test_ending_the_session_closes_any_open_page(tmp_path):

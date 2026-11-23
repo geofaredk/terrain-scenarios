@@ -113,6 +113,8 @@ At the bottom of the session view, muted, word-wrapped: `Sketching on: <DEM laye
 asking anything: the session keeps running, and a **Keep sketching** button returns to it. The unsaved-work
 question is asked once, when Start actually replaces the session.
 
+*Note (2026-11-23): at the user's request the DEM chooser moved into the session toolbar, at its start (a `QgsMapLayerComboBox`, session layers excepted). Picking another DEM there does what Start does — the unsaved-work question, then a new session — and Cancel or a refused start puts it back. The status line, `Change…` and **Keep sketching** are gone; the welcome view shows only without a session.*
+
 ## 6. New feature page
 
 Title "New feature", pushed on the stack. Contents, top to bottom:
@@ -212,6 +214,7 @@ Every rule above is covered in `tests/qgis`, headless like the rest of the suite
   Profiles button still tracks the dock.
 - The welcome view: Start behaves as today, including the DEM error paths and the excepted layers, and
   `Change…` returns to it without asking; Start then asks the unsaved-work question once.
+  *(2026-11-23: `Change…` is gone — see the note in §5.3; the toolbar's DEM chooser is tested instead.)*
 - New feature page: picking a tool enables the right shapes, brush radius appears only with Brush, drawing a
   feature lands on its page.
 - Feature page: rename through the header field is undoable; Delete returns to the list; fields keep the

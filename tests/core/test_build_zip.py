@@ -45,6 +45,14 @@ def test_the_plugin_ships_what_it_needs_at_runtime(built):
     assert any(name.endswith(".svg") for name in names), "the illustrations were left out"
 
 
+def test_the_logo_named_in_metadata_ships(built):
+    """The Plugin Manager and the toolbar button show metadata's icon; a wrong path shows nothing."""
+    _path, names = built
+    parser = configparser.ConfigParser()
+    parser.read(ROOT / "terrain_scenarios" / "metadata.txt")
+    assert f"terrain_scenarios/{parser.get('general', 'icon')}" in names
+
+
 def test_the_user_does_not_receive_our_tests_or_caches(built):
     _path, names = built
     assert not [n for n in names if "__pycache__" in n or n.endswith((".pyc", ".pyo"))]

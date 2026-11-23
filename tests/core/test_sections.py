@@ -6,7 +6,7 @@ import pytest
 from helpers import feature, flat, make_grid, tilted
 from terrain_scenarios.core.engine import FeatureStack
 from terrain_scenarios.core.geometry import line_wkb, multi_wkb, polygon_wkb
-from terrain_scenarios.core.sections import (cross_section, default_section_line, long_section, section_along,
+from terrain_scenarios.core.sections import (cross_section, default_section_line, flat_ground_section, long_section, section_along,
                                           set_cross_section, set_whole_cross_section, supports_long_profile,
                                           whole_cross_section)
 from terrain_scenarios.core.tools import Mode, Tool
@@ -419,3 +419,49 @@ def test_the_default_section_of_parts_side_by_side_runs_through_one_of_them():
     start, end = line_points(line)
     assert start[0] == pytest.approx(end[0]) and start[1] < end[1]          # along the longer side, south to north
     assert start[1] == pytest.approx(2.0 - 5.0) and end[1] == pytest.approx(32.0 + 5.0)
+
+
+def _coords(points):
+    return [value for point in points for value in point]
+
+
+def _plain(tool=Tool.RAISE_PATH, **kw):
+    values = dict(width=4.0, amount=1.0, slope_n=2.0, reach=10.0)
+    values.update(kw)
+    return feature(tool, Mode.PATH, line_wkb([(5, 20), (35, 20)]), **values)
+
+
+def test_a_dike_on_flat_ground_runs_from_its_crest_down_to_the_ground():
+    section = flat_ground_section(_plain())
+    assert _coords(section.right) == pytest.approx(_coords(((0, 1), (2, 1), (4, 0))))
+    assert section.left == section.right
+    assert not section.cut_short
+
+
+def test_a_ditch_on_flat_ground_sits_below_it():
+    section = flat_ground_section(_plain(Tool.LOWER_PATH))
+    assert _coords(section.right) == pytest.approx(_coords(((0, -1), (2, -1), (4, 0))))
+    assert section.direction == 1
+
+
+def test_a_reach_shorter_than_the_slope_ends_in_a_step():
+    section = flat_ground_section(_plain(reach=1.0))
+    assert _coords(section.right) == pytest.approx(_coords(((0, 1), (2, 1), (3, 0.5), (3, 0))))
+    assert section.cut_short
+
+
+def test_no_side_slope_drops_straight_down_at_the_edge():
+    section = flat_ground_section(_plain(slope_n=0.0))
+    assert _coords(section.right) == pytest.approx(_coords(((0, 1), (2, 1), (2, 0))))
+    assert not section.cut_short
+
+
+def test_a_zero_height_lies_on_the_ground():
+    section = flat_ground_section(_plain(amount=0.0))
+    assert all(z == 0 for _x, z in section.left + section.right)
+    assert not section.cut_short
+
+
+def test_a_break_point_below_the_ground_ends_the_side_where_it_meets_the_ground():
+    section = flat_ground_section(_plain(cross_right=((2.0, -2.0),)))
+    assert _coords(section.right) == pytest.approx(_coords(((0, 1), (2, 1), (3, 0))))

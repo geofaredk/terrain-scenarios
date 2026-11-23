@@ -5,6 +5,7 @@ Pure geometry and sampling — the widgets draw what these return and hand back 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 from osgeo import ogr
@@ -43,6 +44,48 @@ def cross_section(feature, side: int = 1) -> tuple:
                                  info.direction)
         points.append((edge + limit, float(dz[0])))
     return tuple(points)
+
+
+@dataclass(frozen=True)
+class FlatSection:
+    """A feature's cross-section on flat ground, for the feature page's diagram.
+
+    `left` and `right` are ((offset from the centre line, z above the ground), ...), from the centre
+    at the crest (+amount for a raise tool, -amount for a lower one) out to the ground. `cut_short`:
+    a side slope stopped at its reach before it met the ground, so that side ends in a step."""
+    left: tuple
+    right: tuple
+    direction: int
+    cut_short: bool
+
+
+def flat_ground_section(feature) -> FlatSection:
+    """`cross_section` of both sides set on flat ground: each side ends where it first meets the
+    ground — the engine keeps the ground beyond that — or steps down (or up) to it at its end."""
+    direction = TOOL_INFO[feature.tool].direction
+    crest = -direction * float(feature.amount)
+    sides, stepped = [], False
+    for side in (-1, 1):
+        points = [(x, crest + dz) for x, dz in cross_section(feature, side)]
+        out = [points[0]]
+        for (x0, z0), (x1, z1) in zip(points, points[1:]):
+            if z1 * crest > 0.0:                  # still on the crest's side of the ground
+                out.append((x1, z1))
+                continue
+            if z1 == 0.0:
+                x = x1
+            elif z0 * crest > 0.0:                # crosses the ground: where, exactly
+                x = x0 + (x1 - x0) * z0 / (z0 - z1)
+            else:                                 # already on the ground (a zero height)
+                x = x0
+            out.append((x, 0.0))
+            break
+        if out[-1][1] != 0.0:
+            out.append((out[-1][0], 0.0))
+            stepped = True
+        sides.append(tuple(out))
+    cut_short = stepped and feature.slope_n > 0.0 and feature.amount > 0.0
+    return FlatSection(sides[0], sides[1], direction, cut_short)
 
 
 def set_cross_section(feature, side: int, points) -> dict:

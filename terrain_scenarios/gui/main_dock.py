@@ -379,6 +379,7 @@ class MainDock(QgsDockWidget):
         self.gallery = ToolGallery(self._released_pages)
         self.gallery.drawRequested.connect(self._begin_drawing)
         self.gallery.layerRequested.connect(self._use_layer)
+        self.gallery.layerPicked.connect(self.end_drawing)
         # `ToolGallery` is a `QgsPanelWidget`: its own `keyPressEvent` (dockMode True) answers
         # Escape itself, by calling its own `acceptPanel()` — before the key press ever reaches the
         # `_PagePanel` wrapper that is actually on the stack. Forwarding its `panelAccepted` to
@@ -485,6 +486,7 @@ class MainDock(QgsDockWidget):
             tool, self.draw_tool = self.draw_tool, None
             self._section_fid = None
             self._release_tool(tool)
+            self.gallery.drawing_ended()   # the selection tool that drew it is no longer highlighted
         except Exception:  # noqa: BLE001 — this runs off a Qt signal
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 

@@ -1,5 +1,6 @@
-"""The 'New feature' page: the drawing hint while one is running, a tile grid of tools, a segmented
-Line/Area pair and the three ways to draw."""
+"""The 'New feature' page: the drawing hint while one is running, then three headed sections —
+Feature (the tile grid and an Info box describing the picked tool), Shape (Line or Area) and
+Selection Tool (the three ways to mark it, the running one kept highlighted)."""
 from __future__ import annotations
 
 import traceback
@@ -7,8 +8,8 @@ import traceback
 from qgis.core import Qgis, QgsApplication, QgsMessageLog
 from qgis.gui import QgsPanelWidget
 from qgis.PyQt.QtCore import QEvent, QSize, Qt, pyqtSignal
-from qgis.PyQt.QtWidgets import (QButtonGroup, QGridLayout, QHBoxLayout, QLabel, QListView, QListWidget,
-                                 QListWidgetItem, QSizePolicy, QToolButton, QVBoxLayout)
+from qgis.PyQt.QtWidgets import (QButtonGroup, QGridLayout, QGroupBox, QLabel, QListView, QListWidget,
+                                 QListWidgetItem, QPushButton, QSizePolicy, QStyle, QVBoxLayout)
 
 from ..core.tools import TOOL_INFO, Mode, Tool
 from . import illustrations
@@ -20,7 +21,8 @@ from .selection import METHOD_ICONS, METHOD_LABELS, METHOD_TIPS, Method
 
 TILE_ICON_SIZE = QSize(96, 48)
 TILE_GRID_SIZE = QSize(116, 92)
-METHOD_GRID_POSITIONS = {Method.CLICK: (0, 0), Method.FREEHAND: (0, 1), Method.LAYER: (1, 0)}
+BUTTON_GAP = 4          # the small gap between the buttons of a row
+SHAPE_ICONS = {Mode.PATH: "/mIconLineLayer.svg", Mode.AREA: "/mIconPolygonLayer.svg"}
 
 
 class _ToolTileList(QListWidget):
@@ -71,6 +73,7 @@ class _ToolTileList(QListWidget):
 class ToolGallery(QgsPanelWidget):
     drawRequested = pyqtSignal(object, object, object)  # Tool, Mode, Method
     layerRequested = pyqtSignal(object, object, object, bool)  # Tool, Mode, QgsVectorLayer, selected_only
+    layerPicked = pyqtSignal()   # From layer chosen: a drawing still running from this page stops
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -86,7 +89,11 @@ class ToolGallery(QgsPanelWidget):
         self.hint.hide()
         layout.addWidget(self.hint)
 
-        layout.addWidget(QLabel(self.tr("What do you want to build?")))
+        # Three sections, each a bold heading over its controls, with a section's worth of space
+        # between them — the same heading style throughout, so the order reads at a glance.
+        section_gap = 2 * self.style().pixelMetric(QStyle.PixelMetric.PM_LayoutVerticalSpacing, widget=self)
+
+        layout.addWidget(self._heading(self.tr("Feature")))
         self.tool_list = _ToolTileList()
         self.tool_list.setViewMode(QListView.ViewMode.IconMode)
         self.tool_list.setUniformItemSizes(True)
@@ -102,28 +109,25 @@ class ToolGallery(QgsPanelWidget):
             item.setIcon(illustrations.icon(f"tool_{tool.value}", TILE_ICON_SIZE, self.palette()))
             self.tool_list.addItem(item)
         layout.addWidget(self.tool_list)
+        self.info_box = QGroupBox(self.tr("Info"))
         self.summary = QLabel()
         self.summary.setWordWrap(True)
-        layout.addWidget(self.summary)
+        QVBoxLayout(self.info_box).addWidget(self.summary)
+        layout.addWidget(self.info_box)
 
-        mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel(self.tr("Shape")))
-        self.line_mode = self._shape_button(self.tr("Line"))
-        self.area_mode = self._shape_button(self.tr("Area"))
+        layout.addSpacing(section_gap)
+        layout.addWidget(self._heading(self.tr("Shape")))
+        self.line_mode = self._row_button(self.tr("Line"), SHAPE_ICONS[Mode.PATH])
+        self.area_mode = self._row_button(self.tr("Area"), SHAPE_ICONS[Mode.AREA])
         self.mode_group = QButtonGroup(self)
         self.mode_group.addButton(self.line_mode)
         self.mode_group.addButton(self.area_mode)
-        mode_row.addWidget(self.line_mode)
-        mode_row.addWidget(self.area_mode)
-        mode_row.addStretch(1)
-        layout.addLayout(mode_row)
+        layout.addLayout(self._button_row([self.line_mode, self.area_mode]))
 
-        layout.addWidget(QLabel(self.tr("Where?")))
-        method_grid = QGridLayout()
+        layout.addSpacing(section_gap)
+        layout.addWidget(self._heading(self.tr("Selection Tool")))
         self.method_buttons = {method: self._method_button(method) for method in Method}
-        for method, button in self.method_buttons.items():
-            method_grid.addWidget(button, *METHOD_GRID_POSITIONS[method])
-        layout.addLayout(method_grid)
+        layout.addLayout(self._button_row(list(self.method_buttons.values())))
 
         self.layer_source = LayerSource()
         self.layer_source.hide()
@@ -178,25 +182,51 @@ class ToolGallery(QgsPanelWidget):
     def clear_hint(self) -> None:
         self.hint.hide()
 
-    def _shape_button(self, text: str) -> QToolButton:
-        """`autoRaise` off, on both Line and Area, so each looks like a button in either state —
-        checked or not — instead of the unchecked one reading as plain text next to the checked
-        one's flat highlight."""
-        button = QToolButton()
-        button.setText(text)
+    def _heading(self, text: str) -> QLabel:
+        """A section heading: the panel's own font, bold — the one heading style on this page."""
+        label = QLabel(text)
+        font = label.font()
+        font.setBold(True)
+        label.setFont(font)
+        return label
+
+    def _button_row(self, buttons) -> QGridLayout:
+        """`buttons` side by side in equal columns, filling the panel's width with a small gap."""
+        row = QGridLayout()
+        row.setHorizontalSpacing(BUTTON_GAP)
+        for column, button in enumerate(buttons):
+            row.addWidget(button, 0, column)
+            row.setColumnStretch(column, 1)
+        return row
+
+    def _row_button(self, text: str, icon: str) -> QPushButton:
+        """A checkable push button, its icon beside the text, as wide as its column. A push button,
+        not a tool button: it keeps its button frame in either state and centres icon and text in
+        the widened button, where a tool button pins them to its left edge."""
+        button = QPushButton(QgsApplication.getThemeIcon(icon), text)
         button.setCheckable(True)
-        button.setAutoRaise(False)
-        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         return button
 
-    def _method_button(self, method: Method) -> QToolButton:
-        button = QToolButton()
-        button.setIcon(QgsApplication.getThemeIcon(METHOD_ICONS[method]))
-        button.setText(METHOD_LABELS[method])
+    def _method_button(self, method: Method) -> QPushButton:
+        button = self._row_button(METHOD_LABELS[method], METHOD_ICONS[method])
         button.setToolTip(METHOD_TIPS[method])
-        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         button.clicked.connect(lambda _checked=False, m=method: self._pick(m))
         return button
+
+    def active_method(self) -> Method | None:
+        """The selection tool now in use — highlighted until its drawing ends — or None."""
+        return next((m for m, b in self.method_buttons.items() if b.isChecked()), None)
+
+    def set_active_method(self, method: Method | None) -> None:
+        for each, button in self.method_buttons.items():
+            button.setChecked(each is method)
+
+    def drawing_ended(self) -> None:
+        """A drawing stopped — finished, cancelled or replaced: Draw or Freehand is no longer in
+        use. From layer stays highlighted while its form is open."""
+        if self.active_method() in (Method.CLICK, Method.FREEHAND):
+            self.set_active_method(None)
 
     def _tool_changed(self, *_args) -> None:
         tool = self.selected_tool()
@@ -221,14 +251,26 @@ class ToolGallery(QgsPanelWidget):
             self.layer_source.set_mode(mode)
         else:
             self.layer_source.hide()
+            if self.active_method() is Method.LAYER:
+                self.set_active_method(None)
 
     def _pick(self, method: Method) -> None:
-        tool, mode = self.selected_tool(), self.selected_mode()
-        if tool is None or mode is None:
-            return
-        self.layer_source.setVisible(method is Method.LAYER)
-        if method is not Method.LAYER:
-            self.drawRequested.emit(tool, mode, method)
+        """Start `method` and highlight it. The highlight is set after the request: starting a
+        drawing first ends the one running, and ending a drawing clears the highlight. A click on
+        a button that is already highlighted would otherwise toggle it off; set here, it stays on."""
+        try:
+            tool, mode = self.selected_tool(), self.selected_mode()
+            if tool is None or mode is None:
+                self.set_active_method(None)
+                return
+            self.layer_source.setVisible(method is Method.LAYER)
+            if method is Method.LAYER:
+                self.layerPicked.emit()
+            else:
+                self.drawRequested.emit(tool, mode, method)
+            self.set_active_method(method)
+        except Exception:  # noqa: BLE001 — this runs off a button's clicked signal
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _use_layer(self, layer, selected_only: bool) -> None:
         tool, mode = self.selected_tool(), self.selected_mode()

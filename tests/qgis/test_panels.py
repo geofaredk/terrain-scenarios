@@ -442,6 +442,29 @@ def test_the_new_feature_page_reads_feature_then_shape_then_selection_tool():
     assert gallery.summary.parent() is gallery.info_box and gallery.info_box.isFlat() is False
 
 
+def test_the_feature_tiles_are_buttons_that_fill_the_row(tmp_path):
+    """The tiles are painted as the style's push buttons on the panel itself (no list frame or
+    background), and their cells widen to share the panel's whole width, like the button rows."""
+    from qgis.PyQt.QtWidgets import QApplication, QFrame
+    from qgis_helpers import spin_event_loop
+    from terrain_scenarios.gui.tool_gallery import TILE_GRID_SIZE, _ButtonTileDelegate
+
+    _iface, _c, dock = panel(tmp_path)
+    dock.show()
+    dock.new_button.click()
+    tiles = dock.gallery.tool_list
+    assert isinstance(tiles.itemDelegate(), _ButtonTileDelegate)
+    assert tiles.frameShape() == QFrame.Shape.NoFrame and not tiles.viewport().autoFillBackground()
+    for width in (300, 333, 420, 517):
+        dock.resize(width, 900)
+        QApplication.processEvents()
+        spin_event_loop(10)
+        cell = tiles.gridSize()
+        columns = len({tiles.visualItemRect(tiles.item(i)).left() for i in range(tiles.count())})
+        assert cell.width() >= TILE_GRID_SIZE.width()
+        assert 0 < tiles.viewport().width() - columns * cell.width() <= columns   # the whole width, bar rounding
+
+
 def test_shape_and_selection_tool_buttons_share_their_row_equally(tmp_path):
     """Line and Area each take half the panel's width, the three selection tools a third each, with
     only a small gap between them, and every one carries an icon beside its text."""

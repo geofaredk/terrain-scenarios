@@ -5,4 +5,5 @@ __pycache__/
 *.zip
 .devdeps/
 .pytest_cache/
-/docs/
+docs/
+scripts/

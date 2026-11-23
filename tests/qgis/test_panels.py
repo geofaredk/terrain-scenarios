@@ -687,7 +687,7 @@ def test_the_brush_radius_is_labelled_with_the_units_it_is_really_in():
 # --- The feature page -----------------------------------------------------------------------
 
 
-def test_opening_a_feature_shows_its_page_with_name_and_volume(tmp_path):
+def test_opening_a_feature_shows_its_page_with_name_and_tool(tmp_path):
     _iface, c, dock = panel(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     dock.feature_view.rowOpened.emit(dike.id)
@@ -699,7 +699,7 @@ def test_opening_a_feature_shows_its_page_with_name_and_volume(tmp_path):
     # for this open — the same pattern every other test in this file uses for `dock.gallery_page`.
     assert dock.stack.currentPanel() is dock.properties_page and page.panelTitle() == dike.name
     assert page.name_edit.text() == dike.name and "Raise path" in page.header_summary.text()
-    assert "m³" in page.header_summary.text()
+    assert "m³" not in page.header_summary.text()
 
 
 def test_the_feature_page_keeps_the_styles_normal_margin_from_the_panel_edge(tmp_path):

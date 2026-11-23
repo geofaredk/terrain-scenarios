@@ -32,16 +32,15 @@ def test_add_path_raises_corridor_by_exact_amount():
     changed = after != 5.0
     assert changed.sum() == 3 * 30  # rows 18..20, cols 5..34
     np.testing.assert_allclose(after[changed], 6.5)
-    assert stats.fill == pytest.approx(90 * 1.5) and stats.cut == 0 and stats.storage is None
+    assert stats.flags == ()
     assert g.valid.all()
 
 
 def test_subtract_area_keeps_the_relief():
-    before, after, stats = run(make_grid(tilted), feature(Tool.SUBTRACT, Mode.AREA, square(10.3, 10.3, 20.3, 20.3), amount=2.0))
+    before, after, _ = run(make_grid(tilted), feature(Tool.SUBTRACT, Mode.AREA, square(10.3, 10.3, 20.3, 20.3), amount=2.0))
     changed = after != before
     assert changed.sum() == 100
     np.testing.assert_allclose((before - after)[changed], 2.0, atol=1e-5)
-    assert stats.cut == pytest.approx(200.0, rel=1e-5)
 
 
 def test_interpolate_path_grades_straight_through_a_bump():
@@ -52,21 +51,21 @@ def test_interpolate_path_grades_straight_through_a_bump():
 
 
 def test_raise_path_never_lowers_and_builds_a_crest():
-    before, after, stats = run(make_grid(lambda X, Y: tilted(X, Y) + bump(X, Y)),
-                               feature(Tool.RAISE_PATH, Mode.PATH, EAST_WEST, amount=1.0, width=2.0, slope_n=2.0))
+    before, after, _ = run(make_grid(lambda X, Y: tilted(X, Y) + bump(X, Y)),
+                           feature(Tool.RAISE_PATH, Mode.PATH, EAST_WEST, amount=1.0, width=2.0, slope_n=2.0))
     assert (after >= before - 1e-5).all()
     assert after[ROW, 8] == pytest.approx(10 + 0.1 * 8.5 + 1.0, abs=1e-3)  # 1 m above the grade
     assert after[ROW, 20] == pytest.approx(before[ROW, 20])  # the 3 m bump is already higher
-    assert stats.cut == 0 and stats.fill > 0
+    assert (after > before).any()
 
 
 def test_lower_path_never_raises_and_cuts_a_ditch():
-    before, after, stats = run(make_grid(lambda X, Y: tilted(X, Y) - bump(X, Y)),
-                               feature(Tool.LOWER_PATH, Mode.PATH, EAST_WEST, amount=1.0, width=2.0, slope_n=2.0))
+    before, after, _ = run(make_grid(lambda X, Y: tilted(X, Y) - bump(X, Y)),
+                           feature(Tool.LOWER_PATH, Mode.PATH, EAST_WEST, amount=1.0, width=2.0, slope_n=2.0))
     assert (after <= before + 1e-5).all()
     assert after[ROW, 8] == pytest.approx(10 + 0.1 * 8.5 - 1.0, abs=1e-3)
     assert after[ROW, 20] == pytest.approx(before[ROW, 20])  # the pit is already deeper
-    assert stats.fill == 0 and stats.cut > 0
+    assert (after < before).any()
 
 
 def test_path_side_slopes_fall_one_in_n_including_the_ends():
@@ -96,12 +95,10 @@ def test_raise_flat_area_levels_from_its_outline_so_a_knoll_inside_pokes_through
     assert after[ROW, 20] == pytest.approx(before[ROW, 20], abs=1e-6)  # left alone: it is higher
 
 
-def test_lower_flat_area_basin_and_storage():
-    _, after, stats = run(make_grid(flat(10)),
-                          feature(Tool.LOWER_FLAT, Mode.AREA, square(10.3, 10.3, 20.3, 20.3), amount=1.0, slope_n=0.0))
+def test_lower_flat_area_digs_a_basin():
+    _, after, _ = run(make_grid(flat(10)),
+                      feature(Tool.LOWER_FLAT, Mode.AREA, square(10.3, 10.3, 20.3, 20.3), amount=1.0, slope_n=0.0))
     assert (after == 9).sum() == 100
-    assert stats.cut == pytest.approx(100.0)
-    assert stats.storage == pytest.approx(100.0)
 
 
 def test_area_slopes_outside_fall_one_in_n_and_stop_at_reach():
@@ -116,13 +113,12 @@ def test_area_slopes_outside_fall_one_in_n_and_stop_at_reach():
 
 def test_pond_slopes_inside_meet_the_terrain_at_the_outline():
     poly = square(10.3, 10.3, 30.3, 30.3)  # cells 10..29
-    _, after, stats = run(make_grid(flat(10)), feature(Tool.LOWER_FLAT, Mode.AREA, poly, amount=2.0,
-                                                       slope_n=2.0, slopes_inside=True))
+    _, after, _ = run(make_grid(flat(10)), feature(Tool.LOWER_FLAT, Mode.AREA, poly, amount=2.0,
+                                                   slope_n=2.0, slopes_inside=True))
     assert after[20, 10] == pytest.approx(9.75)  # first cell inside the outline
     np.testing.assert_allclose(np.diff(after[20, 10:14]), -0.5, atol=1e-6)
     assert after[20, 20] == pytest.approx(8.0)  # flat floor
     assert (after[:, :10] == 10).all()  # nothing outside the outline changes
-    assert stats.storage == pytest.approx(stats.cut)
 
 
 def test_interpolate_area_reproduces_a_plane_and_fills_a_ditch():
@@ -154,7 +150,7 @@ def test_multi_part_areas_use_their_own_reference_levels():
 def test_dragged_long_profile_still_never_cuts():
     low = ((0.0, 5.0), (29.5, 5.0))
     before, after, stats = run(make_grid(flat(10)), feature(Tool.RAISE_PATH, Mode.PATH, EAST_WEST, long_profile=low))
-    assert (after == before).all() and stats.fill == 0 and stats.flags == ()
+    assert (after == before).all() and stats.flags == ()
     high = ((0.0, 12.0), (29.5, 14.0))
     _, after2, _ = run(make_grid(flat(10)), feature(Tool.RAISE_PATH, Mode.PATH, EAST_WEST, long_profile=high, slope_n=0.0))
     assert after2[ROW, 20] == pytest.approx(12.0 + 2.0 * (20.5 - 5.25) / 29.5, abs=1e-3)

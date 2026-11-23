@@ -1,11 +1,10 @@
-"""The feature page header's summary (tool, fill, cut) and the volume formatting behind it."""
-import pytest
+"""The feature page header (its summary line, problems) and the groups the page does not have."""
 from qgis.PyQt.QtWidgets import QWidget
 
 from qgis_helpers import UTM, line_through, square, start_session
 from terrain_scenarios.core.tools import Mode, Tool
 from terrain_scenarios.gui.feature_list import feature_subtitle
-from terrain_scenarios.gui.help_texts import FLAG_TEXTS, NO_VOLUME_YET, cubic_metres
+from terrain_scenarios.gui.help_texts import FLAG_TEXTS
 from terrain_scenarios.gui.properties_page import PropertiesPage
 
 
@@ -38,18 +37,16 @@ def test_the_page_has_no_volumes_or_about_group(tmp_path):
     assert page.findChild(QWidget, "TerrainScenariosVolumes") is None
 
 
-def test_the_header_summary_follows_an_edit(tmp_path):
+def test_the_header_summary_is_just_the_tool_label_and_follows_an_edit(tmp_path):
     c = start_session(tmp_path)
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
     c.update_feature(dike.id, amount=1.0)
     page = PropertiesPage(c)
     page.show_feature(dike.id)
-    before = page.header_summary.text()
-    assert cubic_metres(c.stats(dike.id).fill) in before
+    assert page.header_summary.text() == "Raise path" and "m³" not in page.header_summary.text()
 
-    c.update_feature(dike.id, amount=3.0)
-    assert page.header_summary.text() != before
-    assert page.header_summary.text() == feature_subtitle(c, dike.id)
+    c.update_feature(dike.id, tool=Tool.RAISE_FLAT)
+    assert page.header_summary.text() == feature_subtitle(c, dike.id) != "Raise path"
 
 
 def test_a_refresh_summary_failure_is_logged_not_raised(tmp_path, monkeypatch):
@@ -74,21 +71,3 @@ def test_a_refresh_summary_failure_is_logged_not_raised(tmp_path, monkeypatch):
     page._refresh_summary()          # must not raise
 
     assert log and "RuntimeError" in log[-1]
-
-
-
-@pytest.mark.parametrize("value, expected", [
-    (0.0, "0.00 m³"), (0.5, "0.50 m³"), (1.0, "1.0 m³"), (99.94, "99.9 m³"),
-    (100.0, "100 m³"), (12345.6, "12,346 m³"), (None, NO_VOLUME_YET)])
-def test_volumes_are_written_the_way_a_reader_expects(value, expected):
-    assert cubic_metres(value) == expected
-
-
-@pytest.mark.parametrize("value", [-0.0, -0.004, -0.0049])
-def test_a_volume_that_rounds_to_zero_never_shows_a_minus_sign(value):
-    assert cubic_metres(value) == "0.00 m³"
-
-
-def test_a_volume_that_really_is_negative_keeps_its_sign():
-    assert cubic_metres(-5.0) == "-5.0 m³"       # a genuine negative is a bug worth seeing
-    assert cubic_metres(-0.49) == "-0.49 m³"     # only what ROUNDS to zero loses the sign

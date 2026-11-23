@@ -104,6 +104,8 @@ def test_the_dem_menu_offers_the_other_rasters_with_the_session_dem_checked(tmp_
     assert not offered & set(c.layers.layer_ids)
     assert [a.data() for a in actions if a.isChecked()] == [c.dem_layer_id]
     assert all(not a.icon().isNull() and a.text() for a in actions)
+    # the tick alone is faint over an icon in a macOS menu: the session's DEM is bold as well
+    assert [a.data() for a in actions if a.font().bold()] == [c.dem_layer_id]
 
 
 def test_the_dem_menu_is_rebuilt_each_time_it_opens(tmp_path):

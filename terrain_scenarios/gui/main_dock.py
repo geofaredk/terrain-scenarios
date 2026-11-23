@@ -809,7 +809,12 @@ class MainDock(QgsDockWidget):
                 action.setData(layer.id())
                 action.setCheckable(True)
                 action.setActionGroup(group)
-                action.setChecked(self.controller.has_dem and layer.id() == self.controller.dem_layer_id)
+                current = self.controller.has_dem and layer.id() == self.controller.dem_layer_id
+                action.setChecked(current)
+                if current:   # macOS draws a checked entry's mark faintly over its icon: bold says it too
+                    font = action.font()
+                    font.setBold(True)
+                    action.setFont(font)
                 action.triggered.connect(lambda _checked=False, layer_id=layer.id(): self._dem_chosen(layer_id))
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)

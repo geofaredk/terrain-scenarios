@@ -1,6 +1,10 @@
+<img src="terrain_scenarios/icons/terrain_scenarios.svg" alt="Terrain Scenarios logo" width="96">
+
 # Terrain Scenarios
 
-A QGIS plugin for sketching dikes, ditches, ponds and other landscape changes onto a DEM, without touching the original. Draw a feature on the map, adjust it in a list, and export the modified DEM as a GeoTIFF for your flood simulation.
+Change the terrain as easily as you'd sketch on a map. Draw a line or an outline, choose what should happen (a dike, a ditch, a pond, a levelled pad) and the DEM updates immediately. You don't need a raster calculator, masks or any GIS expertise, and the original DEM is never touched.
+
+Use the modified DEM wherever terrain matters: flood and drainage modelling, landscape and nature-based solution design, earthworks planning, or simply showing what a place could look like.
 
 ## Features
 
@@ -12,7 +16,7 @@ A QGIS plugin for sketching dikes, ditches, ponds and other landscape changes on
 - **Non-destructive**: every feature stays editable (shape, height, width, side slopes) and can be undone. The source DEM is never changed.
 - **Live preview**: cross-section diagram on the feature page, long and cross profiles, and a 3D view.
 - **Scenarios**: save the features to a GeoPackage and open them again later on the same DEM.
-- **Export**: write the modified DEM to a 32-bit float GeoTIFF.
+- **Export**: write the modified DEM to a 32-bit float GeoTIFF, ready for any model or tool that reads a DEM.
 
 ## Requirements
 

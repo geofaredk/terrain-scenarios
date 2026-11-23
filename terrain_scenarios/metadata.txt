@@ -2,8 +2,7 @@
 name=Terrain Scenarios
 qgisMinimumVersion=4.0
 qgisMaximumVersion=4.99
-description=Sketch dikes, ditches, ponds and other landscape features onto a DEM, non-destructively.
-about=Draw terrain modifications straight onto a DEM: raise or lower paths (dikes, ditches), flat pads and basins, interpolated surfaces, and add/subtract relief. Every feature stays editable in a list; the original DEM is never changed. Export the modified DEM as a GeoTIFF for your flood simulation. Requires the Python package scipy, which is included in the standard QGIS installers for Windows and macOS; on Linux, install it with your package manager (e.g. python3-scipy).
+description=Change the terrain as easily as you'd sketch on a map. Draw a line or an outline, choose what should happen (a dike, a ditch, a pond, a levelled pad) and the DEM updates immediately. You don't need a raster calculator, masks or any GIS expertise, and the original DEM is never touched. Use the modified DEM wherever terrain matters: flood and drainage modelling, landscape and nature-based solution design, earthworks planning, or simply showing what a place could look like. Export the modified DEM as a GeoTIFF for flood and drainage modelling, landscape design, earthworks or visualisation. Requires the Python package scipy, which is included in the standard QGIS installers for Windows and macOS; on Linux, install it with your package manager (e.g. python3-scipy).
 version=0.1.0
 author=Niklas Jordan
 email=hello@niklasjordan.com

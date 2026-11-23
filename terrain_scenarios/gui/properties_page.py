@@ -14,6 +14,7 @@ from qgis.PyQt.QtWidgets import (QComboBox, QFormLayout, QFrame, QHBoxLayout, QL
 from ..core.sections import supports_long_profile
 from ..core.tools import TOOL_INFO, Mode, PixelMode
 from . import illustrations, settings
+from .illustrations import section
 from .controller import LOG_TAG
 from .feature_list import feature_subtitle
 from .help_texts import (AMOUNT_IS_CUSTOM, FIELD_TIPS, FLAG_TEXTS, PIXEL_MODE_LABELS, PIXEL_MODE_TIPS,
@@ -22,7 +23,7 @@ from .muted import MutedLabel
 from .page_layout import apply_page_margins
 from .selection import EDIT_ICON, ZOOM_ICON
 
-DIAGRAM = QSize(200, 96)
+DIAGRAM = QSize(230, 110)   # the section diagram's viewBox, at 1:1
 HEADER_PICTURE = QSize(72, 36)
 PIXEL_ICON = QSize(32, 32)
 PIXEL_PICTURE = 72   # each of the three pictures in the Pixels to change tooltip
@@ -68,6 +69,7 @@ class PropertiesPage(QgsPanelWidget):
         self.controller = controller
         self._fid = None
         self._loading = False
+        self._highlight = None   # the diagram part of the field with focus, kept across redraws
 
         # Header: the tool illustration beside the name — renames commit through the controller, so
         # they are undoable — with the tool label and volume line under it, muted (spec §7.1).
@@ -141,10 +143,15 @@ class PropertiesPage(QgsPanelWidget):
         advanced_form = QFormLayout(self.advanced)
         advanced_form.addRow(self.tr("Pixels to change"), self.pixel_mode)
 
+        # The feature's own cross-section, drawn from its values, in a box the user can fold away.
+        self.diagram_box = QgsCollapsibleGroupBox(self.tr("Cross-section"))
+        self.diagram_box.setObjectName("TerrainScenariosCrossSection")
+        settings.remember_collapsed("cross_section_group", self.diagram_box, collapsed=False)
         self.diagram = QLabel()
         self.diagram.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.diagram.setToolTip(self.tr("The part the field you are editing controls is "
                                         "highlighted."))
+        QVBoxLayout(self.diagram_box).addWidget(self.diagram)
 
         self.problems = QLabel()
         self.problems.setWordWrap(True)
@@ -160,7 +167,7 @@ class PropertiesPage(QgsPanelWidget):
         # out of sight below Advanced, which can expand to any length.
         content_layout.addWidget(self.hint)
         content_layout.addWidget(self.problems)
-        content_layout.addWidget(self.diagram)
+        content_layout.addWidget(self.diagram_box)
         content_layout.addLayout(self.form)
         content_layout.addWidget(self.advanced)
         content_layout.addStretch(1)
@@ -250,8 +257,11 @@ class PropertiesPage(QgsPanelWidget):
         self.hint.hide()
 
     def _draw_diagram(self, highlight: str | None) -> None:
-        self.diagram.setPixmap(illustrations.pixmap("parameters", DIAGRAM, self.palette(),
-                                                    highlight=highlight))
+        self._highlight = highlight
+        feature = self.controller.find(self._fid) if self._fid is not None else None
+        if feature is not None and _has_diagram(feature):
+            self.diagram.setPixmap(section.section_pixmap(feature, DIAGRAM, self.palette(),
+                                                          highlight=highlight))
 
     def _draw_pictures(self) -> None:
         feature = self.controller.find(self._fid) if self._fid is not None else None
@@ -259,7 +269,7 @@ class PropertiesPage(QgsPanelWidget):
             return
         self.header_picture.setPixmap(illustrations.pixmap(f"tool_{feature.tool.value}",
                                                             HEADER_PICTURE, self.palette()))
-        self._draw_diagram(None)
+        self._draw_diagram(self._highlight)
         for index in range(self.pixel_mode.count()):
             mode = PixelMode(self.pixel_mode.itemData(index))
             self.pixel_mode.setItemIcon(index, illustrations.icon(f"pixels_{mode.value}",
@@ -298,8 +308,10 @@ class PropertiesPage(QgsPanelWidget):
             self.form.setRowVisible(self.slope, info.has_slopes)
             self.form.setRowVisible(self.reach, info.has_slopes)
             self.form.setRowVisible(self.slope_position, info.has_slopes and feature.mode is Mode.AREA)
+            if not retargeting:
+                self._highlight = None
             self._draw_pictures()
-            self.diagram.setVisible(feature.mode is Mode.PATH and info.has_slopes)
+            self.diagram_box.setVisible(_has_diagram(feature))
         finally:
             self._loading = False
         self._refresh_problems()
@@ -332,6 +344,7 @@ class PropertiesPage(QgsPanelWidget):
                 self._load_values(feature)
             finally:
                 self._loading = False
+            self._draw_diagram(self._highlight)   # the section follows every value, wherever it changed
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
@@ -392,3 +405,8 @@ class PropertiesPage(QgsPanelWidget):
     def _request_delete(self) -> None:
         if self._fid is not None:
             self.deleteRequested.emit(self._fid)
+
+
+def _has_diagram(feature) -> bool:
+    """Only a path with side slopes has a cross-section worth drawing."""
+    return feature.mode is Mode.PATH and TOOL_INFO[feature.tool].has_slopes

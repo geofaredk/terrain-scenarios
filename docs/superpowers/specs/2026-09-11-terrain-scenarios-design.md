@@ -253,7 +253,7 @@ These apply to the polygon, or to the corridor polygon for paths. Side slopes ar
      - Picking a tool and then a "Where?" method starts the map tool. Finishing the drawing creates the feature with default parameters, adds it to the list, selects it, and shows its Properties page.
    - **Properties page** (for the selected feature):
      - *About this tool*: a collapsible group with the description, usage examples, and the tool's illustration.
-     - *Shape*: only the parameters relevant to the tool and mode. The diagram next to them highlights the part controlled by the field that has focus.
+     - *Shape*: only the parameters relevant to the tool and mode. The diagram next to them highlights the part controlled by the field that has focus. *(2026-11-23: the diagram is now the feature's own cross-section, drawn from its values, in a collapsible "Cross-section" box — see 2026-11-23-live-cross-section-diagram-design.md.)*
        - H or D: "Height above the path", "Depth below the path", "Height above the highest point", and so on; the label depends on the tool.
        - Width.
        - Slope 1:n.

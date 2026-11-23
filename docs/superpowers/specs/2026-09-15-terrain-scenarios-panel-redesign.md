@@ -113,7 +113,7 @@ At the bottom of the session view, muted, word-wrapped: `Sketching on: <DEM laye
 asking anything: the session keeps running, and a **Keep sketching** button returns to it. The unsaved-work
 question is asked once, when Start actually replaces the session.
 
-*Note (2026-11-23): at the user's request the DEM chooser moved into the session toolbar, at its start (a `QgsMapLayerComboBox`, session layers excepted). Picking another DEM there does what Start does — the unsaved-work question, then a new session — and Cancel or a refused start puts it back. The status line, `Change…` and **Keep sketching** are gone; the welcome view shows only without a session.*
+*Note (2026-11-23): at the user's request the DEM chooser moved into the session toolbar, at its start, and (also at the user's request) shrank to an icon-only raster button with a layer menu: the project's rasters in Layers-panel order, session layers excepted, the session's DEM checked, rebuilt each time it opens. Picking another DEM there does what Start does — the unsaved-work question, then a new session — and Cancel or a refused start leaves the session, and the check mark, as they were. Its tooltip names the DEM. The status line, `Change…` and **Keep sketching** are gone; the welcome view shows only without a session.*
 
 ## 6. New feature page
 

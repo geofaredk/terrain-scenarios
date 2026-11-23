@@ -5,13 +5,13 @@ import importlib
 import os
 import traceback
 
-from qgis.core import (Qgis, QgsApplication, QgsCoordinateTransform, QgsCsException, QgsGeometry, QgsMessageLog,
-                       QgsProject, QgsRasterLayer)
+from qgis.core import (Qgis, QgsApplication, QgsCoordinateTransform, QgsCsException, QgsGeometry, QgsIconUtils,
+                       QgsMessageLog, QgsProject, QgsRasterLayer)
 from qgis.gui import QgsDockWidget, QgsMapLayerComboBox, QgsMapToolEdit, QgsPanelWidget, QgsPanelWidgetStack, QgsRubberBand
 from qgis.PyQt import sip
 from qgis.PyQt.QtCore import QEvent, QSize, Qt, QTimer
-from qgis.PyQt.QtGui import QAction
-from qgis.PyQt.QtWidgets import (QComboBox, QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
+from qgis.PyQt.QtGui import QAction, QActionGroup
+from qgis.PyQt.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
                                  QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from ..core.tools import Mode
@@ -204,6 +204,7 @@ class MainDock(QgsDockWidget):
         self.choose_dem = self._dem_choice_dialog
         self._asked_about_unsaved = False
         self._last_save_reason = None       # set by _save_scenario; read back by _offer_save_before_discard
+        self._dem_layer = None              # the DEM layer whose rename the button's tooltip follows
         self._session_has_dem = False       # _session_changed's own memory of has_dem, to spot a real transition
         controller.before_discard = self._offer_save_before_discard
         self.edit_tool = None
@@ -261,16 +262,21 @@ class MainDock(QgsDockWidget):
         # The session view: a toolbar, like QGIS's own panels (when the panel is narrower than its
         # buttons, the ones that do not fit move behind the » button instead of forcing it wider),
         # and the feature list. The toolbar opens with the session's DEM: picking another one there
-        # starts again on it, as Start does (spec §5.3, 2026-11-23 note).
+        # starts again on it, as Start does (spec §5.3, 2026-11-23 note): an icon-only button whose
+        # menu lists the project's rasters, rebuilt each time it opens.
         self.toolbar = QToolBar()
         self.toolbar.setIconSize(iface.iconSize(True))
-        self.session_dem_combo = QgsMapLayerComboBox()
-        self.session_dem_combo.setFilters(Qgis.LayerFilter.RasterLayer)
-        self.session_dem_combo.setToolTip(DEM_CHOOSER_TIP)
-        # a long layer name must not push every button behind the » overflow
-        self.session_dem_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.session_dem_combo.setMinimumContentsLength(10)
-        self.toolbar.addWidget(self.session_dem_combo)
+        self.dem_button = QToolButton()
+        self.dem_button.setIcon(QgsApplication.getThemeIcon("/mIconRaster.svg"))
+        self.dem_button.setText(self.tr("DEM"))    # for screen readers; the icon is all that shows
+        self.dem_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.dem_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.dem_button.setAutoRaise(True)
+        self.dem_button.setToolTip(DEM_CHOOSER_TIP)
+        self.dem_menu = QMenu(self)
+        self.dem_menu.aboutToShow.connect(self._fill_dem_menu)
+        self.dem_button.setMenu(self.dem_menu)
+        self.toolbar.addWidget(self.dem_button)
         self.new_button = QToolButton()
         self.new_button.setIcon(QgsApplication.getThemeIcon("/mActionAdd.svg"))
         self.new_button.setText(self.tr("New feature"))
@@ -413,8 +419,6 @@ class MainDock(QgsDockWidget):
         self.properties.editShapeToggled.connect(self._toggle_edit)
         self.feature_view.selectionModel().selectionChanged.connect(self._selection_changed)
         self.feature_view.customContextMenuRequested.connect(self._context_menu)
-        # `activated`, not `layerChanged`: only a user's pick starts a session, never a `setLayer`
-        self.session_dem_combo.activated.connect(self._dem_chosen)
         self.iface.mapCanvas().mapToolSet.connect(self._map_tool_set)
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_radius_units)
         self.iface.mapCanvas().destinationCrsChanged.connect(self._update_overlay_transform)
@@ -556,9 +560,10 @@ class MainDock(QgsDockWidget):
                 excepted = [project.mapLayer(i) for i in self.controller.layers.layer_ids]
             else:
                 excepted = []
-            for combo in (self.dem_combo, self.session_dem_combo):
-                combo.setExceptedLayerList(excepted)
-            self._show_session_dem()
+            self.dem_combo.setExceptedLayerList(excepted)
+            self.dem_button.setEnabled(has_dem)
+            self._connect_dem_name(self.controller.project.mapLayer(self.controller.dem_layer_id)
+                                   if has_dem else None)
             # new_scenario/save_scenario/open_scenario also emit sessionChanged while the same
             # session keeps running (has_dem unchanged): only a real transition closes the open
             # page and moves the view — a stale page over a scenario that was just replaced is
@@ -788,28 +793,67 @@ class MainDock(QgsDockWidget):
         finally:
             self._asked_about_unsaved = False
 
-    def _dem_chosen(self, _index: int) -> None:
-        """The toolbar's DEM chooser, picked by the user: start again on that layer, exactly as Start
-        does — the unsaved-work question first. Backing out, or a start that is refused, puts the
-        chooser back on the session's DEM. Guarded: reached from `activated`, a Qt signal."""
+    def _fill_dem_menu(self) -> None:
+        """Rebuild the DEM button's menu from the project, so it always matches it: every raster
+        layer but the session's own, in Layers-panel order, the session's DEM checked. Guarded:
+        reached from `aboutToShow`, a Qt signal."""
         try:
-            layer = self.session_dem_combo.currentLayer()
-            if layer is None or layer.id() == self.controller.dem_layer_id:
-                return
-            if self._keep_unsaved_work() or not self._start_session(layer):
-                self._show_session_dem()
+            self.dem_menu.clear()
+            project = self.controller.project
+            own = set(self.controller.layers.layer_ids) if self.controller.layers is not None else set()
+            group = QActionGroup(self.dem_menu)     # exclusive: the check mark is the session's DEM
+            for layer in project.layerTreeRoot().layerOrder():
+                if not isinstance(layer, QgsRasterLayer) or layer.id() in own:
+                    continue
+                action = self.dem_menu.addAction(QgsIconUtils.iconForLayer(layer), layer.name())
+                action.setData(layer.id())
+                action.setCheckable(True)
+                action.setActionGroup(group)
+                action.setChecked(self.controller.has_dem and layer.id() == self.controller.dem_layer_id)
+                action.triggered.connect(lambda _checked=False, layer_id=layer.id(): self._dem_chosen(layer_id))
         except Exception:  # noqa: BLE001 — this runs in a slot
             QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
-    def _show_session_dem(self) -> None:
-        """Put the toolbar's chooser on the session's DEM — or on nothing, once there is no session —
-        without it counting as a pick (signals blocked; `activated` is not emitted by code anyway)."""
-        layer = self.controller.project.mapLayer(self.controller.dem_layer_id) if self.controller.has_dem else None
-        blocked = self.session_dem_combo.blockSignals(True)
+    def _dem_chosen(self, layer_id: str) -> None:
+        """A layer picked in the DEM menu: start again on it, exactly as Start does — the
+        unsaved-work question first. Backing out or a refused start leaves the session as it was.
+        Guarded: reached from a menu action's `triggered`, a Qt signal."""
         try:
-            self.session_dem_combo.setLayer(layer)
-        finally:
-            self.session_dem_combo.blockSignals(blocked)
+            layer = self.controller.project.mapLayer(layer_id)
+            if layer is None or layer_id == self.controller.dem_layer_id:
+                return
+            if not self._keep_unsaved_work():
+                self._start_session(layer)
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
+
+    def _connect_dem_name(self, layer) -> None:
+        """Keep the DEM button's tooltip in sync with the DEM layer's name, also after a rename in
+        the Layers panel; with no session (layer None) the tooltip is just the tip."""
+        if layer is not self._dem_layer:
+            self._disconnect_dem_name()
+            if layer is not None:
+                self._dem_layer = layer
+                layer.nameChanged.connect(self._dem_renamed)
+        self._dem_renamed()
+
+    def _disconnect_dem_name(self) -> None:
+        if self._dem_layer is not None and not sip.isdeleted(self._dem_layer):
+            try:
+                self._dem_layer.nameChanged.disconnect(self._dem_renamed)
+            except TypeError:   # already disconnected
+                pass
+        self._dem_layer = None
+
+    def _dem_renamed(self) -> None:
+        try:
+            layer = self._dem_layer
+            if layer is not None and not sip.isdeleted(layer):
+                self.dem_button.setToolTip(f"{self.tr('DEM')}: {layer.name()}\n{DEM_CHOOSER_TIP}")
+            else:
+                self.dem_button.setToolTip(DEM_CHOOSER_TIP)
+        except Exception:  # noqa: BLE001 — this runs in a slot
+            QgsMessageLog.logMessage(traceback.format_exc(), LOG_TAG, Qgis.MessageLevel.Critical)
 
     def _start_on_file(self, source: str) -> bool:
         """Start on the DEM at `source`: the layer already in the project that reads it, or a new one."""

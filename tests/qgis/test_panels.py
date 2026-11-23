@@ -1,5 +1,6 @@
 import pytest
 from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsProject
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QListView, QPushButton
 
 from qgis_helpers import UTM, dem_layer, fake_iface, line_layer, line_through, panel, sample, square, start_session
@@ -20,7 +21,7 @@ def test_the_panel_opens_on_a_welcome_view_and_switches_to_the_session(tmp_path)
     dock.dem_combo.setLayer(layer)
     dock.start_button.click()
     assert dock.views.currentIndex() == VIEW_SESSION
-    assert dock.session_dem_combo.currentLayer() is layer
+    assert dock.dem_button.isEnabled() and layer.name() in dock.dem_button.toolTip()
 
 
 def test_the_welcome_view_shows_the_raise_path_illustration(tmp_path):
@@ -62,19 +63,55 @@ def test_the_scenario_actions_live_behind_one_menu_button(tmp_path):
         "New scenario", "Open scenario…", "Save scenario", "Save scenario as…"]
 
 
+def _dem_actions(dock):
+    """The DEM button's menu as a user sees it when opening it: rebuilt by `aboutToShow`."""
+    menu = dock.dem_button.menu()
+    menu.aboutToShow.emit()
+    return menu.actions()
+
+
 def _choose_dem(dock, layer):
-    """What a user's pick in the toolbar's DEM chooser does: `activated` is emitted only for a user
-    choice, never for `setLayer`."""
-    dock.session_dem_combo.setLayer(layer)
-    dock.session_dem_combo.activated.emit(dock.session_dem_combo.currentIndex())
+    """What a user's pick in the toolbar's DEM menu does: trigger the layer's action."""
+    next(a for a in _dem_actions(dock) if a.data() == layer.id()).trigger()
 
 
-def test_the_toolbar_starts_with_the_dem_chooser_showing_the_session_dem(tmp_path):
+def test_the_toolbar_starts_with_an_icon_only_dem_button_naming_the_session_dem(tmp_path):
     _iface, c, dock = panel(tmp_path)
     first = dock.toolbar.actions()[0]
-    assert dock.toolbar.widgetForAction(first) is dock.session_dem_combo
-    assert dock.session_dem_combo.currentLayer().id() == c.dem_layer_id
-    assert "never changed" in dock.session_dem_combo.toolTip()
+    assert dock.toolbar.widgetForAction(first) is dock.dem_button
+    assert not dock.dem_button.icon().isNull()
+    assert dock.dem_button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+    assert dock.dem_button.text() == "DEM"
+    assert dock.dem_button.isEnabled()
+    name = QgsProject.instance().mapLayer(c.dem_layer_id).name()
+    lines = dock.dem_button.toolTip().split("\n")
+    assert lines[0] == f"DEM: {name}" and "never changed" in lines[1]
+
+
+def test_the_dem_tooltip_follows_a_rename_of_the_dem_layer(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    QgsProject.instance().mapLayer(c.dem_layer_id).setName("Ground model")
+    assert dock.dem_button.toolTip().split("\n")[0] == "DEM: Ground model"
+
+
+def test_the_dem_menu_offers_the_other_rasters_with_the_session_dem_checked(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    (tmp_path / "other").mkdir()
+    other = dem_layer(tmp_path / "other", name="other")
+    actions = _dem_actions(dock)
+    offered = {a.data() for a in actions}
+    assert {c.dem_layer_id, other.id()} <= offered
+    assert not offered & set(c.layers.layer_ids)
+    assert [a.data() for a in actions if a.isChecked()] == [c.dem_layer_id]
+    assert all(not a.icon().isNull() and a.text() for a in actions)
+
+
+def test_the_dem_menu_is_rebuilt_each_time_it_opens(tmp_path):
+    _iface, _c, dock = panel(tmp_path)
+    before = len(_dem_actions(dock))
+    (tmp_path / "later").mkdir()
+    dem_layer(tmp_path / "later", name="later")
+    assert len(_dem_actions(dock)) == before + 1
 
 
 def test_picking_another_dem_in_the_toolbar_starts_on_it(tmp_path):
@@ -85,11 +122,21 @@ def test_picking_another_dem_in_the_toolbar_starts_on_it(tmp_path):
     other = dem_layer(tmp_path / "other", name="other")
     _choose_dem(dock, other)
     assert c.has_dem and c.dem_layer_id == other.id() and c.features == ()
-    assert dock.session_dem_combo.currentLayer() is other
+    assert [a.data() for a in _dem_actions(dock) if a.isChecked()] == [other.id()]
+    assert dock.dem_button.toolTip().split("\n")[0] == "DEM: other"
     assert dock.views.currentIndex() == VIEW_SESSION
 
 
-def test_cancelling_the_unsaved_question_keeps_the_session_and_the_chooser(tmp_path):
+def test_picking_the_checked_dem_does_nothing(tmp_path):
+    _iface, c, dock = panel(tmp_path)
+    dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
+    asked = []
+    dock.confirm_save = lambda text, can_cancel=True: asked.append(text) or None
+    _choose_dem(dock, QgsProject.instance().mapLayer(c.dem_layer_id))
+    assert asked == [] and [f.id for f in c.features] == [dike.id]
+
+
+def test_cancelling_the_unsaved_question_keeps_the_session_and_the_check(tmp_path):
     _iface, c, dock = panel(tmp_path)
     old = c.dem_layer_id
     dike = c.add_drawn(Tool.RAISE_PATH, Mode.PATH, line_through(5, 20, 34, 20), UTM)
@@ -99,10 +146,10 @@ def test_cancelling_the_unsaved_question_keeps_the_session_and_the_chooser(tmp_p
     _choose_dem(dock, dem_layer(tmp_path / "other", name="other"))
     assert asked == [UNSAVED_CHANGES]
     assert c.dem_layer_id == old and [f.id for f in c.features] == [dike.id]
-    assert dock.session_dem_combo.currentLayer().id() == old
+    assert [a.data() for a in _dem_actions(dock) if a.isChecked()] == [old]
 
 
-def test_a_failed_start_from_the_toolbar_puts_the_chooser_back(tmp_path):
+def test_a_failed_start_from_the_toolbar_keeps_the_old_session(tmp_path):
     _iface, c, dock = panel(tmp_path)
     old = c.dem_layer_id
     (tmp_path / "geo").mkdir()
@@ -111,7 +158,7 @@ def test_a_failed_start_from_the_toolbar_puts_the_chooser_back(tmp_path):
     dock._run_reproject = lambda layer=None: reprojected.append(layer)
     _choose_dem(dock, geo)                                                    # refused: geographic
     assert c.dem_layer_id == old
-    assert dock.session_dem_combo.currentLayer().id() == old
+    assert [a.data() for a in _dem_actions(dock) if a.isChecked()] == [old]
 
 
 def test_the_reproject_offer_is_about_the_dem_picked_in_the_toolbar(tmp_path):
@@ -127,14 +174,6 @@ def test_the_reproject_offer_is_about_the_dem_picked_in_the_toolbar(tmp_path):
     assert reprojected == [geo]
 
 
-def test_setting_the_chooser_from_code_never_starts_a_session(tmp_path):
-    _iface, c, dock = panel(tmp_path)
-    old = c.dem_layer_id
-    (tmp_path / "other").mkdir()
-    dock.session_dem_combo.setLayer(dem_layer(tmp_path / "other", name="other"))
-    assert c.dem_layer_id == old
-
-
 def test_a_dem_switch_from_open_scenario_starts_one_session_and_shows_it(tmp_path):
     _iface, c, dock = panel(tmp_path)
     (tmp_path / "other").mkdir()
@@ -144,22 +183,15 @@ def test_a_dem_switch_from_open_scenario_starts_one_session_and_shows_it(tmp_pat
     c.set_dem = lambda layer: started.append(layer.id()) or set_dem(layer)
     assert dock._start_on_file(other.source())
     assert started == [other.id()]
-    assert dock.session_dem_combo.currentLayer() is other
+    assert [a.data() for a in _dem_actions(dock) if a.isChecked()] == [other.id()]
 
 
-def test_the_chooser_does_not_offer_the_sessions_own_layers(tmp_path):
-    _iface, c, dock = panel(tmp_path)
-    combo = dock.session_dem_combo
-    offered = {combo.layer(i).id() for i in range(combo.count()) if combo.layer(i) is not None}
-    assert c.dem_layer_id in offered
-    assert not offered & set(c.layers.layer_ids)
-
-
-def test_removing_the_dem_leaves_the_chooser_on_no_stale_layer(tmp_path):
+def test_removing_the_dem_disables_the_button_and_drops_the_name(tmp_path):
     _iface, c, dock = panel(tmp_path)
     QgsProject.instance().removeMapLayer(c.dem_layer_id)
     assert not c.has_dem and dock.views.currentIndex() == VIEW_WELCOME
-    assert dock.session_dem_combo.currentLayer() is None
+    assert not dock.dem_button.isEnabled()
+    assert "DEM:" not in dock.dem_button.toolTip() and "never changed" in dock.dem_button.toolTip()
 
 
 def test_ending_the_session_closes_any_open_page(tmp_path):
